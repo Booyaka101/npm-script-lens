@@ -1,0 +1,48 @@
+name: npm-script-lens
+description: >-
+  Audit npm lifecycle scripts for behavioral risks (process spawning, network
+  access, filesystem writes) and suggest an npm v12 allowScripts block.
+branding:
+  icon: search
+  color: red
+inputs:
+  path:
+    description: >-
+      Project directory or lockfile path (package-lock.json,
+      npm-shrinkwrap.json, yarn.lock, or pnpm-lock.yaml)
+    default: '.'
+  fail-on-high:
+    description: Fail the job (exit 1) when any package scores HIGH risk
+    default: 'true'
+  comment-on-pr:
+    description: Post the audit report as a comment on pull requests
+    default: 'true'
+  sarif-file:
+    description: >-
+      If set, write a SARIF 2.1.0 file here (upload it with
+      github/codeql-action/upload-sarif to get code scanning alerts)
+    default: ''
+  diff-base:
+    description: >-
+      If set, audit only packages added or upgraded relative to this base
+      lockfile (e.g. one extracted from the PR base branch)
+    default: ''
+  github-token:
+    description: Token used to post the PR comment
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Install npm-script-lens dependencies
+      shell: bash
+      run: npm install --omit=dev --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"
+    - name: Audit lifecycle scripts
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON_HIGH: ${{ inputs.fail-on-high }}
+        INPUT_COMMENT_ON_PR: ${{ inputs.comment-on-pr }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        INPUT_DIFF_BASE: ${{ inputs.diff-base }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "$GITHUB_ACTION_PATH/src/action.js"

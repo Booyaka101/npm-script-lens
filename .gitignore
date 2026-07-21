@@ -1,0 +1,3 @@
+node_modules/
+*.tgz
+fixtures/demo/node_modules/

@@ -1,0 +1,16 @@
+# Dogfood: audit this repo's own lockfile with the action from this repo.
+name: self-audit
+on:
+  pull_request:
+permissions:
+  pull-requests: write
+jobs:
+  lens:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          path: package-lock.json
+          fail-on-high: 'true'
+          comment-on-pr: 'true'

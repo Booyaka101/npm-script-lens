@@ -1,0 +1,44 @@
+{
+  "name": "npm-script-lens",
+  "version": "0.2.0",
+  "description": "Audit npm lifecycle scripts for behavioral risks (exec/network/fs) before approving them under npm v12's allowScripts",
+  "license": "MIT",
+  "author": "cbosch101 <cbosch101@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cbosch101/npm-script-lens.git"
+  },
+  "homepage": "https://github.com/cbosch101/npm-script-lens#readme",
+  "bugs": "https://github.com/cbosch101/npm-script-lens/issues",
+  "bin": {
+    "npm-script-lens": "src/cli.js"
+  },
+  "main": "src/cli.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "src",
+    "action.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "npm",
+    "security",
+    "supply-chain",
+    "lifecycle-scripts",
+    "allowScripts",
+    "postinstall",
+    "audit"
+  ],
+  "dependencies": {
+    "acorn": "^8.12.0",
+    "acorn-loose": "^8.4.0",
+    "acorn-walk": "^8.3.0",
+    "commander": "^12.1.0",
+    "tar-stream": "^3.1.7"
+  }
+}
