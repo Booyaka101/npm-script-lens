@@ -1,8 +1,8 @@
 # PROGRESS — npm-script-lens
 
-**State: "next level" build complete (2026-07-21, fourth pass) — 51/51 tests pass. Published to GitHub (Booyaka101/npm-script-lens, tags v0.2.0 + v1); the post-v0.2 features below are on main, deliberately UNTAGGED per owner ("take it to the moon first"). npm publish still pending owner login.**
+**State: v0.3.0 RELEASED (2026-07-21, owner go-ahead) — 51/51 tests pass. GitHub: Booyaka101/npm-script-lens, tags v0.2.0 / v0.3.0, `v1` moved to the 0.3.0 commit, GitHub Release published. npm publish still pending owner login.**
 
-## Unreleased on main (all tested, 2026-07-21)
+## v0.3.0 features (all tested, 2026-07-21)
 - **Behavioral upgrade diff**: `--diff` compares upgraded packages against the base version's rows → `base: {version, gained}` per result; report renders "⚠️ gained vs X" / "no new capabilities". The hijacked-release detector.
 - **`sync`**: reconciles package.json allowScripts vs lockfile — stale dropped, upgrades re-pinned (decision preserved iff gained nothing, else risk default + re-review flag), new added; `--write` / `--check`.
 - **`approve`**: interactive readline flow, evidence per package, writes decisions.

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-07-21)
 
 - **Behavioral upgrade diff**: in `--diff` mode, packages that changed version
   are compared against the base version's analysis and the report calls out
