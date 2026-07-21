@@ -32,8 +32,7 @@
 
 ## Publish state (2026-07-21)
 - `npm whoami` → **401, not logged in**. Owner must `npm login` then `npm publish` (pack-verified; name free as of 2026-07-21).
-- `gh auth status` → logged in as **Booyaka101**. NOTE: package.json/README reference `cbosch101/npm-script-lens`; both GitHub accounts (CBosch101, Booyaka101) exist. Owner must pick the hosting account — if Booyaka101, update repository/homepage/bugs URLs in package.json + the two `uses:` lines and informationUri before pushing.
-- Not yet a git repo → `git init` + initial commit is the immediate next step, then push + tag `v1`.
+- Hosting account decided by owner (2026-07-21): **Booyaka101** — all repo URLs updated; repo created public, pushed, tagged `v0.2.0` + `v1`.
 
 ## Next steps (owner actions)
 1. `npm login` + `npm publish`.

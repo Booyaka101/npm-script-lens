@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: cbosch101/npm-script-lens@v1   # after publishing this repo
+      - uses: Booyaka101/npm-script-lens@v1
         with:
           path: '.'               # dir or lockfile; npm/yarn/pnpm auto-detected
           fail-on-high: 'true'    # exit 1 when a HIGH-risk script appears
@@ -85,7 +85,7 @@ The action writes the report to the job summary, comments on the PR (plain GitHu
 Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch) and `sarif-file` for code scanning alerts:
 
 ```yaml
-      - uses: cbosch101/npm-script-lens@v1
+      - uses: Booyaka101/npm-script-lens@v1
         with:
           sarif-file: lens.sarif
       - uses: github/codeql-action/upload-sarif@v3

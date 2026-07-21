@@ -101,7 +101,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '' } =
       tool: {
         driver: {
           name: 'npm-script-lens',
-          informationUri: 'https://github.com/cbosch101/npm-script-lens',
+          informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
           rules: Object.values(SARIF_RULES).map((rule) => ({
             id: rule.id,

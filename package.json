@@ -6,10 +6,10 @@
   "author": "cbosch101 <cbosch101@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cbosch101/npm-script-lens.git"
+    "url": "git+https://github.com/Booyaka101/npm-script-lens.git"
   },
-  "homepage": "https://github.com/cbosch101/npm-script-lens#readme",
-  "bugs": "https://github.com/cbosch101/npm-script-lens/issues",
+  "homepage": "https://github.com/Booyaka101/npm-script-lens#readme",
+  "bugs": "https://github.com/Booyaka101/npm-script-lens/issues",
   "bin": {
     "npm-script-lens": "src/cli.js"
   },
