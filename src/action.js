@@ -36,6 +36,7 @@ async function main() {
     log: console.log,
     diffBase,
     trust: input('TRUST', 'true') === 'true',
+    deep: input('DEEP', 'false') === 'true',
   });
   const note = diffBase
     ? `_Diff mode: only packages added or upgraded relative to \`${diffBase}\` were audited._`

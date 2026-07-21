@@ -48,6 +48,8 @@ async function auditPackageTool({ name, version }) {
   }
   const pkg = await fetchPackage(name, version);
   const rows = analyzePackage(pkg);
+  // 'ref:' breadcrumbs are internal to --deep resolution; never expose them
+  for (const row of rows) row.signals = row.signals.filter((s) => !s.startsWith('ref: '));
   const mal = await osvMalicious([{ name, version }]);
   const advisories = mal.get(`${name}@${version}`) || [];
   const trust = await fetchTrust(name, version);

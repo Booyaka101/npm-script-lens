@@ -1,6 +1,9 @@
 'use strict';
+const acorn = require('acorn');
 const loose = require('acorn-loose');
 const walk = require('acorn-walk');
+const { builtinModules } = require('node:module');
+const BUILTINS = new Set(builtinModules);
 
 const EXEC_FNS = new Set(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork']);
 // "exec"/"get"/"request"/"open" are too generic as member props (regex.exec,
@@ -45,6 +48,10 @@ function classifySpec(spec, kw, signals, follow) {
   else if (NET_PKGS.has(plain)) signals.add(`net: ${kw}('${plain}')`);
   else if (OBF_PKGS.has(plain)) signals.add(`obf: ${kw}('${plain}')`);
   else if (/^\.\.?\//.test(spec) && !spec.endsWith('.json')) follow.add(spec);
+  // breadcrumb for --deep mode: a bare package require the lists don't know.
+  // 'ref' never scores and is stripped from final rows; with --deep the CLI
+  // resolves it against the lockfile and analyzes that package's entry file.
+  else if (!spec.startsWith('.') && !BUILTINS.has(plain) && !spec.startsWith('node:')) signals.add(`ref: ${bare}`);
 }
 
 // The literal specifier of a require() call, DYNAMIC when the specifier is
@@ -81,9 +88,30 @@ function resolveFile(files, from, spec) {
   return null;
 }
 
+// A decoded literal that parses as real JS (strict, not loose) is a hidden
+// payload — analyze it like any other source file instead of only flagging
+// the decode call.
+function looksLikeJs(text) {
+  if (!text || text.length < 6 || /[^\x09\x0a\x0d\x20-\x7e -￿]/.test(text)) return false;
+  try {
+    acorn.parse(text, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true });
+    return true;
+  } catch {
+    try {
+      acorn.parse(text, { ecmaVersion: 'latest', sourceType: 'script' });
+      return true;
+    } catch { return false; }
+  }
+}
+
 // Statically walk one JS file from the tarball, collecting behavior signals
 // and the relative modules it pulls in (require/import/path.join(__dirname..)).
-function analyzeJs(source, signals, follow) {
+// depth guards decoded-payload recursion (base64 inside base64).
+function analyzeJs(source, signals, follow, depth = 0) {
+  if (depth > 2) return;
+  const decodeAndAnalyze = (text) => {
+    if (looksLikeJs(text)) analyzeJs(text, signals, follow, depth + 1);
+  };
   let ast;
   try { ast = loose.parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true }); } catch { return; }
   walk.full(ast, (node) => {
@@ -118,9 +146,16 @@ function analyzeJs(source, signals, follow) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${c.name}()`}`);
       } else if (c.name === 'fetch') signals.add('net: fetch()');
-      else if (c.name === 'eval') signals.add('obf: eval()');
-      else if (c.name === 'Function') signals.add('obf: new Function() constructor');
-      else if (c.name === 'atob') signals.add('obf: atob() base64 decode');
+      else if (c.name === 'eval') {
+        signals.add('obf: eval()');
+        const body = argText(node.arguments[0]);
+        if (body) decodeAndAnalyze(body);
+      } else if (c.name === 'Function') signals.add('obf: new Function() constructor');
+      else if (c.name === 'atob') {
+        signals.add('obf: atob() base64 decode');
+        const arg = argText(node.arguments[0]);
+        if (arg) { try { decodeAndAnalyze(Buffer.from(arg, 'base64').toString('utf8')); } catch { /* not base64 */ } }
+      }
     } else if (c.type === 'MemberExpression' && !c.computed && c.property.type === 'Identifier') {
       const prop = c.property.name;
       const recv = c.object.type === 'Identifier' ? c.object.name : '';
@@ -134,8 +169,13 @@ function analyzeJs(source, signals, follow) {
       }
       if (recv === 'String' && prop === 'fromCharCode' && node.arguments.length >= 8) {
         signals.add('obf: String.fromCharCode(…) built string');
+        if (node.arguments.every((a) => a.type === 'Literal' && typeof a.value === 'number')) {
+          decodeAndAnalyze(String.fromCharCode(...node.arguments.map((a) => a.value)));
+        }
       } else if (recv === 'Buffer' && prop === 'from' && argText(node.arguments[1]) === 'base64') {
         signals.add("obf: Buffer.from(…, 'base64') decode");
+        const arg = argText(node.arguments[0]);
+        if (arg) { try { decodeAndAnalyze(Buffer.from(arg, 'base64').toString('utf8')); } catch { /* not base64 */ } }
       } else if (EXEC_FNS.has(prop) && (!AMBIGUOUS.has(prop) || EXEC_RECV.test(recv))) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${recv || '?'}.${prop}()`}`);
@@ -214,7 +254,15 @@ function analyzeCommand(cmd, files, signals, scripts = {}, visited = new Set()) 
     const resolved = resolveFile(files, 'x', spec);
     if (resolved) queue.push({ path: resolved, depth: 0 });
   }
-  const seen = new Set(queue.map((q) => q.path));
+  walkFiles(files, queue.map((q) => q.path), signals);
+}
+
+// Walk entry files from the tarball index, following relative requires up to
+// MAX_DEPTH / MAX_FILES. Shared by script analysis and cross-package bin/deep
+// resolution.
+function walkFiles(files, entryPaths, signals) {
+  const queue = entryPaths.map((p) => ({ path: p, depth: 0 }));
+  const seen = new Set(entryPaths);
   while (queue.length > 0 && seen.size <= MAX_FILES) {
     const { path, depth } = queue.shift();
     const follow = new Set();
@@ -249,4 +297,4 @@ function analyzePackage(pkg) {
   });
 }
 
-module.exports = { analyzePackage, analyzeCommand, analyzeJs, splitShell, score };
+module.exports = { analyzePackage, analyzeCommand, analyzeJs, walkFiles, resolveFile, splitShell, score };

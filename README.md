@@ -139,11 +139,14 @@ Node.js ≥ 20 (uses global `fetch`). No paid APIs — the public npm registry, 
 
 ## Honest limitations
 
-- **Static analysis**: capability detection, not proof of malice. A HIGH score means "this script *can* spawn processes," which is exactly what you want to know before approving it — but plenty of HIGH packages (native builds) are legitimate. The lens gives evidence; you make the call.
-- Scripts invoking **binaries from other packages** (`husky install`, `patch-package`) are conservatively flagged HIGH as `exec: … (unresolved binary)` — their code lives in a different tarball.
-- Network capability hidden inside **helper dependencies** is caught via a curated capability list (`node-fetch`, `axios`, `got`, `undici`, `@prisma/fetch-engine`, …); a helper not on the list can slip to a lower tier. Notably, real-world MEDIUM (network *without* exec) is rare — installers that download almost always also spawn or chmod, and exec dominates the score.
-- **Obfuscation is flagged, not decoded**: `eval`/`new Function`/`vm`, string-built `require()` specifiers, and base64/char-code payload decoding all score HIGH with an `obf:` signal — but the lens reports *that* code hides itself, it doesn't reconstruct what the hidden code does. A `require(someVariable)` behind plain variable indirection (ubiquitous in bundler output and native-binding loaders) is deliberately not flagged.
+- **Static capability detection, not proof of malice.** A HIGH score means "this script *can* spawn processes" — exactly the question to answer before approving, but plenty of HIGH packages (native builds) are legitimate. The lens gives evidence; you make the call. Only sandboxed execution could say more, and running untrusted install scripts to observe them is deliberately out of scope.
+- Scripts invoking **binaries from other packages** (`husky install`, `patch-package`) are resolved when a lockfile package with the same name owns the bin: that package's actual bin script is fetched, analyzed, and the row is **re-scored on real evidence** (`bin: husky install → husky@9.1.7` + what the script actually does). Bins with no same-name owner in the lockfile stay conservatively HIGH as `exec: … (unresolved binary)`.
+- **Helper dependencies**: capability hidden inside helpers is caught via a curated list (`axios`, `got`, `undici`, `@prisma/fetch-engine`, …) plus `--deep`, which follows bare `require()`s from install-script code into the matching lockfile package's entry file (one level). A helper outside the lockfile, or loaded indirectly, can still slip a tier.
+- **Obfuscation**: `eval`/`new Function`/`vm` and string-built `require()`s score HIGH, and base64/char-code **literal** payloads are **decoded and re-analyzed** — the report shows what the hidden code actually does, not just that it hides. Payloads assembled only at runtime (downloaded, decrypted, env-derived) remain opaque: flagged, not decoded. Plain variable indirection (`require(someVar)`) is deliberately not flagged — it's ubiquitous in bundler output.
 
-## Distribution
+## Get it
 
-**First step: `npm publish` — the name `npm-script-lens` is unclaimed (verified 404 on the registry, 2026-07-21).** Then push to GitHub and tag `v1` so the Action is usable, and post the CLI + sample report in the npm v12 migration threads ([npm/rfcs#897](https://github.com/npm/rfcs/pull/897) and the GitHub community discussion on install-script opt-in), where people are asking for exactly this review evidence.
+- **CLI**: `npx npm-script-lens audit` — [npmjs.com/package/npm-script-lens](https://www.npmjs.com/package/npm-script-lens)
+- **GitHub Action**: `uses: Booyaka101/npm-script-lens@v1` — [releases](https://github.com/Booyaka101/npm-script-lens/releases)
+- **MCP server** for AI agents: `npx npm-script-lens mcp`
+- Join the conversation: [npm/rfcs#897](https://github.com/npm/rfcs/issues/897) (allowScripts review-report RRFC) · [npm v12 migration discussion](https://github.com/community/community/discussions/198547)

@@ -62,6 +62,21 @@ before(async () => {
       'package/p.js': 'const v = process.env.FOO;',
     }),
     '/pkgc2.tgz': await makeTgz(netScript),
+    '/toolpkg.tgz': await makeTgz({
+      'package/package.json': JSON.stringify({ name: 'toolpkg', bin: { toolpkg: './cli.js' } }),
+      'package/cli.js': 'require("fs").writeFileSync("marker", "1");',
+    }),
+    '/userpkg.tgz': await makeTgz({
+      'package/package.json': JSON.stringify({ scripts: { postinstall: 'toolpkg install' } }),
+    }),
+    '/helper.tgz': await makeTgz({
+      'package/package.json': JSON.stringify({ name: 'helper', main: 'index.js' }),
+      'package/index.js': 'require("https").get("https://dl.example");',
+    }),
+    '/usehelper.tgz': await makeTgz({
+      'package/package.json': JSON.stringify({ scripts: { postinstall: 'node u.js' } }),
+      'package/u.js': 'require("helper");',
+    }),
   };
   server = http.createServer((req, res) => {
     let body = '';
@@ -88,6 +103,14 @@ before(async () => {
         '/pkgb/2.0.0': { version: '2.0.0', scripts: {}, dist: { tarball: `http://127.0.0.1:${port}/none.tgz` } },
         '/pkgc/1.0.0': scriptedDoc('1.0.0', '/pkgc1.tgz'),
         '/pkgc/2.0.0': scriptedDoc('2.0.0', '/pkgc2.tgz'),
+        '/toolpkg/1.0.0': { version: '1.0.0', scripts: {}, bin: { toolpkg: './cli.js' },
+          dist: { tarball: `http://127.0.0.1:${port}/toolpkg.tgz` } },
+        '/userpkg/1.0.0': { version: '1.0.0', scripts: { postinstall: 'toolpkg install' },
+          dist: { tarball: `http://127.0.0.1:${port}/userpkg.tgz` } },
+        '/helper/1.0.0': { version: '1.0.0', scripts: {}, main: 'index.js',
+          dist: { tarball: `http://127.0.0.1:${port}/helper.tgz` } },
+        '/usehelper/1.0.0': { version: '1.0.0', scripts: { postinstall: 'node u.js' },
+          dist: { tarball: `http://127.0.0.1:${port}/usehelper.tgz` } },
         '/pkga': {
           time: { '1.0.0': '2026-07-01T00:00:00.000Z' },
           maintainers: [{ name: 'solo' }],
@@ -250,6 +273,42 @@ test('mcp: initialize, tools/list, audit_package over stdio', async () => {
   assert.strictEqual(payload.risk, 'MEDIUM');
   assert.strictEqual(payload.malicious, true);
   assert.ok(payload.verdict.startsWith('DO NOT INSTALL'), payload.verdict);
+});
+
+test('unresolved binaries are resolved against their lockfile owner and re-scored', async () => {
+  const { runAudit } = require('../src/cli');
+  const dir = writeProj('binproj', {
+    'node_modules/userpkg': { version: '1.0.0' },
+    'node_modules/toolpkg': { version: '1.0.0' },
+  });
+  const results = await runAudit(dir, { trust: false, cache: false });
+  const user = results.find((r) => r.name === 'userpkg');
+  const row = user.rows[0];
+  assert.strictEqual(row.risk, 'LOW', JSON.stringify(row));
+  assert.ok(row.signals.includes('bin: toolpkg install → toolpkg@1.0.0'), JSON.stringify(row.signals));
+  assert.ok(row.signals.some((s) => s.startsWith('fs: ')), 'judged by the bin script\'s real behavior');
+  assert.ok(!row.signals.some((s) => s.includes('unresolved binary')));
+  // a bin with no owning package in the lockfile stays conservatively HIGH
+  const lone = writeProj('binlone', { 'node_modules/userpkg': { version: '1.0.0' } });
+  const loneRows = await runAudit(lone, { trust: false, cache: false });
+  assert.strictEqual(loneRows[0].rows[0].risk, 'HIGH');
+  assert.ok(loneRows[0].rows[0].signals.some((s) => s.includes('unresolved binary')));
+});
+
+test('--deep follows bare requires into lockfile packages; refs never leak', async () => {
+  const { runAudit } = require('../src/cli');
+  const dir = writeProj('deepproj', {
+    'node_modules/usehelper': { version: '1.0.0' },
+    'node_modules/helper': { version: '1.0.0' },
+  });
+  const shallow = await runAudit(dir, { trust: false, cache: false });
+  const sRow = shallow.find((r) => r.name === 'usehelper').rows[0];
+  assert.strictEqual(sRow.risk, 'SAFE');
+  assert.ok(!sRow.signals.some((s) => s.startsWith('ref: ')), 'ref breadcrumbs are internal');
+  const deep = await runAudit(dir, { trust: false, cache: false, deep: true });
+  const dRow = deep.find((r) => r.name === 'usehelper').rows[0];
+  assert.strictEqual(dRow.risk, 'MEDIUM', JSON.stringify(dRow));
+  assert.ok(dRow.signals.includes("net: require('https') (via helper)"), JSON.stringify(dRow.signals));
 });
 
 test('buildSarif: levels, rules, lockfile line anchors, note in report', () => {

@@ -5,7 +5,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { program } = require('commander');
 const { fetchPackage, loadLocalPackage } = require('./registry');
-const { analyzePackage } = require('./analyzer');
+const { analyzePackage, walkFiles, resolveFile, score } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
@@ -13,17 +13,86 @@ const { buildReport, buildAllowScripts, buildSarif, packageRisk } = require('./r
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
+// Signals from walking another package's bin script or main entry — how
+// `husky install` gets judged by husky's actual code instead of a
+// conservative "unresolved binary" flag. Cached; null = could not resolve
+// (caller keeps its conservative signal).
+async function crossPackageSignals(dep, entryKind, ctx) {
+  const cKey = [`x~${dep.name.replace('/', '+')}`, `${dep.version}~${entryKind.replace(/[\\/:]/g, '_')}`];
+  const hit = ctx.cache ? cacheGet(cKey[0], cKey[1]) : null;
+  if (hit) return hit;
+  let out = null;
+  try {
+    const pkg = ctx.offline
+      ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, { forceFiles: true })
+      : await fetchPackage(dep.name, dep.version, { forceTarball: true });
+    let target = null;
+    if (entryKind.startsWith('bin:')) {
+      target = pkg.bin[entryKind.slice(4)];
+    } else {
+      target = 'index.js';
+      try { target = JSON.parse(pkg.files.get('package.json')).main || 'index.js'; } catch { /* default */ }
+    }
+    const entry = target && resolveFile(pkg.files, 'x', `./${target.replace(/^\.\//, '')}`);
+    if (entry) {
+      const signals = new Set();
+      walkFiles(pkg.files, [entry], signals);
+      out = [...signals].filter((s) => !s.startsWith('ref: '));
+    }
+  } catch { /* keep conservative */ }
+  if (ctx.cache && out !== null) cacheSet(cKey[0], cKey[1], out);
+  return out;
+}
+
+// Post-analysis pass over a package's rows:
+//  - unresolved binaries owned by a lockfile package get replaced by the
+//    actual analysis of that package's bin script (and the row re-scored)
+//  - with --deep, bare requires of lockfile packages pull in that package's
+//    entry-file signals
+//  - 'ref:' breadcrumbs never leave this function
+async function enrichRows(rows, ctx) {
+  for (const row of rows) {
+    const sigs = new Set(row.signals);
+    for (const s of [...sigs]) {
+      const m = s.match(/^exec: (.+?) \(unresolved binary\)$/);
+      if (!m || !ctx.depsByName) continue;
+      const binName = m[1].split(/\s+/)[0].split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
+      const owner = ctx.depsByName.get(binName);
+      if (!owner) continue;
+      const resolved = await crossPackageSignals(owner, `bin:${binName}`, ctx);
+      if (resolved === null) continue;
+      sigs.delete(s);
+      sigs.add(`bin: ${m[1]} → ${owner.name}@${owner.version}`);
+      for (const x of resolved) sigs.add(x);
+    }
+    for (const s of [...sigs]) {
+      if (!s.startsWith('ref: ')) continue;
+      sigs.delete(s);
+      if (!ctx.deep || !ctx.depsByName) continue;
+      const owner = ctx.depsByName.get(s.slice(5));
+      if (!owner) continue;
+      const extra = await crossPackageSignals(owner, 'main', ctx);
+      if (extra) for (const x of extra) sigs.add(`${x} (via ${owner.name})`);
+    }
+    row.signals = [...sigs].sort();
+    row.risk = score(row.signals);
+  }
+}
+
 // Analysis rows for one name@version: cache, then node_modules (offline) or
 // the registry. Returns { rows } or { error }.
-async function auditOne(dep, { cache, offline, projectDir }) {
-  const hit = cache ? cacheGet(dep.name, dep.version) : null;
+async function auditOne(dep, ctx) {
+  const { cache, offline, projectDir, deep } = ctx;
+  const cacheVer = deep ? `${dep.version}+deep` : dep.version;
+  const hit = cache ? cacheGet(dep.name, cacheVer) : null;
   if (hit) return { rows: hit, cached: true };
   try {
     const pkg = offline
       ? loadLocalPackage(dep.name, dep.version, projectDir, dep.lockKey)
       : await fetchPackage(dep.name, dep.version);
     const rows = analyzePackage(pkg);
-    if (cache) cacheSet(dep.name, dep.version, rows);
+    await enrichRows(rows, ctx);
+    if (cache) cacheSet(dep.name, cacheVer, rows);
     return { rows };
   } catch (err) {
     return { error: String(err.message || err).replace(/\|/g, '\\|') };
@@ -31,10 +100,12 @@ async function auditOne(dep, { cache, offline, projectDir }) {
 }
 
 async function runAudit(lockPath, {
-  concurrency = 8, log = () => {}, cache = true, diffBase = null, offline = false, trust = true, via = true,
+  concurrency = 8, log = () => {}, cache = true, diffBase = null, offline = false, trust = true, via = true, deep = false,
 } = {}) {
   const { lockPath: p, deps: allDeps, edges } = loadDeps(lockPath);
   const projectDir = path.dirname(p);
+  const depsByName = new Map(allDeps.map((d) => [d.name, d]));
+  const ctx = { cache, offline, projectDir, deep, depsByName };
   let deps = allDeps;
   const baseVersions = new Map();
   if (diffBase) {
@@ -49,12 +120,12 @@ async function runAudit(lockPath, {
   await Promise.all(Array.from({ length: Math.min(concurrency, deps.length) }, async () => {
     while (i < deps.length) {
       const dep = deps[i++];
-      const r = { name: dep.name, version: dep.version, rows: [], ...await auditOne(dep, { cache, offline, projectDir }) };
+      const r = { name: dep.name, version: dep.version, rows: [], ...await auditOne(dep, ctx) };
       // upgrade: also audit the base version and report capabilities the new
       // version gained — the fingerprint of a hijacked release
       const baseVer = baseVersions.get(dep.name);
       if (baseVer && baseVer !== dep.version && !r.error) {
-        const base = await auditOne({ name: dep.name, version: baseVer }, { cache, offline, projectDir });
+        const base = await auditOne({ name: dep.name, version: baseVer }, ctx);
         r.base = base.error
           ? { version: baseVer, gained: null }
           : { version: baseVer, gained: flatSignals(r.rows).filter((s) => !flatSignals(base.rows).includes(s)) };
@@ -101,6 +172,7 @@ async function auditAction(opts) {
     cache: opts.cache,
     trust: opts.trust,
     offline: opts.offline,
+    deep: opts.deep,
     diffBase: opts.diff || null,
   });
   const note = opts.diff
@@ -148,10 +220,14 @@ async function syncAction(opts) {
   const { pkgPath, raw, pkg } = projectPackageJson(opts.path);
   const existing = pkg.allowScripts || {};
   const results = await runAudit(opts.path, {
-    log: (m) => process.stderr.write(`${m}\n`), cache: opts.cache, trust: opts.trust, offline: opts.offline,
+    log: (m) => process.stderr.write(`${m}\n`), cache: opts.cache, trust: opts.trust, offline: opts.offline, deep: opts.deep,
   });
   const needsEntry = results.filter((r) => r.rows.length > 0 || r.error || r.malicious);
   const byName = new Map(results.map((r) => [r.name, r]));
+  const baseCtx = {
+    cache: opts.cache, offline: opts.offline, projectDir: path.dirname(pkgPath), deep: opts.deep,
+    depsByName: new Map(results.map((r) => [r.name, { name: r.name, version: r.version }])),
+  };
   const next = {};
   const kept = [], removed = [], repinned = [], added = [];
   for (const [entry, decision] of Object.entries(existing)) {
@@ -167,7 +243,7 @@ async function syncAction(opts) {
     } else {
       // version moved: preserve the old decision only when the upgrade gained
       // no new capabilities, otherwise fall back to the risk default
-      const base = await auditOne({ name, version }, { cache: opts.cache, offline: opts.offline, projectDir: path.dirname(pkgPath) });
+      const base = await auditOne({ name, version }, baseCtx);
       const gained = base.error ? null : flatSignals(r.rows).filter((s) => !flatSignals(base.rows).includes(s));
       const preserve = gained !== null && gained.length === 0;
       const value = r.malicious ? false
@@ -215,7 +291,7 @@ async function approveAction(opts) {
   const { pkgPath, raw, pkg } = projectPackageJson(opts.path);
   const existing = pkg.allowScripts || {};
   const results = await runAudit(opts.path, {
-    log: (m) => process.stderr.write(`${m}\n`), cache: opts.cache, trust: opts.trust, offline: opts.offline,
+    log: (m) => process.stderr.write(`${m}\n`), cache: opts.cache, trust: opts.trust, offline: opts.offline, deep: opts.deep,
   });
   const RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, SAFE: 3, ERROR: 4 };
   const queue = results
@@ -265,6 +341,7 @@ if (require.main === module) {
     .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock)', '.')
     .option('--no-cache', 'disable the on-disk result cache')
     .option('--no-trust', 'skip trust enrichment (OSV malware check, publish age, downloads, provenance)')
+    .option('--deep', 'also analyze lockfile packages that install scripts require() by bare name')
     .option('--offline', 'analyze packages from node_modules instead of the registry (implies --no-trust)');
   common(program.command('audit'))
     .description('audit every package in a lockfile and report install-script risks')

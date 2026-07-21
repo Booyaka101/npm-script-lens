@@ -32,6 +32,11 @@ inputs:
       Enrich risky packages with OSV known-malicious advisories, publish age,
       weekly downloads, and provenance ('false' to disable)
     default: 'true'
+  deep:
+    description: >-
+      Also analyze lockfile packages that install scripts require() by bare
+      name ('true' to enable)
+    default: 'false'
   github-token:
     description: Token used to post the PR comment
     default: ${{ github.token }}
@@ -50,5 +55,6 @@ runs:
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
         INPUT_DIFF_BASE: ${{ inputs.diff-base }}
         INPUT_TRUST: ${{ inputs.trust }}
+        INPUT_DEEP: ${{ inputs.deep }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: node "$GITHUB_ACTION_PATH/src/action.js"

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Cross-package bin resolution**: `husky install`-style scripts are no
+  longer conservatively HIGH — when a lockfile package with the same name
+  owns the bin, its actual bin script is fetched, analyzed, and the row is
+  re-scored on real evidence (`bin: husky install → husky@9.1.7`).
+- **Payload decoding**: base64 / char-code / eval'd **literal** payloads are
+  decoded and re-analyzed, so the report shows what hidden code actually
+  does. Runtime-assembled payloads remain flagged-but-opaque.
+- **`--deep`** (CLI + Action input `deep`): follow bare `require()`s from
+  install-script code into the matching lockfile package's entry file, one
+  level deep — closes the curated-helper-list gap for in-tree helpers.
+
 ## 0.3.1 (2026-07-21)
 
 - Shorten the Action description to fit the GitHub Marketplace 125-character
