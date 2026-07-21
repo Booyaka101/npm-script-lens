@@ -1,6 +1,17 @@
 # PROGRESS — npm-script-lens
 
-**State: v0.2.0 FEATURE-COMPLETE, 42/42 tests pass (2026-07-21, third pass). All planned v0.2 items and closable v0.1 limitations are done.**
+**State: "next level" build complete (2026-07-21, fourth pass) — 51/51 tests pass. Published to GitHub (Booyaka101/npm-script-lens, tags v0.2.0 + v1); the post-v0.2 features below are on main, deliberately UNTAGGED per owner ("take it to the moon first"). npm publish still pending owner login.**
+
+## Unreleased on main (all tested, 2026-07-21)
+- **Behavioral upgrade diff**: `--diff` compares upgraded packages against the base version's rows → `base: {version, gained}` per result; report renders "⚠️ gained vs X" / "no new capabilities". The hijacked-release detector.
+- **`sync`**: reconciles package.json allowScripts vs lockfile — stale dropped, upgrades re-pinned (decision preserved iff gained nothing, else risk default + re-review flag), new added; `--write` / `--check`.
+- **`approve`**: interactive readline flow, evidence per package, writes decisions.
+- **Trust** (src/trust.js): OSV querybatch for ALL audited packages (MAL-* → r.malicious, ⛔ badge, forced false, fails the gate); packument age/maintainers/provenance + downloads for HIGH/MEDIUM only; 24h-TTL disk cache; env-overridable endpoints (NPM_SCRIPT_LENS_OSV_API / _DL_API) for tests.
+- **Via chains**: name-level dependency edges from ALL lockfile parsers; viaChain BFS climbs to a parentless package (cycle-safe — dead-end fallback tested).
+- **`--offline`**: loadLocalPackage indexes node_modules dirs (npm lockKey → exact nested path); implies no-trust.
+- **bun.lock**: JSONC-tolerant parser (custom stripJsonc); bun.lockb detected → helpful error.
+- **MCP server** (src/mcp.js): hand-rolled newline-JSON-RPC stdio, tools audit_package (resolves latest when version omitted; verdict line) + audit_lockfile.
+- Gotchas fixed en route: pnpm entry regex must anchor `[^\s'"]` first char or `dependencies:` lines swallow entryName; npm lockKey dedup must keep FIRST (shallowest) occurrence; `.get()` on a require() call expression has no receiver name → signal is `net: require('https')`, not `net: https.get`.
 
 ## Phase 0 verification (all passed, 2026-07-21)
 - `https://registry.npmjs.org/sharp` — public JSON, per-version `scripts` + `dist.tarball`. ✔

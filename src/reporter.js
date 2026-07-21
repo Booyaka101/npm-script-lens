@@ -1,49 +1,86 @@
 'use strict';
+const { trustLabel } = require('./trust');
+
 const RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, SAFE: 3, ERROR: 4 };
 const BADGE = { HIGH: '🔴 HIGH', MEDIUM: '🟠 MEDIUM', LOW: '🟡 LOW', SAFE: '🟢 SAFE', ERROR: '⚪ ERROR' };
 
-// results: [{ name, version, rows: [{script, command, risk, signals}], error? }]
+// results: [{ name, version, rows: [{script, command, risk, signals}], error?,
+//             via?, trust?, malicious?, advisories?, base?: {version, gained} }]
 function packageRisk(r) {
   if (r.error) return 'ERROR';
   if (r.rows.length === 0) return 'SAFE';
   return r.rows.reduce((a, b) => (RANK[b.risk] < RANK[a] ? b.risk : a), 'SAFE');
 }
 
+const sortRank = (r) => (r.malicious ? -1 : RANK[packageRisk(r)]);
+const esc = (s) => s.replace(/\|/g, '¦');
+
 // Suggested npm v12 allowScripts block: version-pinned entries, true only for
 // packages whose scripts showed no exec/network behavior. Humans flip the
-// rest after review.
+// rest after review. Known-malicious packages are always false.
 function buildAllowScripts(results) {
   const allow = {};
   for (const r of results) {
-    if (r.rows.length === 0 && !r.error) continue;
-    allow[`${r.name}@${r.version}`] = ['SAFE', 'LOW'].includes(packageRisk(r));
+    if (r.rows.length === 0 && !r.error && !r.malicious) continue;
+    allow[`${r.name}@${r.version}`] = r.malicious ? false : ['SAFE', 'LOW'].includes(packageRisk(r));
   }
   return { allowScripts: allow };
 }
 
+// The package cell carries identity plus context: how it got into the tree
+// (via chain) and how much to trust the publisher (trust line).
+function packageCell(r) {
+  const parts = [`\`${r.name}@${r.version}\``];
+  if (r.malicious) parts.push(`**⛔ ${esc(r.advisories.join(', '))}**`);
+  if (r.via && r.via.length > 0) parts.push(`_via ${esc(r.via.join(' → '))}_`);
+  const label = trustLabel(r.trust);
+  if (label) parts.push(`_${esc(label)}_`);
+  return parts.join('<br>');
+}
+
+function gainedNote(r) {
+  if (!r.base) return null;
+  if (r.base.gained === null) return `_upgrade from ${r.base.version}: base version could not be compared_`;
+  return r.base.gained.length > 0
+    ? `**⚠️ gained vs ${r.base.version}:** ${r.base.gained.map((s) => `\`${esc(s)}\``).join(' ')}`
+    : `_no new capabilities vs ${r.base.version}_`;
+}
+
 function buildReport(results, { note } = {}) {
-  const scripted = results.filter((r) => r.rows.length > 0 || r.error);
+  const scripted = results.filter((r) => r.rows.length > 0 || r.error || r.malicious);
   const clean = results.length - scripted.length;
   const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, SAFE: 0, ERROR: 0 };
-  for (const r of scripted) counts[packageRisk(r)]++;
+  let malicious = 0;
+  for (const r of scripted) {
+    counts[packageRisk(r)]++;
+    if (r.malicious) malicious++;
+  }
   const lines = ['# npm-script-lens report', ''];
   lines.push(`Audited **${results.length}** locked packages: ` +
+    (malicious ? `**${malicious}** ⛔ KNOWN MALICIOUS, ` : '') +
     `**${counts.HIGH}** HIGH, **${counts.MEDIUM}** MEDIUM, **${counts.LOW}** LOW risk install scripts; ` +
     `**${counts.SAFE + clean}** with no risky install-time behavior` +
     (counts.ERROR ? `; **${counts.ERROR}** could not be fetched` : '') + '.', '');
   if (note) lines.push(note, '');
   if (scripted.length > 0) {
     lines.push('| package | script | risk | signals |', '|---|---|---|---|');
-    for (const r of [...scripted].sort((a, b) => RANK[packageRisk(a)] - RANK[packageRisk(b)])) {
+    for (const r of [...scripted].sort((a, b) => sortRank(a) - sortRank(b))) {
+      const badge = r.malicious ? '⛔ MALICIOUS' : BADGE[packageRisk(r)];
       if (r.error) {
-        lines.push(`| \`${r.name}@${r.version}\` | — | ${BADGE.ERROR} | ${r.error} |`);
+        lines.push(`| ${packageCell(r)} | — | ${BADGE.ERROR} | ${r.error} |`);
         continue;
       }
-      for (const row of r.rows) {
-        const signals = row.signals.length > 0
-          ? row.signals.map((s) => `\`${s.replace(/\|/g, '¦')}\``).join('<br>') : '—';
-        lines.push(`| \`${r.name}@${r.version}\` | ${row.script} | ${BADGE[row.risk]} | ${signals} |`);
+      if (r.rows.length === 0) {
+        lines.push(`| ${packageCell(r)} | — | ${badge} | flagged by OSV advisory |`);
+        continue;
       }
+      r.rows.forEach((row, i) => {
+        const cell = [];
+        if (row.signals.length > 0) cell.push(row.signals.map((s) => `\`${esc(s)}\``).join('<br>'));
+        if (i === 0 && gainedNote(r)) cell.push(gainedNote(r));
+        lines.push(`| ${packageCell(r)} | ${row.script} | ` +
+          `${r.malicious ? badge : BADGE[row.risk]} | ${cell.join('<br>') || '—'} |`);
+      });
     }
     lines.push('');
   }
@@ -58,12 +95,13 @@ function buildReport(results, { note } = {}) {
 // mapped from risk, anchored to the package's line in the lockfile so alerts
 // annotate the right place.
 const SARIF_RULES = {
+  MALICIOUS: { id: 'known-malicious-package', text: 'Package is flagged as malicious by an OSV advisory' },
   HIGH: { id: 'high-risk-install-script', text: 'Install script can spawn processes or execute dynamically-built code' },
   MEDIUM: { id: 'network-install-script', text: 'Install script can reach the network' },
   LOW: { id: 'fs-env-install-script', text: 'Install script writes files or reads environment variables' },
   ERROR: { id: 'audit-error', text: 'Package could not be fetched from the registry for auditing' },
 };
-const SARIF_LEVEL = { HIGH: 'error', MEDIUM: 'warning', LOW: 'note', ERROR: 'note' };
+const SARIF_LEVEL = { MALICIOUS: 'error', HIGH: 'error', MEDIUM: 'warning', LOW: 'note', ERROR: 'note' };
 
 function buildSarif(results, { lockPath = 'package-lock.json', lockText = '' } = {}) {
   const uri = lockPath.replace(/\\/g, '/');
@@ -75,12 +113,12 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '' } =
   };
   const sarifResults = [];
   for (const r of results) {
-    const risk = packageRisk(r);
+    const risk = r.malicious ? 'MALICIOUS' : packageRisk(r);
     if (risk === 'SAFE') continue;
-    const detail = r.error
-      ? r.error
-      : r.rows.filter((row) => row.risk !== 'SAFE')
-        .map((row) => `${row.script}: ${row.signals.join(' · ') || row.command}`).join(' | ');
+    const detail = r.malicious ? `Advisories: ${r.advisories.join(', ')}`
+      : r.error ? r.error
+        : r.rows.filter((row) => row.risk !== 'SAFE')
+          .map((row) => `${row.script}: ${row.signals.join(' · ') || row.command}`).join(' | ');
     sarifResults.push({
       ruleId: SARIF_RULES[risk].id,
       level: SARIF_LEVEL[risk],

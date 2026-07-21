@@ -27,6 +27,11 @@ inputs:
       If set, audit only packages added or upgraded relative to this base
       lockfile (e.g. one extracted from the PR base branch)
     default: ''
+  trust:
+    description: >-
+      Enrich risky packages with OSV known-malicious advisories, publish age,
+      weekly downloads, and provenance ('false' to disable)
+    default: 'true'
   github-token:
     description: Token used to post the PR comment
     default: ${{ github.token }}
@@ -44,5 +49,6 @@ runs:
         INPUT_COMMENT_ON_PR: ${{ inputs.comment-on-pr }}
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
         INPUT_DIFF_BASE: ${{ inputs.diff-base }}
+        INPUT_TRUST: ${{ inputs.trust }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: node "$GITHUB_ACTION_PATH/src/action.js"

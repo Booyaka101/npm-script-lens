@@ -10,6 +10,7 @@ const { spawn } = require('node:child_process');
 const tar = require('tar-stream');
 
 const ROOT = path.join(__dirname, '..');
+const CLI = path.join(ROOT, 'src', 'cli.js');
 let server, tmp, projDir, basePath, requests = [];
 
 function makeTgz(entries) {
@@ -26,70 +27,229 @@ function makeTgz(entries) {
   });
 }
 
+const writeLock = (file, packages) => fs.writeFileSync(file, JSON.stringify({
+  lockfileVersion: 3,
+  packages: { '': { name: 'proj', version: '1.0.0' }, ...packages },
+}, null, 2));
+
+const writeProj = (name, packages, pkgJson = { name: 'proj', version: '1.0.0' }) => {
+  const dir = path.join(tmp, name);
+  fs.mkdirSync(dir, { recursive: true });
+  writeLock(path.join(dir, 'package-lock.json'), packages);
+  fs.writeFileSync(path.join(dir, 'package.json'), `${JSON.stringify(pkgJson, null, 2)}\n`);
+  return dir;
+};
+
+function runCli(args, { input } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd: ROOT, timeout: 60000, env: { ...process.env } });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    if (input !== undefined) child.stdin.write(input);
+    child.stdin.end();
+    child.on('exit', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
 before(async () => {
+  const netScript = { 'package/package.json': JSON.stringify({ scripts: { postinstall: 'node p.js' } }),
+    'package/p.js': 'require("https").get("https://x.io");' };
   const tarballs = {
-    '/pkga.tgz': await makeTgz({
+    '/pkga.tgz': await makeTgz(netScript),
+    '/pkgc1.tgz': await makeTgz({
       'package/package.json': JSON.stringify({ scripts: { postinstall: 'node p.js' } }),
-      'package/p.js': 'require("https").get("https://x.io");',
+      'package/p.js': 'const v = process.env.FOO;',
     }),
+    '/pkgc2.tgz': await makeTgz(netScript),
   };
   server = http.createServer((req, res) => {
-    requests.push(req.url);
-    const port = server.address().port;
-    if (tarballs[req.url]) return res.writeHead(200).end(tarballs[req.url]);
-    const doc = {
-      '/pkga/1.0.0': { version: '1.0.0', scripts: { postinstall: 'node p.js' },
-        dist: { tarball: `http://127.0.0.1:${port}/pkga.tgz` } },
-      '/pkgb/2.0.0': { version: '2.0.0', scripts: {}, dist: { tarball: `http://127.0.0.1:${port}/none.tgz` } },
-    }[req.url];
-    if (!doc) return res.writeHead(404).end('{}');
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(doc));
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      requests.push(req.url);
+      const port = server.address().port;
+      if (tarballs[req.url]) return res.writeHead(200).end(tarballs[req.url]);
+      if (req.url === '/v1/querybatch') {
+        const queries = JSON.parse(body).queries;
+        return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+          results: queries.map((q) => (q.package.name === 'pkga' && q.version === '1.0.0'
+            ? { vulns: [{ id: 'MAL-2026-0001' }, { id: 'GHSA-not-mal' }] } : {})),
+        }));
+      }
+      if (req.url === '/downloads/point/last-week/pkga') {
+        return res.writeHead(200, { 'content-type': 'application/json' }).end('{"downloads":42}');
+      }
+      const scriptedDoc = (v, tgz) => ({ version: v, scripts: { postinstall: 'node p.js' },
+        dist: { tarball: `http://127.0.0.1:${port}${tgz}` } });
+      const doc = {
+        '/pkga/1.0.0': scriptedDoc('1.0.0', '/pkga.tgz'),
+        '/pkga/0.9.0': scriptedDoc('0.9.0', '/pkga.tgz'),
+        '/pkgb/2.0.0': { version: '2.0.0', scripts: {}, dist: { tarball: `http://127.0.0.1:${port}/none.tgz` } },
+        '/pkgc/1.0.0': scriptedDoc('1.0.0', '/pkgc1.tgz'),
+        '/pkgc/2.0.0': scriptedDoc('2.0.0', '/pkgc2.tgz'),
+        '/pkga': {
+          time: { '1.0.0': '2026-07-01T00:00:00.000Z' },
+          maintainers: [{ name: 'solo' }],
+          versions: { '1.0.0': { dist: { attestations: { url: 'sigstore' } } } },
+        },
+      }[req.url];
+      if (!doc) return res.writeHead(404).end('{}');
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(doc));
+    });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  process.env.NPM_SCRIPT_LENS_REGISTRY = `http://127.0.0.1:${server.address().port}`;
+  const base = `http://127.0.0.1:${server.address().port}`;
+  process.env.NPM_SCRIPT_LENS_REGISTRY = base;
+  process.env.NPM_SCRIPT_LENS_OSV_API = base;
+  process.env.NPM_SCRIPT_LENS_DL_API = base;
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-feat-'));
   process.env.NPM_SCRIPT_LENS_CACHE_DIR = path.join(tmp, 'cache');
-  projDir = path.join(tmp, 'proj');
-  fs.mkdirSync(projDir);
-  fs.writeFileSync(path.join(projDir, 'package-lock.json'), JSON.stringify({
-    lockfileVersion: 3,
-    packages: {
-      '': { name: 'proj', version: '1.0.0' },
-      'node_modules/pkga': { version: '1.0.0' },
-      'node_modules/pkgb': { version: '2.0.0' },
-    },
-  }, null, 2));
+  projDir = writeProj('proj', {
+    'node_modules/pkga': { version: '1.0.0', dependencies: { pkgb: '^2.0.0' } },
+    'node_modules/pkgb': { version: '2.0.0' },
+  });
   basePath = path.join(tmp, 'base-lock.json');
-  fs.writeFileSync(basePath, JSON.stringify({
-    lockfileVersion: 3,
-    packages: { '': {}, 'node_modules/pkgb': { version: '2.0.0' } },
-  }));
+  writeLock(basePath, { 'node_modules/pkgb': { version: '2.0.0' } });
 });
 
 after(() => server.close());
 
 test('cache: second audit serves from disk with zero registry requests', async () => {
   const { runAudit } = require('../src/cli');
-  const first = await runAudit(projDir);
+  const first = await runAudit(projDir, { trust: false });
   assert.strictEqual(first.length, 2);
   assert.ok(requests.length > 0, 'first run hits the registry');
   const firstRows = first.map((r) => ({ name: r.name, rows: r.rows }));
 
   requests = [];
-  const second = await runAudit(projDir);
+  const second = await runAudit(projDir, { trust: false });
   assert.strictEqual(requests.length, 0, `cached run must not fetch: ${requests}`);
   assert.ok(second.every((r) => r.cached), 'results marked as cached');
   assert.deepStrictEqual(second.map((r) => ({ name: r.name, rows: r.rows })), firstRows);
 
   requests = [];
-  await runAudit(projDir, { cache: false });
+  await runAudit(projDir, { cache: false, trust: false });
   assert.ok(requests.length > 0, 'cache:false goes back to the registry');
 });
 
-test('diff mode audits only packages missing from the base lockfile', async () => {
+test('via chains come from lockfile dependency edges', async () => {
   const { runAudit } = require('../src/cli');
-  const results = await runAudit(projDir, { diffBase: basePath, cache: false });
-  assert.deepStrictEqual(results.map((r) => r.name), ['pkga']);
+  const results = await runAudit(projDir, { trust: false });
+  const byName = Object.fromEntries(results.map((r) => [r.name, r]));
+  assert.deepStrictEqual(byName.pkgb.via, ['pkga']);
+  assert.strictEqual(byName.pkga.via, undefined, 'top-level package has no via chain');
+});
+
+test('diff mode audits only new packages and reports gained capabilities on upgrades', async () => {
+  const { runAudit } = require('../src/cli');
+  const upgProj = writeProj('upgproj', { 'node_modules/pkgc': { version: '2.0.0' } });
+  const upgBase = path.join(tmp, 'upg-base-lock.json');
+  writeLock(upgBase, { 'node_modules/pkgc': { version: '1.0.0' }, 'node_modules/pkgb': { version: '2.0.0' } });
+  const results = await runAudit(upgProj, { diffBase: upgBase, cache: false, trust: false });
+  assert.deepStrictEqual(results.map((r) => r.name), ['pkgc']);
+  assert.strictEqual(results[0].base.version, '1.0.0');
+  assert.ok(results[0].base.gained.some((s) => s.startsWith('net: ')), JSON.stringify(results[0].base));
+  // added (not upgraded) packages carry no base comparison
+  const addResults = await runAudit(projDir, { diffBase: basePath, cache: false, trust: false });
+  assert.deepStrictEqual(addResults.map((r) => r.name), ['pkga']);
+  assert.strictEqual(addResults[0].base, undefined);
+});
+
+test('trust: OSV MAL advisory flags package, forces allowScripts false, renders badge', async () => {
+  const { runAudit } = require('../src/cli');
+  const { buildReport, buildAllowScripts, buildSarif } = require('../src/reporter');
+  const results = await runAudit(projDir, { cache: false });
+  const pkga = results.find((r) => r.name === 'pkga');
+  assert.strictEqual(pkga.malicious, true);
+  assert.deepStrictEqual(pkga.advisories, ['MAL-2026-0001'], 'GHSA ids are not malware flags');
+  assert.deepStrictEqual(pkga.trust, {
+    publishedAt: '2026-07-01T00:00:00.000Z',
+    ageDays: pkga.trust.ageDays,
+    weeklyDownloads: 42,
+    maintainers: 1,
+    provenance: true,
+  });
+  assert.ok(typeof pkga.trust.ageDays === 'number' && pkga.trust.ageDays >= 0);
+  assert.strictEqual(buildAllowScripts(results).allowScripts['pkga@1.0.0'], false);
+  const md = buildReport(results);
+  assert.ok(md.includes('⛔ MALICIOUS'), md.split('\n')[2]);
+  assert.ok(md.includes('KNOWN MALICIOUS'));
+  assert.ok(md.includes('42 dl/wk'));
+  assert.ok(md.includes('provenance ✓'));
+  const sarif = buildSarif(results);
+  const mal = sarif.runs[0].results.find((r) => r.ruleId === 'known-malicious-package');
+  assert.strictEqual(mal.level, 'error');
+});
+
+test('offline mode analyzes node_modules without touching the registry', async () => {
+  const { runAudit } = require('../src/cli');
+  const dir = writeProj('offproj', { 'node_modules/pkgx': { version: '1.0.0' } });
+  const nm = path.join(dir, 'node_modules', 'pkgx');
+  fs.mkdirSync(nm, { recursive: true });
+  fs.writeFileSync(path.join(nm, 'package.json'),
+    JSON.stringify({ name: 'pkgx', version: '1.0.0', scripts: { postinstall: 'node x.js' } }));
+  fs.writeFileSync(path.join(nm, 'x.js'), 'require("child_process").execSync("id");');
+  requests = [];
+  const results = await runAudit(dir, { offline: true, cache: false });
+  assert.strictEqual(requests.length, 0, 'offline audit must not fetch');
+  assert.strictEqual(results[0].rows[0].risk, 'HIGH');
+  // missing from node_modules -> clean per-package error, not a crash
+  const dir2 = writeProj('offproj2', { 'node_modules/ghostpkg': { version: '3.0.0' } });
+  const missing = await runAudit(dir2, { offline: true, cache: false });
+  assert.ok(missing[0].error.includes('offline'), missing[0].error);
+});
+
+test('sync: preserves decisions across no-gain upgrades, drops stale, adds new', async () => {
+  const dir = writeProj('syncproj', {
+    'node_modules/pkga': { version: '1.0.0' },
+    'node_modules/pkgc': { version: '2.0.0' },
+  }, { name: 'proj', version: '1.0.0', allowScripts: { 'pkga@0.9.0': true, 'gone@1.0.0': false } });
+  const out = await runCli(['sync', '--path', dir, '--no-trust', '--no-cache', '--write']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.ok(out.stdout.includes('decision **preserved**'), out.stdout);
+  assert.ok(out.stdout.includes('`gone@1.0.0`'), 'stale entry reported');
+  assert.ok(out.stdout.includes('new: `pkgc@2.0.0`'), out.stdout);
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  assert.deepStrictEqual(pkg.allowScripts, { 'pkga@1.0.0': true, 'pkgc@2.0.0': false });
+  // now in sync: --check exits 0
+  const check = await runCli(['sync', '--path', dir, '--no-trust', '--no-cache', '--check']);
+  assert.strictEqual(check.status, 0, check.stdout + check.stderr);
+});
+
+test('sync --check exits 1 on drift', async () => {
+  const dir = writeProj('syncdrift', { 'node_modules/pkga': { version: '1.0.0' } });
+  const out = await runCli(['sync', '--path', dir, '--no-trust', '--no-cache', '--check']);
+  assert.strictEqual(out.status, 1, out.stdout);
+  assert.ok(out.stderr.includes('out of sync'), out.stderr);
+});
+
+test('approve: interactive decisions are written to package.json', async () => {
+  const dir = writeProj('approveproj', { 'node_modules/pkga': { version: '1.0.0' } });
+  const out = await runCli(['approve', '--path', dir, '--no-trust', '--no-cache'], { input: 'y\n' });
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.ok(out.stdout.includes("net: require('https')"), 'evidence shown before the prompt');
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  assert.deepStrictEqual(pkg.allowScripts, { 'pkga@1.0.0': true });
+});
+
+test('mcp: initialize, tools/list, audit_package over stdio', async () => {
+  const lines = [
+    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } }),
+    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'audit_package', arguments: { name: 'pkga', version: '1.0.0' } } }),
+  ].join('\n') + '\n';
+  const out = await runCli(['mcp'], { input: lines });
+  const responses = out.stdout.trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(responses.length, 3, out.stdout);
+  assert.strictEqual(responses[0].result.serverInfo.name, 'npm-script-lens');
+  assert.ok(responses[1].result.tools.map((t) => t.name).includes('audit_package'));
+  assert.ok(responses[1].result.tools.map((t) => t.name).includes('audit_lockfile'));
+  const payload = JSON.parse(responses[2].result.content[0].text);
+  assert.strictEqual(payload.risk, 'MEDIUM');
+  assert.strictEqual(payload.malicious, true);
+  assert.ok(payload.verdict.startsWith('DO NOT INSTALL'), payload.verdict);
 });
 
 test('buildSarif: levels, rules, lockfile line anchors, note in report', () => {
@@ -106,7 +266,7 @@ test('buildSarif: levels, rules, lockfile line anchors, note in report', () => {
   assert.strictEqual(sarif.version, '2.1.0');
   const run = sarif.runs[0];
   assert.strictEqual(run.tool.driver.name, 'npm-script-lens');
-  assert.ok(run.tool.driver.rules.length >= 4);
+  assert.ok(run.tool.driver.rules.length >= 5);
   const byName = Object.fromEntries(run.results.map((r) => [r.message.text.split('@')[0], r]));
   assert.strictEqual(byName.bad.level, 'error');
   assert.strictEqual(byName.bad.ruleId, 'high-risk-install-script');
@@ -122,18 +282,10 @@ test('buildSarif: levels, rules, lockfile line anchors, note in report', () => {
   assert.ok(md.includes('_Diff mode: subset audited._'));
 });
 
-test('cli e2e: --diff --sarif --json --no-cache work together', async () => {
+test('cli e2e: --diff --sarif --json --no-cache --no-trust work together', async () => {
   const sarifOut = path.join(tmp, 'audit.sarif');
-  const out = await new Promise((resolve) => {
-    const child = spawn(process.execPath, [
-      path.join(ROOT, 'src', 'cli.js'), 'audit',
-      '--path', projDir, '--diff', basePath, '--sarif', sarifOut, '--json', '--no-cache',
-    ], { cwd: ROOT, timeout: 60000, env: { ...process.env } });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
-    child.on('exit', (status) => resolve({ status, stdout, stderr }));
-  });
+  const out = await runCli(['audit', '--path', projDir, '--diff', basePath,
+    '--sarif', sarifOut, '--json', '--no-cache', '--no-trust']);
   assert.strictEqual(out.status, 0, out.stderr);
   assert.ok(out.stderr.includes('added/upgraded'), out.stderr);
   const j = JSON.parse(out.stdout);

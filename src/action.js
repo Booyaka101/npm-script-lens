@@ -32,7 +32,11 @@ async function main() {
   const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
   const target = input('PATH', '.');
   const diffBase = input('DIFF_BASE', '') || null;
-  const results = await runAudit(target, { log: console.log, diffBase });
+  const results = await runAudit(target, {
+    log: console.log,
+    diffBase,
+    trust: input('TRUST', 'true') === 'true',
+  });
   const note = diffBase
     ? `_Diff mode: only packages added or upgraded relative to \`${diffBase}\` were audited._`
     : undefined;
@@ -51,9 +55,9 @@ async function main() {
   if (input('COMMENT_ON_PR', 'true') === 'true' && process.env.GITHUB_EVENT_PATH && process.env.GITHUB_TOKEN) {
     await commentOnPr(report);
   }
-  const high = results.filter((r) => packageRisk(r) === 'HIGH').length;
-  if (input('FAIL_ON_HIGH', 'true') === 'true' && high > 0) {
-    console.log(`::error::${high} package(s) with HIGH risk install scripts`);
+  const bad = results.filter((r) => r.malicious || packageRisk(r) === 'HIGH').length;
+  if (input('FAIL_ON_HIGH', 'true') === 'true' && bad > 0) {
+    console.log(`::error::${bad} package(s) with HIGH risk or known-malicious install scripts`);
     process.exitCode = 1;
   }
 }

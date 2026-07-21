@@ -34,4 +34,25 @@ function cacheSet(name, version, rows) {
   } catch { /* cache is best-effort */ }
 }
 
-module.exports = { cacheGet, cacheSet, cacheDir };
+// Trust data (downloads, advisories, provenance) drifts over time — same disk
+// cache, but with a TTL instead of tool-version pinning.
+const TRUST_TTL_MS = 24 * 60 * 60 * 1000;
+const trustFile = (name, version) => path.join(cacheDir(), `trust-${name.replace('/', '+')}@${version}.json`);
+
+function trustGet(name, version) {
+  try {
+    const doc = JSON.parse(fs.readFileSync(trustFile(name, version), 'utf8'));
+    return Date.now() - doc.ts < TRUST_TTL_MS ? doc.trust : null;
+  } catch {
+    return null;
+  }
+}
+
+function trustSet(name, version, trust) {
+  try {
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.writeFileSync(trustFile(name, version), JSON.stringify({ ts: Date.now(), trust }));
+  } catch { /* cache is best-effort */ }
+}
+
+module.exports = { cacheGet, cacheSet, cacheDir, trustGet, trustSet };

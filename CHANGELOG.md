@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- **Behavioral upgrade diff**: in `--diff` mode, packages that changed version
+  are compared against the base version's analysis and the report calls out
+  **capabilities the upgrade gained** — the fingerprint of a hijacked release.
+- **`sync` command**: reconcile the `allowScripts` block in package.json with
+  the lockfile. Stale entries dropped, upgrades re-pinned (previous decisions
+  preserved when nothing was gained, flagged for re-review otherwise), new
+  packages added. `--write` applies, `--check` gates CI.
+- **`approve` command**: interactive, evidence-driven approval — steps through
+  risky packages and writes decisions to package.json.
+- **Trust context**: risky packages are enriched with publish age, weekly
+  downloads, maintainer count, and sigstore provenance; every audited package
+  is checked against OSV — `MAL-*` advisories render as ⛔ KNOWN MALICIOUS,
+  always `false` in allowScripts, and fail `--fail-on-high`.
+- **Via chains**: reports show how a package entered the tree
+  (`via prisma → @prisma/engines`), derived from lockfile dependency edges in
+  all supported formats.
+- **`--offline`**: analyze packages from `node_modules` on disk — air-gapped
+  audits, zero network.
+- **`bun.lock` support** (text lockfile; JSONC tolerated).
+- **MCP server** (`npm-script-lens mcp`): stdio server with `audit_package`
+  and `audit_lockfile` tools so AI coding agents can audit a package before
+  adding it as a dependency.
+
 ## 0.2.0 (2026-07-21)
 
 - **yarn and pnpm lockfiles**: `yarn.lock` (classic v1 and berry) and

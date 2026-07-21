@@ -1,4 +1,6 @@
 'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
 const zlib = require('node:zlib');
 const { Readable } = require('node:stream');
 const tar = require('tar-stream');
@@ -83,4 +85,49 @@ async function fetchPackage(name, version) {
   return { name, version, scripts, allScripts, files, implicitGyp };
 }
 
-module.exports = { fetchPackage, LIFECYCLE, REGISTRY };
+// Offline mode: index the package already unpacked in node_modules the same
+// way downloadTarball indexes a tarball (js/json/gyp text files, size-capped).
+function indexLocalDir(dir) {
+  const files = new Map();
+  const walk = (d, rel) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (files.size >= 400) return;
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      const full = path.join(d, e.name);
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(full, r);
+      else if (/\.(js|cjs|mjs|json|gyp)$/.test(e.name) && e.isFile()) {
+        if (fs.statSync(full).size <= MAX_FILE_BYTES) files.set(r, fs.readFileSync(full, 'utf8'));
+      }
+    }
+  };
+  walk(dir, '');
+  return files;
+}
+
+// Same contract as fetchPackage, sourced from disk. lockKey (npm lockfiles
+// only) points at the exact install path, which finds nested/deduped copies;
+// otherwise the top-level node_modules/<name> is tried.
+function loadLocalPackage(name, version, projectDir, lockKey) {
+  const candidates = [];
+  if (lockKey) candidates.push(path.join(projectDir, ...lockKey.split('/')));
+  candidates.push(path.join(projectDir, 'node_modules', ...name.split('/')));
+  const dir = candidates.find((c) => fs.existsSync(path.join(c, 'package.json')));
+  if (!dir) throw new Error('not found in node_modules (offline mode)');
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  if (pkgJson.version !== version) {
+    throw new Error(`node_modules has ${pkgJson.version}, lockfile wants ${version} (offline mode)`);
+  }
+  const allScripts = pkgJson.scripts || {};
+  const scripts = pickLifecycle(allScripts);
+  const hasGyp = fs.existsSync(path.join(dir, 'binding.gyp'));
+  if (Object.keys(scripts).length === 0 && !hasGyp) {
+    return { name, version, scripts, allScripts, files: new Map(), implicitGyp: false };
+  }
+  const files = indexLocalDir(dir);
+  const implicitGyp = hasGyp && !scripts.install && !scripts.preinstall;
+  if (implicitGyp) scripts.install = 'node-gyp rebuild';
+  return { name, version, scripts, allScripts, files, implicitGyp };
+}
+
+module.exports = { fetchPackage, loadLocalPackage, LIFECYCLE, REGISTRY };
