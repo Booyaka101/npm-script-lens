@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-07-21)
 
 - **Cross-package bin resolution**: `husky install`-style scripts are no
   longer conservatively HIGH — when a lockfile package with the same name
