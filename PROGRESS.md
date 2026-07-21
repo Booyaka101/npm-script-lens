@@ -45,8 +45,13 @@
 - `npm whoami` → **401, not logged in**. Owner must `npm login` then `npm publish` (pack-verified; name free as of 2026-07-21).
 - Hosting account decided by owner (2026-07-21): **Booyaka101** — all repo URLs updated; repo created public, pushed, tagged `v0.2.0` + `v1`.
 
-## Next steps (owner actions)
-1. `npm login` + `npm publish`.
-2. Push to the chosen GitHub account, tag `v1` → Action usable; ci.yml + self-audit.yml activate.
-3. Post the sample report in npm/rfcs#897 + GitHub community discussion #198547 (npm v12 migration) — the distribution wedge.
-4. v0.3 ideas: SARIF `--diff` fingerprint stability across lockfile moves, workspaces-aware allowScripts placement, watch mode for Dependabot branches.
+## Distribution (2026-07-21, all done except Marketplace)
+- npm-script-lens@0.3.0 published to npm by owner; registry install verified end-to-end.
+- Promo posted (owner-approved, from Booyaka101):
+  - npm/rfcs#897 → https://github.com/npm/rfcs/issues/897#issuecomment-5034525452 (framed as prior art for the first-party approve-scripts report; RRFC author vbjay has a competing/complementary npm-cli PR — watch for replies)
+  - community discussion → https://github.com/community/community/discussions/198547#discussioncomment-17717113
+- GitHub Marketplace listing: WEB-UI ONLY, owner must click — edit release v0.3.0 → check "Publish this Action to the GitHub Marketplace" → accept dev agreement (first time) → categories Security + Dependency management. action.yml already meets requirements (unique name, description, branding search/red). Requires 2FA on the account.
+
+## Next steps
+1. Owner: Marketplace click-through (above); watch the two threads for replies.
+2. v0.4 ideas: workspaces-aware allowScripts placement, Dependabot-branch watch mode, SARIF fingerprint stability across lockfile moves.
