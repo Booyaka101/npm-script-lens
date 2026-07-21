@@ -1,7 +1,7 @@
 name: npm-script-lens
 description: >-
-  Audit npm lifecycle scripts for behavioral risks (process spawning, network
-  access, filesystem writes) and suggest an npm v12 allowScripts block.
+  Audit npm install scripts for risky behavior (exec, network, fs,
+  obfuscation) and suggest an npm v12 allowScripts block.
 branding:
   icon: search
   color: red

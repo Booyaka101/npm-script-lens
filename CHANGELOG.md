@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 (2026-07-21)
+
+- Shorten the Action description to fit the GitHub Marketplace 125-character
+  limit. No functional changes.
+
 ## 0.3.0 (2026-07-21)
 
 - **Behavioral upgrade diff**: in `--diff` mode, packages that changed version
