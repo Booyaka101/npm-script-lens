@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-07-21)
 
 - **`manifest` command**: writes a stable, committable receipt of install-time
   behavior (`script-lens.json`) — sorted `name@version` → capability kinds —
