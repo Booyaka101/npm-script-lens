@@ -9,7 +9,7 @@ const { analyzePackage, walkFiles, resolveFile, score } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
-const { buildReport, buildAllowScripts, buildSarif, packageRisk } = require('./reporter');
+const { buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk } = require('./reporter');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
@@ -333,6 +333,51 @@ async function approveAction(opts) {
   process.stdout.write(`wrote ${Object.keys(decisions).length} decision(s) to ${pkgPath}\n`);
 }
 
+// --- manifest: a committable behavior receipt, diffable in git ------------
+
+async function manifestAction(opts) {
+  const { path: lp } = resolveLockfile(opts.path);
+  const file = path.isAbsolute(opts.out) ? opts.out : path.join(path.dirname(lp), opts.out);
+  const results = await runAudit(opts.path, {
+    log: (m) => process.stderr.write(`${m}\n`),
+    cache: opts.cache,
+    trust: false, // behavior receipt is deterministic — no OSV/downloads
+    offline: opts.offline,
+    deep: opts.deep,
+  });
+  const { manifest, errors } = buildManifest(results, { deep: opts.deep });
+  const json = serializeManifest(manifest);
+  const count = Object.keys(manifest.packages).length;
+  if (errors.length > 0) {
+    process.stderr.write(`warning: ${errors.length} package(s) could not be fetched and are omitted: ${errors.slice(0, 5).join(', ')}${errors.length > 5 ? '…' : ''}\n`);
+  }
+  if (opts.check) {
+    if (!fs.existsSync(file)) {
+      process.stderr.write(`FAIL: no manifest at ${file} — run: npm-script-lens manifest --write\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const committed = fs.readFileSync(file, 'utf8');
+    if (committed === json) {
+      process.stderr.write(`manifest up to date (${count} package(s) with install-time behavior)\n`);
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(committed); } catch { parsed = {}; }
+    process.stderr.write('FAIL: audit manifest is out of date. Install-time behavior changed:\n');
+    for (const line of diffManifests(parsed, manifest)) process.stderr.write(`  ${line}\n`);
+    process.stderr.write('\nReview the changes, then run: npm-script-lens manifest --write\n');
+    process.exitCode = 1;
+    return;
+  }
+  if (opts.write) {
+    fs.writeFileSync(file, json);
+    process.stderr.write(`wrote ${file} (${count} package(s) with install-time behavior)\n`);
+  } else {
+    process.stdout.write(json);
+  }
+}
+
 if (require.main === module) {
   program.name('npm-script-lens')
     .description('Audit npm lifecycle scripts for behavioral risks before approving them under npm v12 allowScripts')
@@ -359,6 +404,12 @@ if (require.main === module) {
   common(program.command('approve'))
     .description('step through risky packages interactively and write allowScripts decisions')
     .action(approveAction);
+  common(program.command('manifest'))
+    .description('write or verify a committable behavior receipt whose git diff is the approval-surface change')
+    .option('--out <file>', 'manifest file (relative paths resolve next to the lockfile)', 'script-lens.json')
+    .option('--write', 'write the manifest to disk')
+    .option('--check', 'exit 1 if the committed manifest is out of date (for CI)')
+    .action(manifestAction);
   program.command('mcp')
     .description('run as an MCP server on stdio (tools: audit_package, audit_lockfile)')
     .action(() => require('./mcp').serve());

@@ -311,6 +311,57 @@ test('--deep follows bare requires into lockfile packages; refs never leak', asy
   assert.ok(dRow.signals.includes("net: require('https') (via helper)"), JSON.stringify(dRow.signals));
 });
 
+test('manifest: stable behavior receipt, --check passes clean and fails with a diff on drift', async () => {
+  const { buildManifest, serializeManifest, diffManifests } = require('../src/reporter');
+  const dir = writeProj('manproj', { 'node_modules/pkga': { version: '1.0.0' } });
+
+  // write
+  const write = await runCli(['manifest', '--path', dir, '--write', '--no-cache']);
+  assert.strictEqual(write.status, 0, write.stderr);
+  const file = path.join(dir, 'script-lens.json');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.strictEqual(manifest.tool, 'npm-script-lens');
+  assert.deepStrictEqual(manifest.packages['pkga@1.0.0'], { risk: 'MEDIUM', capabilities: ['net'] });
+  assert.ok(!('deep' in manifest), 'deep flag omitted when off');
+  // trust data must never leak into the receipt
+  assert.ok(!JSON.stringify(manifest).includes('dl/wk') && !('malicious' in (manifest.packages['pkga@1.0.0'])));
+
+  // check: clean
+  const clean = await runCli(['manifest', '--path', dir, '--check', '--no-cache']);
+  assert.strictEqual(clean.status, 0, clean.stderr);
+  assert.ok(clean.stderr.includes('up to date'), clean.stderr);
+
+  // check: drift — tamper the committed capabilities, expect exit 1 + a diff line
+  const tampered = JSON.parse(fs.readFileSync(file, 'utf8'));
+  tampered.packages['pkga@1.0.0'].capabilities = ['fs'];
+  tampered.packages['pkga@1.0.0'].risk = 'LOW';
+  fs.writeFileSync(file, serializeManifest(tampered));
+  const drift = await runCli(['manifest', '--path', dir, '--check', '--no-cache']);
+  assert.strictEqual(drift.status, 1, drift.stderr);
+  assert.ok(drift.stderr.includes('out of date'), drift.stderr);
+  assert.ok(/~ pkga@1\.0\.0\s+LOW \[fs\] → MEDIUM \[net\]/.test(drift.stderr), drift.stderr);
+
+  // check: missing file
+  fs.unlinkSync(file);
+  const missing = await runCli(['manifest', '--path', dir, '--check', '--no-cache']);
+  assert.strictEqual(missing.status, 1);
+  assert.ok(missing.stderr.includes('manifest --write'), missing.stderr);
+
+  // unit: added/removed lines and deterministic serialization
+  const base = buildManifest([
+    { name: 'a', version: '1.0.0', rows: [{ signals: ['exec: x'] }] },
+    { name: 'b', version: '1.0.0', rows: [{ signals: ['fs: y', 'ref: internal'] }] },
+  ]).manifest;
+  assert.deepStrictEqual(Object.keys(base.packages), ['a@1.0.0', 'b@1.0.0']);
+  assert.deepStrictEqual(base.packages['b@1.0.0'].capabilities, ['fs'], 'ref: breadcrumbs excluded');
+  assert.strictEqual(serializeManifest(base), serializeManifest(base), 'stable');
+  const next = buildManifest([{ name: 'a', version: '2.0.0', rows: [{ signals: ['exec: x', 'net: z'] }] }]).manifest;
+  const lines = diffManifests(base, next);
+  assert.ok(lines.some((l) => l.startsWith('+ a@2.0.0')));
+  assert.ok(lines.some((l) => l.startsWith('- a@1.0.0')));
+  assert.ok(lines.some((l) => l.startsWith('- b@1.0.0')));
+});
+
 test('buildSarif: levels, rules, lockfile line anchors, note in report', () => {
   const { buildSarif, buildReport } = require('../src/reporter');
   const results = [

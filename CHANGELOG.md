@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **`manifest` command**: writes a stable, committable receipt of install-time
+  behavior (`script-lens.json`) — sorted `name@version` → capability kinds —
+  so the git diff of that file is the approval-surface change, reviewable with
+  no tooling. `--check` fails CI on drift with a human-readable diff; the
+  Action gains a `manifest-check` input that reports drift to the job summary.
+  Behavior-only and deterministic (no trust/OSV data), so it changes when
+  capabilities change, not popularity. Closes #1 (thanks @raju_dandigam).
+
 ## 0.4.0 (2026-07-21)
 
 - **Cross-package bin resolution**: `husky install`-style scripts are no

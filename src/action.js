@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { runAudit } = require('./cli');
 const { resolveLockfile } = require('./lockfiles');
-const { buildReport, buildSarif, packageRisk } = require('./reporter');
+const { buildReport, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk } = require('./reporter');
 
 // POST the report as a PR comment via the GitHub REST API (the same
 // issues.createComment call octokit makes, sans the dependency).
@@ -60,6 +60,29 @@ async function main() {
   if (input('FAIL_ON_HIGH', 'true') === 'true' && bad > 0) {
     console.log(`::error::${bad} package(s) with HIGH risk or known-malicious install scripts`);
     process.exitCode = 1;
+  }
+  // manifest-check: fail when the committed behavior receipt is stale
+  if (input('MANIFEST_CHECK', 'false') === 'true') {
+    const { path: lp } = resolveLockfile(target);
+    const file = path.join(path.dirname(lp), input('MANIFEST_FILE', 'script-lens.json'));
+    const { manifest } = buildManifest(results, { deep: input('DEEP', 'false') === 'true' });
+    const json = serializeManifest(manifest);
+    if (!fs.existsSync(file)) {
+      console.log(`::error::no audit manifest at ${file} — run: npx npm-script-lens manifest --write`);
+      process.exitCode = 1;
+    } else if (fs.readFileSync(file, 'utf8') !== json) {
+      let parsed; try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { parsed = {}; }
+      const drift = diffManifests(parsed, manifest);
+      console.log('::error::audit manifest is out of date — install-time behavior changed');
+      for (const line of drift) console.log(`::warning::${line}`);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+          `\n## ⚠️ Audit manifest out of date\n\n${drift.map((l) => `- \`${l}\``).join('\n')}\n\nRun \`npx npm-script-lens manifest --write\` and commit \`${input('MANIFEST_FILE', 'script-lens.json')}\`.\n`);
+      }
+      process.exitCode = 1;
+    } else {
+      console.log('audit manifest up to date');
+    }
   }
 }
 

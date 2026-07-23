@@ -14,3 +14,4 @@ jobs:
           path: package-lock.json
           fail-on-high: 'true'
           comment-on-pr: 'true'
+          manifest-check: 'true'

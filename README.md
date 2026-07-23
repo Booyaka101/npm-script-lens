@@ -60,6 +60,27 @@ npx npm-script-lens approve          # step through risky packages interactively
                                      # evidence per package, y/n, written to package.json
 ```
 
+## Committed audit manifest
+
+The strongest review signal is a diff a human already reads: the PR diff itself. `manifest` writes a **stable, minimal receipt of install-time behavior** — sorted `name@version` → capability kinds — that you commit next to your lockfile. When a dependency change alters what install scripts *can do*, the git diff of that file **is** the approval-surface change, reviewable with zero tooling:
+
+```bash
+npx npm-script-lens manifest --write     # writes script-lens.json next to the lockfile
+npx npm-script-lens manifest --check     # CI: exit 1 if behavior drifted from the committed file
+```
+
+```json
+{
+  "tool": "npm-script-lens",
+  "version": "0.4.0",
+  "packages": {
+    "sharp@0.33.5": { "risk": "HIGH", "capabilities": ["env", "exec", "obf"] }
+  }
+}
+```
+
+It records *behavior only* — no download counts, publish age, or OSV status — so the file changes when a package's capabilities change, not when its popularity does (live malware/trust checks stay in `audit`). A bump in the `version` field means the detector itself changed and results are worth re-reviewing. In the Action, set `manifest-check: 'true'` to fail PRs that leave the manifest stale, with the drift written to the job summary. _(Requested by [@raju_dandigam](https://dev.to/booyaka101/npm-v12-stopped-running-install-scripts-which-ones-do-you-approve-a-real-audit-walkthrough-b1l#comments) — thanks!)_
+
 ## MCP server (for AI agents)
 
 ```bash

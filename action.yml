@@ -37,6 +37,14 @@ inputs:
       Also analyze lockfile packages that install scripts require() by bare
       name ('true' to enable)
     default: 'false'
+  manifest-check:
+    description: >-
+      Fail the job when the committed behavior manifest is out of date
+      ('true' to enable)
+    default: 'false'
+  manifest-file:
+    description: Manifest filename, resolved next to the lockfile
+    default: script-lens.json
   github-token:
     description: Token used to post the PR comment
     default: ${{ github.token }}
@@ -56,5 +64,7 @@ runs:
         INPUT_DIFF_BASE: ${{ inputs.diff-base }}
         INPUT_TRUST: ${{ inputs.trust }}
         INPUT_DEEP: ${{ inputs.deep }}
+        INPUT_MANIFEST_CHECK: ${{ inputs.manifest-check }}
+        INPUT_MANIFEST_FILE: ${{ inputs.manifest-file }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: node "$GITHUB_ACTION_PATH/src/action.js"

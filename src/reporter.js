@@ -152,4 +152,65 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '' } =
   };
 }
 
-module.exports = { buildReport, buildAllowScripts, buildSarif, packageRisk };
+// A stable, minimal, committable "receipt" of install-time behavior: sorted
+// package keys -> { risk, capabilities } where capabilities are the signal
+// KINDS (exec/net/fs/env/obf/bin), not the volatile human-readable strings.
+// Deliberately excludes trust data (downloads, age, OSV) so the file changes
+// only when a package's *behavior* changes — the git diff of this file IS the
+// approval-surface change. Deterministic per tool version, so it round-trips
+// through `manifest --check`.
+function packageCapabilities(r) {
+  const kinds = new Set();
+  for (const row of r.rows) {
+    for (const s of row.signals) {
+      const kind = s.split(':')[0];
+      if (kind !== 'ref') kinds.add(kind);
+    }
+  }
+  return [...kinds].sort();
+}
+
+function buildManifest(results, { deep = false } = {}) {
+  const packages = {};
+  const errors = [];
+  for (const r of results) {
+    const key = `${r.name}@${r.version}`;
+    if (r.error) { errors.push(key); continue; }
+    const capabilities = packageCapabilities(r);
+    if (capabilities.length === 0) continue; // no install-time behavior — omit
+    packages[key] = { risk: packageRisk(r), capabilities };
+  }
+  const sorted = {};
+  for (const key of Object.keys(packages).sort()) sorted[key] = packages[key];
+  const manifest = { tool: 'npm-script-lens', version: require('../package.json').version };
+  if (deep) manifest.deep = true;
+  manifest.packages = sorted;
+  return { manifest, errors };
+}
+
+const serializeManifest = (manifest) => `${JSON.stringify(manifest, null, 2)}\n`;
+
+// Human-readable drift between a committed manifest and a freshly built one.
+function diffManifests(oldM, newM) {
+  const changes = [];
+  if ((oldM.version || '?') !== newM.version) {
+    changes.push(`tool ${oldM.version || '?'} → ${newM.version} — detector changed, re-review`);
+  }
+  if (Boolean(oldM.deep) !== Boolean(newM.deep)) {
+    changes.push(`deep mode ${Boolean(oldM.deep)} → ${Boolean(newM.deep)}`);
+  }
+  const oldP = oldM.packages || {}, newP = newM.packages || {};
+  const cap = (e) => (e && e.capabilities ? e.capabilities.join(' ') : '');
+  for (const key of [...new Set([...Object.keys(oldP), ...Object.keys(newP)])].sort()) {
+    if (!(key in oldP)) changes.push(`+ ${key}  ${newP[key].risk} [${cap(newP[key])}]`);
+    else if (!(key in newP)) changes.push(`- ${key}  (no longer has install-time behavior)`);
+    else if (JSON.stringify(oldP[key]) !== JSON.stringify(newP[key])) {
+      changes.push(`~ ${key}  ${oldP[key].risk} [${cap(oldP[key])}] → ${newP[key].risk} [${cap(newP[key])}]`);
+    }
+  }
+  return changes;
+}
+
+module.exports = {
+  buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk,
+};
