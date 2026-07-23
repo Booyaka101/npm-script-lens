@@ -60,6 +60,23 @@ npx npm-script-lens approve          # step through risky packages interactively
                                      # evidence per package, y/n, written to package.json
 ```
 
+## npm v12 approve-scripts bug check
+
+npm v12's own tooling has two known bugs that leave teams with a green `approve-scripts` run and a red `npm ci`:
+
+- **Optional dependency gap** ([npm/cli#9562](https://github.com/npm/cli/issues/9562)): `npm approve-scripts --allow-scripts-pending` never lists optional dependencies — but `npm ci --strict-allow-scripts` still rejects any optional dep with install scripts that is missing from `allowScripts`. The classic trap is `fsevents`: it only *installs* on macOS, so on a Linux CI runner nothing surfaces it, and strict mode fails the build anyway.
+- **EGLOBAL in global installs** ([npm/cli#9463](https://github.com/npm/cli/issues/9463)): when `npm install -g <pkg>` warns about unreviewed install scripts, the suggested `npm approve-scripts` command errors with `EGLOBAL` — there is no post-install approval path in global contexts. The working form is allowing at install time: `npm install -g --allow-scripts=<pkg> <pkg>`.
+
+```bash
+npx npm-script-lens audit --check-v12-gaps            # markdown report
+npx npm-script-lens audit --check-v12-gaps --json     # { findings: [...] }
+npx npm-script-lens audit --check-v12-gaps --sarif v12.sarif
+```
+
+The first check reads `optional` + `hasInstallScript` from your `package-lock.json`, resolves the actual script names from registry metadata, and flags every optional dep with install scripts that your `allowScripts` block doesn't cover (bare-name and version-pinned keys both count as decisions). The second scans `.github/workflows/*.yml` for `npm install -g` / `npm i -g` lines, checks each installed package's registry metadata for install scripts, and flags the ones without an `--allow-scripts` guard — anchored to the exact workflow file and line. Findings are severity `warn` and never fail the run; packages the registry can't confirm are skipped rather than guessed (except when the lockfile itself says `hasInstallScript`, which is trusted even if the registry is unreachable).
+
+In the [GitHub Action](#github-action) this runs as a separate step controlled by `check-v12-gaps` (default `auto`: runs only when the runner's npm is v12+). It writes to the job summary, emits `::warning` annotations, and merges its findings into the SARIF file from the main audit step so code scanning shows them too.
+
 ## Committed audit manifest
 
 The strongest review signal is a diff a human already reads: the PR diff itself. `manifest` writes a **stable, minimal receipt of install-time behavior** — sorted `name@version` → capability kinds — that you commit next to your lockfile. When a dependency change alters what install scripts *can do*, the git diff of that file **is** the approval-surface change, reviewable with zero tooling:
@@ -134,7 +151,7 @@ jobs:
 
 The action writes the report to the job summary, comments on the PR (plain GitHub REST `issues/comments` call using `GITHUB_TOKEN` — same endpoint octokit uses), and fails the job when `fail-on-high` is true and a HIGH package exists.
 
-Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch) and `sarif-file` for code scanning alerts:
+Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), and `sarif-file` for code scanning alerts:
 
 ```yaml
       - uses: Booyaka101/npm-script-lens@v1

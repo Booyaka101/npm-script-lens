@@ -1,0 +1,16 @@
+name: release
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # a comment mentioning npm install -g decoy must not trip the check
+      - run: npm install -g toolg
+      - run: npm i -g cleang
+      - run: npm install -g --allow-scripts=guardedg guardedg
+      - run: npm install -g unknowng
+      - run: npm install express
+      - run: npm i -g gypg
+      - name: multi-command line
+        run: npm test && npm i -g toolg@2.0.0 --registry https://registry.npmjs.org

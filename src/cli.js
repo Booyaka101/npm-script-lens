@@ -9,7 +9,8 @@ const { analyzePackage, walkFiles, resolveFile, score } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
-const { buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk } = require('./reporter');
+const { buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport } = require('./reporter');
+const { checkV12Gaps } = require('./v12gaps');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
@@ -156,17 +157,32 @@ async function runAudit(lockPath, {
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function writeSarif(results, target, file) {
+function writeSarif(results, target, file, findings = []) {
   const { path: lp } = resolveLockfile(target);
   let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
   if (rel.startsWith('..')) rel = path.basename(lp);
   fs.writeFileSync(file,
-    JSON.stringify(buildSarif(results, { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8') }), null, 2));
+    JSON.stringify(buildSarif(results, { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8'), findings }), null, 2));
 }
 
 const failCount = (results) => results.filter((r) => r.malicious || packageRisk(r) === 'HIGH').length;
 
+// --check-v12-gaps: only the two npm v12 approve-scripts bug detectors
+// (npm/cli#9562 optional-dep gap, npm/cli#9463 EGLOBAL), same output surfaces
+// as a full audit: Markdown, --json, --sarif, --out.
+async function v12GapsAction(opts) {
+  const findings = await checkV12Gaps(opts.path, { log: (m) => process.stderr.write(`${m}\n`) });
+  const output = opts.json ? JSON.stringify({ findings }, null, 2) : buildGapsReport(findings);
+  if (opts.out) fs.writeFileSync(opts.out, output);
+  else process.stdout.write(`${output}\n`);
+  if (opts.sarif) {
+    writeSarif([], opts.path, opts.sarif, findings);
+    process.stderr.write(`SARIF written to ${opts.sarif}\n`);
+  }
+}
+
 async function auditAction(opts) {
+  if (opts.checkV12Gaps) return v12GapsAction(opts);
   const results = await runAudit(opts.path, {
     log: (m) => process.stderr.write(`${m}\n`),
     cache: opts.cache,
@@ -395,6 +411,7 @@ if (require.main === module) {
     .option('--sarif <file>', 'also write SARIF 2.1.0 for GitHub code scanning')
     .option('--diff <base-lockfile>', 'audit only packages added or upgraded relative to a base lockfile, and report capabilities gained across upgrades')
     .option('--fail-on-high', 'exit 1 if any package scores HIGH or is known malicious')
+    .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .action(auditAction);
   common(program.command('sync'))
     .description('reconcile the allowScripts block in package.json with the lockfile')

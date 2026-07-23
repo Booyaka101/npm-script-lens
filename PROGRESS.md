@@ -1,6 +1,18 @@
 # PROGRESS — npm-script-lens
 
-**State: v0.3.0 RELEASED (2026-07-21, owner go-ahead) — 51/51 tests pass. GitHub: Booyaka101/npm-script-lens, tags v0.2.0 / v0.3.0, `v1` moved to the 0.3.0 commit, GitHub Release published. npm publish still pending owner login.**
+**State: v0.6.0 BUILT locally (2026-07-23) — 62/62 tests pass. Committed locally, NOT pushed (this session's brief forbids external publishing; owner pushes/tags/releases). Prior released state: v0.5.0 on npm + GitHub (Booyaka101/npm-script-lens, `v1` tag).**
+
+## v0.6.0 — npm v12 approve-scripts gap check (2026-07-23, all tested)
+- **src/v12gaps.js**: two detectors for npm v12's own tooling bugs.
+  - `checkOptionalGap` (npm/cli#9562, closed via cli PR #9597 upstream but present in the wild): optional lockfile entries (`optional: true`) with install scripts, missing from `allowScripts` (bare-name AND `name@version` keys count; `false` counts as a decision). `hasInstallScript` from the lock is authoritative in v2/v3 (false ⇒ skip, no fetch); script NAMES come from registry version metadata; registry-unreachable + lockfile-says-scripted still warns with an honest label. npm lockfiles only (the bug is npm's).
+  - `checkEglobal` (npm/cli#9463, closed-not-planned upstream — the trap stays): `npm install|i|add … -g/--global/--location=global` lines in `.github/workflows/*.y(a)ml`, package has install scripts per registry (`/pkg/<exact-ver-or-latest>`), no `--allow-scripts`/`--ignore-scripts` on the command ⇒ finding anchored to file:line. Quote-stripped tokens, value-flag skipping (`--registry x` etc.), shell-separator-aware (`&&`, `;`, `#`…), URL/path specs skipped, unknown-on-registry skipped (no guessing).
+- **Wiring**: `audit --check-v12-gaps` runs ONLY these checks → `buildGapsReport` markdown / `--json` `{findings}` / `--sarif` (rules `v12-optional-gap` + `v12-eglobal-risk` now always in the driver rules; findings level `warning`, anchored to lockfile or workflow line, fingerprint `gap:<id>:<pkg>`). Severity warn ⇒ always exit 0.
+- **Action**: new input `check-v12-gaps` (default `auto`), separate composite step with `if: always()` that gates on `npm --version` major ≥ 12 (or `true` forces), runs `node src/action.js v12-gaps` → job summary + `::warning` per finding + merges results/rules into the SARIF file the audit step wrote (dedup by rule id).
+- **Fixtures**: `fixtures/v12-optional-gap` (gap-opt = finding, covered-opt = allowScripts-covered, clean-opt = no script ⇒ never fetched, ghost-opt = registry-404 fallback, plainpkg = non-optional control) and `fixtures/v12-eglobal` (workflow with scripted/clean/guarded/unknown/non-global/implicit-gyp/multi-command lines).
+- **Tests**: test/v12gaps.test.js — 7 tests (unit + CLI e2e + action e2e w/ SARIF merge) against a mock registry; full suite 62/62 in ~4s.
+- **Real-data verification (live registry, 2026-07-23)**: chokidar@3 project (`npm i --package-lock-only`) → `fsevents@2.3.3` optional-gap finding (the literal package from #9562); workflow `npm install -g sharp@0.33.5` → eglobal finding at deploy.yml:7. Also verified sharp@0.35.3 (latest) dropped its install script ⇒ correctly NOT flagged.
+- **Phase 0 re-verification (2026-07-23)**: github.com/blog changelog URL 404s → canonical is github.blog (2026-06-09 post confirmed: allowScripts off by default in v12, approve-scripts/deny-scripts, allow-scripts config for global/npx). #9562 CLOSED w/ PR #9597; #9463 CLOSED as not planned (flag-at-install-time is the sanctioned path — our fix text matches). Zero paid resources.
+- Version bumped to 0.6.0; committed manifest `script-lens.json` regenerated (it embeds the tool version — regenerate on every bump or self-audit manifest-check fails).
 
 ## v0.3.0 features (all tested, 2026-07-21)
 - **Behavioral upgrade diff**: `--diff` compares upgraded packages against the base version's rows → `base: {version, gained}` per result; report renders "⚠️ gained vs X" / "no new capabilities". The hijacked-release detector.
@@ -53,5 +65,6 @@
 - GitHub Marketplace listing: WEB-UI ONLY, owner must click — edit release v0.3.0 → check "Publish this Action to the GitHub Marketplace" → accept dev agreement (first time) → categories Security + Dependency management. action.yml already meets requirements (unique name, description, branding search/red). Requires 2FA on the account.
 
 ## Next steps
-1. Owner: Marketplace click-through (above); watch the two threads for replies.
-2. v0.4 ideas: workspaces-aware allowScripts placement, Dependabot-branch watch mode, SARIF fingerprint stability across lockfile moves.
+1. Owner: push v0.6.0 (`git push`), tag `v0.6.0`, move `v1` to it, GitHub Release, `npm publish` (logged-in), Marketplace click-through if still pending.
+2. Distribution idea for 0.6.0: comment on npm/cli#9562/#9463 threads that npm-script-lens now detects both gaps pre-CI (owner-approved posts only).
+3. v0.7 ideas: workspaces-aware allowScripts placement, Dependabot-branch watch mode, SARIF fingerprint stability across lockfile moves.

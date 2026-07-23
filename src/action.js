@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { runAudit } = require('./cli');
 const { resolveLockfile } = require('./lockfiles');
-const { buildReport, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk } = require('./reporter');
+const { buildReport, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport } = require('./reporter');
+const { checkV12Gaps } = require('./v12gaps');
 
 // POST the report as a PR comment via the GitHub REST API (the same
 // issues.createComment call octokit makes, sans the dependency).
@@ -86,7 +87,44 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+// `node action.js v12-gaps` — the separate Action step that runs when the
+// runner's npm is v12+: report the approve-scripts gap findings to the job
+// summary, annotate with ::warning (severity is warn, never fails the job),
+// and fold them into the SARIF file the audit step already wrote.
+async function v12GapsMain() {
+  const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
+  const target = input('PATH', '.');
+  const findings = await checkV12Gaps(target, { log: console.log });
+  const report = buildGapsReport(findings);
+  console.log(report);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${report}\n`);
+  for (const f of findings) {
+    const at = f.file ? ` (${f.file}:${f.line})` : '';
+    console.log(`::warning::${f.id}: ${f.package}${at} — ${f.fix}`);
+  }
+  const sarifFile = input('SARIF_FILE', '');
+  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
+    const { path: lp } = resolveLockfile(target);
+    let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
+    if (rel.startsWith('..')) rel = path.basename(lp);
+    const fresh = buildSarif([], { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8'), findings });
+    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
+    const run = sarif.runs && sarif.runs[0];
+    if (run) {
+      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
+      run.tool.driver.rules = run.tool.driver.rules || [];
+      for (const rule of fresh.runs[0].tool.driver.rules) {
+        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
+      }
+      run.results = run.results || [];
+      run.results.push(...fresh.runs[0].results);
+      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
+      console.log(`merged ${findings.length} v12 gap finding(s) into ${sarifFile}`);
+    }
+  }
+}
+
+(process.argv[2] === 'v12-gaps' ? v12GapsMain() : main()).catch((err) => {
   console.log(`::error::${err.message}`);
   process.exitCode = 2;
 });

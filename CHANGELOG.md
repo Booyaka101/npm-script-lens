@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0 (2026-07-23)
+
+- **npm v12 approve-scripts gap check** (`audit --check-v12-gaps`, Action
+  input `check-v12-gaps`): detects the two known bugs in npm v12's
+  approve-scripts tooling.
+  - `v12-optional-gap` ([npm/cli#9562](https://github.com/npm/cli/issues/9562)):
+    optional dependencies with install scripts that
+    `npm approve-scripts --allow-scripts-pending` never surfaces but
+    `npm ci --strict-allow-scripts` rejects (the fsevents-on-Linux trap).
+    Reads `optional`/`hasInstallScript` from package-lock.json, resolves
+    script names from registry metadata, and reports any such package missing
+    from `allowScripts` (bare-name and version-pinned keys both count).
+  - `v12-eglobal-risk` ([npm/cli#9463](https://github.com/npm/cli/issues/9463)):
+    `npm install -g <pkg>` lines in `.github/workflows/*.yml` where the
+    package has install scripts (per registry metadata) and no
+    `--allow-scripts` — there is no post-install approval path in global
+    contexts (`approve-scripts` errors EGLOBAL), so the fix is inline:
+    `npm install -g --allow-scripts=<pkg> <pkg>`.
+  - Findings are severity `warn` (exit 0) and integrate with the existing
+    output surfaces: Markdown report, `--json` (`{ findings: [...] }`), and
+    `--sarif` (new rules `v12-optional-gap` / `v12-eglobal-risk`, results
+    anchored to the lockfile or workflow line).
+  - In the Action, the check runs as a separate step gated on the runner's
+    npm major version (`check-v12-gaps: auto` runs it when npm is v12+;
+    `true`/`false` force). It writes to the job summary, annotates via
+    `::warning`, and merges its findings into the SARIF file the audit step
+    wrote.
+
 ## 0.5.0 (2026-07-21)
 
 - **`manifest` command**: writes a stable, committable receipt of install-time

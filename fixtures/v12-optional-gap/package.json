@@ -1,0 +1,7 @@
+{
+  "name": "v12-optional-gap-fixture",
+  "version": "1.0.0",
+  "allowScripts": {
+    "covered-opt@1.0.0": true
+  }
+}

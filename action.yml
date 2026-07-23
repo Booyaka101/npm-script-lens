@@ -45,6 +45,13 @@ inputs:
   manifest-file:
     description: Manifest filename, resolved next to the lockfile
     default: script-lens.json
+  check-v12-gaps:
+    description: >-
+      Check for npm v12 approve-scripts bugs: optional deps with install
+      scripts missing from allowScripts (npm/cli#9562) and EGLOBAL-prone
+      global installs in workflows (npm/cli#9463). 'auto' runs when the
+      runner's npm is v12+; 'true'/'false' force.
+    default: 'auto'
   github-token:
     description: Token used to post the PR comment
     default: ${{ github.token }}
@@ -68,3 +75,20 @@ runs:
         INPUT_MANIFEST_FILE: ${{ inputs.manifest-file }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: node "$GITHUB_ACTION_PATH/src/action.js"
+    - name: Check npm v12 approve-scripts gaps
+      # runs even when the audit step failed the job on fail-on-high
+      if: ${{ always() && inputs.check-v12-gaps != 'false' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_CHECK_V12_GAPS: ${{ inputs.check-v12-gaps }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: |
+        mode="${INPUT_CHECK_V12_GAPS:-auto}"
+        major="$(npm --version 2>/dev/null | cut -d. -f1)"
+        case "$major" in (''|*[!0-9]*) major=0;; esac
+        if [ "$mode" = "true" ] || { [ "$mode" = "auto" ] && [ "$major" -ge 12 ]; }; then
+          node "$GITHUB_ACTION_PATH/src/action.js" v12-gaps
+        else
+          echo "Skipping npm v12 approve-scripts gap checks (npm major version $major, mode $mode)"
+        fi

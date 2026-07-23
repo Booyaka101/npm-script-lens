@@ -1,0 +1,214 @@
+'use strict';
+// Detectors for two known npm v12 approve-scripts tooling bugs:
+//  - npm/cli#9562: `npm approve-scripts --allow-scripts-pending` never surfaces
+//    optional dependencies, but `npm ci --strict-allow-scripts` rejects any
+//    optional dep with install scripts that is missing from allowScripts.
+//  - npm/cli#9463: `npm approve-scripts` errors with EGLOBAL in global-install
+//    contexts, so CI lines like `npm install -g pkg` have no approval path —
+//    the working form is `npm install -g --allow-scripts=pkg pkg`.
+const fs = require('node:fs');
+const path = require('node:path');
+const { resolveLockfile } = require('./lockfiles');
+const { REGISTRY, LIFECYCLE } = require('./registry');
+
+// Best-effort version metadata: null on any failure — these checks warn on
+// what they can confirm and stay quiet (or fall back to lockfile facts)
+// otherwise.
+async function versionMeta(name, version) {
+  try {
+    const res = await fetch(`${REGISTRY}/${name.replace('/', '%2f')}/${encodeURIComponent(version)}`, {
+      signal: AbortSignal.timeout(30000),
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+const lifecycleNames = (meta) => (meta && meta.scripts
+  ? LIFECYCLE.filter((k) => typeof meta.scripts[k] === 'string')
+  : []);
+
+// Optional entries from a package-lock.json object. hasInstallScript is
+// authoritative in v2/v3 lockfiles (present iff true); null for the v1
+// fallback, where only the registry can answer.
+function collectOptionalDeps(lock) {
+  const out = new Map();
+  if (lock.packages) {
+    for (const [key, entry] of Object.entries(lock.packages)) {
+      if (!key.includes('node_modules/') || !entry.version || entry.link || !entry.optional) continue;
+      const name = entry.name || key.split('node_modules/').pop();
+      if (!name || name.startsWith('.')) continue;
+      const id = `${name}@${entry.version}`;
+      if (!out.has(id)) out.set(id, { name, version: entry.version, hasInstallScript: entry.hasInstallScript === true });
+    }
+  } else if (lock.dependencies) {
+    const visit = (obj) => {
+      for (const [name, entry] of Object.entries(obj)) {
+        if (entry.version && entry.optional) {
+          const id = `${name}@${entry.version}`;
+          if (!out.has(id)) out.set(id, { name, version: entry.version, hasInstallScript: null });
+        }
+        if (entry.dependencies) visit(entry.dependencies);
+      }
+    };
+    visit(lock.dependencies);
+  }
+  return [...out.values()];
+}
+
+const optionalGapFix = (name) => `Add to allowScripts in package.json: { "allowScripts": { "${name}": true } } — npm approve-scripts will not surface this package but npm ci --strict-allow-scripts will reject it (npm/cli#9562)`;
+
+// Check 1 — optional deps with install scripts missing from allowScripts.
+// npm-lockfile-only: the bug lives in npm's own approve-scripts/ci pair.
+async function checkOptionalGap(target, { concurrency = 6 } = {}) {
+  const { path: lockPath, type } = resolveLockfile(target);
+  if (type !== 'npm') return [];
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(lockPath, 'utf8')); } catch { return []; }
+  let allow = {};
+  try {
+    allow = JSON.parse(fs.readFileSync(path.join(path.dirname(lockPath), 'package.json'), 'utf8')).allowScripts || {};
+  } catch { /* no package.json — nothing is approved */ }
+  const candidates = collectOptionalDeps(lock)
+    // hasInstallScript false is authoritative (v2/v3): no install scripts, skip
+    .filter((d) => d.hasInstallScript !== false)
+    // covered under either allowScripts key form: bare name or name@version
+    .filter((d) => !(d.name in allow) && !(`${d.name}@${d.version}` in allow));
+  const findings = [];
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, async () => {
+    while (i < candidates.length) {
+      const d = candidates[i++];
+      const meta = await versionMeta(d.name, d.version);
+      const names = lifecycleNames(meta);
+      let script;
+      if (names.length > 0) script = names.join(', ');
+      else if (meta && meta.hasInstallScript) script = 'install (implicit node-gyp rebuild)';
+      else if (meta) continue; // registry says no install scripts after all
+      else if (d.hasInstallScript === true) script = 'unknown (hasInstallScript in lockfile; registry metadata unavailable)';
+      else continue; // v1 lockfile, registry unreachable — cannot confirm
+      findings.push({
+        id: 'v12-optional-gap',
+        severity: 'warn',
+        package: d.name,
+        version: d.version,
+        script,
+        fix: optionalGapFix(d.name),
+      });
+    }
+  }));
+  return findings.sort((a, b) => a.package.localeCompare(b.package));
+}
+
+// --- check 2: EGLOBAL-prone global installs in CI workflows ---------------
+
+// npm flags that consume the next token, so it must not be read as a package
+// spec.
+const VALUE_FLAGS = new Set(['--registry', '--location', '--prefix', '--loglevel', '--cache', '--userconfig', '--omit', '--include', '--allow-scripts']);
+
+// `npm install|i|add …` occurrences in one line of a workflow run: block.
+// Returns [{ specs, global, allowed }] — allowed when the command already
+// carries --allow-scripts / --ignore-scripts.
+function globalNpmInstalls(line) {
+  const out = [];
+  for (const m of line.matchAll(/\bnpm\s+(?:install|i|add)\b([^&|;><#\n]*)/g)) {
+    const args = m[1].trim().split(/\s+/).filter(Boolean).map((a) => a.replace(/^['"]|['"]$/g, ''));
+    const hit = { specs: [], global: false, allowed: false };
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '-g' || a === '--global' || a === '--location=global') { hit.global = true; continue; }
+      if (a === '--ignore-scripts' || a === '--allow-scripts' || a.startsWith('--allow-scripts=')) {
+        hit.allowed = true;
+        if (a === '--allow-scripts' && args[i + 1] && !args[i + 1].startsWith('-')) i++;
+        continue;
+      }
+      if (a.startsWith('--')) {
+        if (VALUE_FLAGS.has(a)) {
+          if (a === '--location' && args[i + 1] === 'global') hit.global = true;
+          i++;
+        }
+        continue;
+      }
+      if (a.startsWith('-')) continue;
+      // URLs, git refs, tarballs, and paths have no registry metadata to check
+      if (/^(https?:|git(\+|:)|github:|file:|[./~\\])/.test(a)) continue;
+      hit.specs.push(a);
+    }
+    if (hit.global) out.push(hit);
+  }
+  return out;
+}
+
+// "name" | "name@ver" | "@scope/name" | "@scope/name@ver"
+function splitSpec(spec) {
+  const at = spec.indexOf('@', 1);
+  return at > 0 ? { name: spec.slice(0, at), version: spec.slice(at + 1) } : { name: spec, version: null };
+}
+
+function workflowFiles(projectDir) {
+  const dir = path.join(projectDir, '.github', 'workflows');
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  return names.filter((n) => /\.ya?ml$/i.test(n)).sort().map((n) => path.join(dir, n));
+}
+
+const eglobalFix = (name) => `Replace \`npm install -g ${name}\` with \`npm install -g --allow-scripts=${name} ${name}\` — npm approve-scripts fails with EGLOBAL in global install contexts (npm/cli#9463)`;
+
+// Check 2 — `npm install -g <pkg>` in .github/workflows/*.yml where <pkg> has
+// install scripts (per registry metadata) and the command carries no
+// --allow-scripts: there is no post-install approval path (EGLOBAL), the
+// scripts silently stay blocked.
+async function checkEglobal(target, { concurrency = 6 } = {}) {
+  const { path: lockPath } = resolveLockfile(target);
+  const projectDir = path.dirname(lockPath);
+  const sites = [];
+  const seen = new Set();
+  for (const file of workflowFiles(projectDir)) {
+    const rel = path.relative(projectDir, file).replace(/\\/g, '/');
+    fs.readFileSync(file, 'utf8').split(/\r?\n/).forEach((line, idx) => {
+      if (/^\s*#/.test(line)) return;
+      for (const hit of globalNpmInstalls(line)) {
+        if (hit.allowed) continue;
+        for (const spec of hit.specs) {
+          const { name, version } = splitSpec(spec);
+          const key = `${name}~${rel}~${idx + 1}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          sites.push({ name, version, file: rel, line: idx + 1 });
+        }
+      }
+    });
+  }
+  const findings = [];
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, sites.length) }, async () => {
+    while (i < sites.length) {
+      const s = sites[i++];
+      const exact = s.version && /^\d+\.\d+\.\d+/.test(s.version) ? s.version : 'latest';
+      const meta = await versionMeta(s.name, exact);
+      if (!meta) continue; // not on the registry (or unreachable) — cannot confirm
+      const names = lifecycleNames(meta);
+      if (names.length === 0 && !meta.hasInstallScript) continue;
+      findings.push({
+        id: 'v12-eglobal-risk',
+        severity: 'warn',
+        package: s.name,
+        script: names.join(', ') || 'install (implicit node-gyp rebuild)',
+        file: s.file,
+        line: s.line,
+        fix: eglobalFix(s.name),
+      });
+    }
+  }));
+  return findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.package.localeCompare(b.package));
+}
+
+async function checkV12Gaps(target, { log = () => {} } = {}) {
+  const [optional, eglobal] = await Promise.all([checkOptionalGap(target), checkEglobal(target)]);
+  const findings = [...optional, ...eglobal];
+  log(`v12 gap check: ${optional.length} optional-dep gap(s), ${eglobal.length} EGLOBAL-prone global install(s)`);
+  return findings;
+}
+
+module.exports = { checkV12Gaps, checkOptionalGap, checkEglobal, collectOptionalDeps, globalNpmInstalls, splitSpec };
