@@ -12,6 +12,7 @@
 - **Tests**: test/v12gaps.test.js — 7 tests (unit + CLI e2e + action e2e w/ SARIF merge) against a mock registry; full suite 62/62 in ~4s.
 - **Real-data verification (live registry, 2026-07-23)**: chokidar@3 project (`npm i --package-lock-only`) → `fsevents@2.3.3` optional-gap finding (the literal package from #9562); workflow `npm install -g sharp@0.33.5` → eglobal finding at deploy.yml:7. Also verified sharp@0.35.3 (latest) dropped its install script ⇒ correctly NOT flagged.
 - **Phase 0 re-verification (2026-07-23)**: github.com/blog changelog URL 404s → canonical is github.blog (2026-06-09 post confirmed: allowScripts off by default in v12, approve-scripts/deny-scripts, allow-scripts config for global/npx). #9562 CLOSED w/ PR #9597; #9463 CLOSED as not planned (flag-at-install-time is the sanctioned path — our fix text matches). Zero paid resources.
+- **Second-pass re-verification (2026-07-23, later session with the same brief)**: all Phase 0 URLs re-fetched and confirmed; 62/62 tests re-run green; real-data e2e re-run live (fresh `npm i --package-lock-only` chokidar project → fsevents@2.3.3 optional-gap finding; `npm install -g sharp@0.33.5` workflow → eglobal finding at deploy.yml:6). No code changes needed — the brief was already fully shipped as v0.6.0 at commit 2057f2d.
 - Version bumped to 0.6.0; committed manifest `script-lens.json` regenerated (it embeds the tool version — regenerate on every bump or self-audit manifest-check fails).
 
 ## v0.3.0 features (all tested, 2026-07-21)
