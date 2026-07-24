@@ -1,6 +1,16 @@
 # PROGRESS — npm-script-lens
 
-**State: v0.6.0 BUILT locally (2026-07-23) — 62/62 tests pass. Committed locally, NOT pushed (this session's brief forbids external publishing; owner pushes/tags/releases). Prior released state: v0.5.0 on npm + GitHub (Booyaka101/npm-script-lens, `v1` tag).**
+**State: v0.7.0 BUILT locally (2026-07-24) — 72/72 tests pass. Committed locally, NOT pushed (this session's brief forbids external publishing; owner pushes/tags/releases). Prior released state: v0.5.0 on npm + GitHub (Booyaka101/npm-script-lens, `v1` tag); v0.6.0 committed locally.**
+
+## v0.7.0 — `review` subcommand (2026-07-24, all tested)
+- **The pitch**: npm v12's pending list (`approve-scripts --allow-scripts-pending` / `unreviewedScripts` in `install --dry-run --json`) shows script COMMANDS only, never the content of the files they run (pain confirmed in community/discussions/198547, vbjay: "What you do not see is what is inside install.js"). `review` shows the command, the **first 40 lines of the actual file**, the behavioral scan verdict + signals, OSV malware check, and trust — then `--output-allowscripts` writes version-pinned decisions into package.json (merge-preserving; SAFE/LOW→true, HIGH/MEDIUM/malicious→false).
+- **Pending-set detection, both verified against REAL npm 12.0.1** (installed into a scratch dir; npm 12.0.1 warns on node 22.18 but works — wants ^22.22.2 || ^24.15.0 || >=26):
+  - npm ≥ 12: spawn `npm --version` probe, then `npm install --dry-run --json` → parse `unreviewedScripts`. Empirical traps handled: human "add pkg x.y.z" lines precede the JSON **on stdout**; first-ever run in a dir can exit 255 (ignore exit code); when everything is covered npm **omits the key entirely** (absent key + successful summary = definitively nothing pending, NOT a fallback trigger — that's why the version probe exists, npm 10's summary looks identical); works with no lockfile at all. `NPM_SCRIPT_LENS_NPM` env overrides the npm command (tests use stub scripts).
+  - npm < 12 / `--offline`: version probe fails the ≥12 gate (dry-run skipped entirely — saves a pointless slow resolve), fall back to full `runAudit` filtered by allowScripts coverage (bare-name + pinned keys, `false` counts — same semantics npm 12.0.1 exhibits, verified).
+- **Reuse, not duplication**: `auditOne`/`runAudit` (analysis rows, cache), `osvMalicious`+`fetchTrust` (verdicts), `viaChain`, `packageRisk`, `projectPackageJson`/`writePackageJson`/`sortedBlock` (allowScripts writes). New exports: `commandEntryFiles` (analyzer — the `node <file>` targets a command runs, for content display; binding.gyp special-cased for node-gyp), `BADGE` (reporter). New src/review.js: `parseDryRun`, `npmDryRunPending`, `isCovered`.
+- **Tests**: test/review.test.js — 10 tests (parseDryRun/isCovered/commandEntryFiles units; CLI e2e vs mock registry + stub npms for: npm12 path incl. 40-line cap + MAL verdict, covered-npm12 omitted-key path, fallback path, allowScripts coverage, --output-allowscripts merge, --json shape, no-lockfile-no-npm12 clean exit 2). Full suite 72/72 in ~4s.
+- **Real-data verification (2026-07-24, live registry + real npm 12.0.1)**: sharp@0.33.5 project → review via npm v12 dry-run shows install/check.js (first 40 of 42 lines) + HIGH + OSV clean + trust; `--output-allowscripts` wrote `{"sharp@0.33.5": false}`; re-run → real npm v12 reported 0 unreviewed (loop closed). Fallback path with local npm 10.9.3 + real lockfile → identical evidence, honest source line.
+- Version 0.7.0; script-lens.json manifest regenerated (embeds tool version). README: new "review" section with side-by-side vs npm's own pending output.
 
 ## v0.6.0 — npm v12 approve-scripts gap check (2026-07-23, all tested)
 - **src/v12gaps.js**: two detectors for npm v12's own tooling bugs.
@@ -66,6 +76,6 @@
 - GitHub Marketplace listing: WEB-UI ONLY, owner must click — edit release v0.3.0 → check "Publish this Action to the GitHub Marketplace" → accept dev agreement (first time) → categories Security + Dependency management. action.yml already meets requirements (unique name, description, branding search/red). Requires 2FA on the account.
 
 ## Next steps
-1. Owner: push v0.6.0 (`git push`), tag `v0.6.0`, move `v1` to it, GitHub Release, `npm publish` (logged-in), Marketplace click-through if still pending.
-2. Distribution idea for 0.6.0: comment on npm/cli#9562/#9463 threads that npm-script-lens now detects both gaps pre-CI (owner-approved posts only).
-3. v0.7 ideas: workspaces-aware allowScripts placement, Dependabot-branch watch mode, SARIF fingerprint stability across lockfile moves.
+1. Owner: push v0.7.0 (`git push`), tag `v0.7.0`, move `v1` to it, GitHub Release, `npm publish` (logged-in), Marketplace click-through if still pending. (v0.6.0 tag optional — 0.7.0 supersedes.)
+2. Distribution idea for 0.7.0: reply in community/discussions/198547 to vbjay's "you can't see what's inside install.js" thread — `npx npm-script-lens review` is the literal answer (owner-approved posts only). Also npm/cli#9562/#9463 threads for the 0.6.0 gap detectors.
+3. v0.8 ideas: `review` in the GitHub Action (PR comment with pending + content), workspaces-aware allowScripts placement, Dependabot-branch watch mode, SARIF fingerprint stability across lockfile moves.

@@ -5,12 +5,13 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { program } = require('commander');
 const { fetchPackage, loadLocalPackage } = require('./registry');
-const { analyzePackage, walkFiles, resolveFile, score } = require('./analyzer');
+const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
-const { buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport } = require('./reporter');
+const { buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport, BADGE } = require('./reporter');
 const { checkV12Gaps } = require('./v12gaps');
+const { npmDryRunPending, isCovered } = require('./review');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
@@ -349,6 +350,174 @@ async function approveAction(opts) {
   process.stdout.write(`wrote ${Object.keys(decisions).length} decision(s) to ${pkgPath}\n`);
 }
 
+// --- review: pending approvals with actual script content + scan verdict --
+// npm v12's pending list shows only the script command ("node install/check"),
+// never what the file it runs contains. review shows both, plus the existing
+// behavioral scan + OSV verdict, for exactly the packages awaiting a decision.
+
+// Audit exactly the packages npm reported as pending: same analyzers, cache,
+// OSV and trust enrichment as a full audit, scoped to the pending set (which
+// npm can report even when no lockfile exists yet).
+async function auditSubset(list, { lockDeps, edges, depsByName }, ctx, trust) {
+  const results = [];
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(6, list.length) }, async () => {
+    while (i < list.length) {
+      const u = list[i++];
+      const dep = lockDeps.get(`${u.name}@${u.version}`) || { name: u.name, version: u.version };
+      const r = { name: u.name, version: u.version, rows: [], ...await auditOne(dep, { ...ctx, depsByName }) };
+      if (edges.size > 0) {
+        const chain = viaChain(edges, u.name);
+        if (chain.length > 0) r.via = chain;
+      }
+      results.push(r);
+    }
+  }));
+  if (trust && !ctx.offline && results.length > 0) {
+    const mal = await osvMalicious(results.map((r) => ({ name: r.name, version: r.version })));
+    for (const r of results) {
+      const ids = mal.get(`${r.name}@${r.version}`);
+      if (ids) { r.malicious = true; r.advisories = ids; }
+    }
+    for (const r of results) {
+      if (r.malicious || ['HIGH', 'MEDIUM'].includes(packageRisk(r))) r.trust = await fetchTrust(r.name, r.version);
+    }
+  }
+  return results.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// The actual bytes behind each script command — the thing npm's pending list
+// cannot show. First CONTENT_LINES lines of every file the command directly
+// runs (via the same `node <file>` resolution the analyzer uses); binding.gyp
+// for node-gyp builds; the command itself when it references no local file.
+const CONTENT_LINES = 40;
+async function scriptContent(r, ctx, lockDep) {
+  try {
+    const pkg = ctx.offline
+      ? loadLocalPackage(r.name, r.version, ctx.projectDir, lockDep && lockDep.lockKey, { forceFiles: true })
+      : await fetchPackage(r.name, r.version, { forceTarball: true });
+    const out = [];
+    for (const [script, command] of Object.entries(pkg.scripts)) {
+      const entries = commandEntryFiles(command, pkg.files);
+      if (entries.length === 0 && /(^|\s)node-gyp(\s|$)/.test(command) && pkg.files.has('binding.gyp')) {
+        entries.push('binding.gyp');
+      }
+      if (entries.length === 0) {
+        out.push({ script, command, file: null, note: 'command is self-contained — no local script file to open' });
+        continue;
+      }
+      for (const file of entries) {
+        const all = (pkg.files.get(file) || '').split(/\r?\n/);
+        out.push({ script, command, file, totalLines: all.length, lines: all.slice(0, CONTENT_LINES) });
+      }
+    }
+    return out;
+  } catch (err) {
+    return [{ error: String(err.message || err) }];
+  }
+}
+
+async function reviewAction(opts) {
+  const resolved = path.resolve(opts.path);
+  const projectDir = fs.existsSync(resolved) && fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
+  const log = (m) => process.stderr.write(`${m}\n`);
+  let lockInfo = null;
+  try { lockInfo = resolveLockfile(opts.path); } catch { /* npm v12 can answer without one */ }
+  const lock = { lockDeps: new Map(), edges: new Map(), depsByName: new Map() };
+  if (lockInfo) {
+    const loaded = loadDeps(opts.path);
+    lock.edges = loaded.edges;
+    for (const d of loaded.deps) {
+      if (!lock.depsByName.has(d.name)) lock.depsByName.set(d.name, d);
+      const key = `${d.name}@${d.version}`;
+      if (!lock.lockDeps.has(key)) lock.lockDeps.set(key, d);
+    }
+  }
+  const ctx = { cache: opts.cache, offline: opts.offline, projectDir, deep: opts.deep };
+
+  let source, pending;
+  let viaNpm = null;
+  if (!opts.offline) {
+    log('asking the local npm for pending script approvals (npm install --dry-run --json)…');
+    viaNpm = await npmDryRunPending(projectDir);
+  }
+  if (viaNpm) {
+    source = 'npm install --dry-run --json (npm v12 unreviewedScripts)';
+    log(`npm reports ${viaNpm.pending.length} package(s) with unreviewed install scripts`);
+    pending = await auditSubset(viaNpm.pending, lock, ctx, opts.trust);
+  } else if (lockInfo) {
+    source = 'lockfile + allowScripts (local npm does not report unreviewed scripts — npm >= 12 does)';
+    if (!opts.offline) log('local npm did not report unreviewed scripts — computing from the lockfile instead');
+    let allow = {};
+    try {
+      allow = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf8')).allowScripts || {};
+    } catch { /* no package.json — nothing is approved */ }
+    const results = await runAudit(opts.path, {
+      log, cache: opts.cache, trust: opts.trust, offline: opts.offline, deep: opts.deep,
+    });
+    pending = results.filter((r) => (r.rows.length > 0 || r.error || r.malicious) && !isCovered(allow, r.name, r.version));
+  } else {
+    throw new Error(`no lockfile found under ${projectDir} and the local npm does not report unreviewed scripts (npm >= 12 does) — create one with \`npm install --package-lock-only\` or upgrade npm`);
+  }
+
+  const contents = new Map();
+  for (const r of pending) {
+    if (r.error) continue;
+    contents.set(`${r.name}@${r.version}`, await scriptContent(r, ctx, lock.lockDeps.get(`${r.name}@${r.version}`)));
+  }
+  const allowBlock = {};
+  for (const r of pending) {
+    allowBlock[`${r.name}@${r.version}`] = r.malicious ? false : ['SAFE', 'LOW'].includes(packageRisk(r));
+  }
+
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify({
+      source,
+      pending: pending.map((r) => ({ ...r, risk: packageRisk(r), content: contents.get(`${r.name}@${r.version}`) || [] })),
+      allowScripts: sortedBlock(allowBlock),
+    }, null, 2)}\n`);
+  } else {
+    const lines = ['npm-script-lens review — pending install-script approvals', `source: ${source}`, ''];
+    if (pending.length === 0) {
+      lines.push('🟢 nothing pending — every package with install scripts is covered by allowScripts.');
+    } else {
+      lines.push(`${pending.length} package(s) need an allowScripts decision:`);
+      for (const r of pending) {
+        const key = `${r.name}@${r.version}`;
+        lines.push('', `── ${key}  [${r.malicious ? `⛔ KNOWN MALICIOUS — ${r.advisories.join(', ')}` : BADGE[packageRisk(r)]}]`);
+        if (r.via) lines.push(`   via ${r.via.join(' → ')}`);
+        if (r.trust) lines.push(`   ${trustLabel(r.trust)}`);
+        lines.push(`   OSV: ${!opts.trust || opts.offline ? 'skipped (--no-trust / --offline)'
+          : r.malicious ? `⛔ ${r.advisories.join(', ')}` : 'no known malicious advisories'}`);
+        if (r.error) { lines.push(`   fetch error: ${r.error}`); continue; }
+        for (const row of r.rows) {
+          lines.push(`   ${row.script}: ${row.command}`);
+          for (const s of row.signals) lines.push(`     ${s}`);
+        }
+        for (const c of contents.get(key) || []) {
+          if (c.error) { lines.push(`   (content unavailable: ${c.error})`); continue; }
+          if (!c.file) { lines.push(`   ${c.script}: ${c.note}`); continue; }
+          lines.push('', `   ┌─ ${c.file} (${c.totalLines > c.lines.length
+            ? `first ${c.lines.length} of ${c.totalLines} lines` : `${c.totalLines} line${c.totalLines === 1 ? '' : 's'}`})`);
+          c.lines.forEach((l, idx) => lines.push(`   │ ${String(idx + 1).padStart(3)}  ${l}`));
+          lines.push('   └─');
+        }
+      }
+      lines.push('', 'Suggested allowScripts for the pending packages (SAFE/LOW default to true; review HIGH/MEDIUM before flipping):',
+        '', JSON.stringify({ allowScripts: sortedBlock(allowBlock) }, null, 2));
+      if (!opts.outputAllowscripts) lines.push('', 'Run again with --output-allowscripts to write these entries into package.json.');
+    }
+    process.stdout.write(`${lines.join('\n')}\n`);
+  }
+
+  if (opts.outputAllowscripts && pending.length > 0) {
+    const { pkgPath, raw, pkg } = projectPackageJson(opts.path);
+    pkg.allowScripts = sortedBlock({ ...(pkg.allowScripts || {}), ...allowBlock });
+    writePackageJson(pkgPath, raw, pkg);
+    process.stderr.write(`wrote ${Object.keys(allowBlock).length} allowScripts entr${Object.keys(allowBlock).length === 1 ? 'y' : 'ies'} to ${pkgPath}\n`);
+  }
+}
+
 // --- manifest: a committable behavior receipt, diffable in git ------------
 
 async function manifestAction(opts) {
@@ -421,6 +590,11 @@ if (require.main === module) {
   common(program.command('approve'))
     .description('step through risky packages interactively and write allowScripts decisions')
     .action(approveAction);
+  common(program.command('review'))
+    .description('show pending npm v12 script approvals WITH their actual script content and OSV verdict — the detail npm approve-scripts --allow-scripts-pending leaves out')
+    .option('--json', 'emit JSON instead of terminal output')
+    .option('--output-allowscripts', 'write allowScripts entries for all reviewed packages into package.json')
+    .action(reviewAction);
   common(program.command('manifest'))
     .description('write or verify a committable behavior receipt whose git diff is the approval-surface change')
     .option('--out <file>', 'manifest file (relative paths resolve next to the lockfile)', 'script-lens.json')

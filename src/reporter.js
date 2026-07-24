@@ -262,5 +262,5 @@ function diffManifests(oldM, newM) {
 
 module.exports = {
   buildReport, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk,
-  buildGapsReport,
+  buildGapsReport, BADGE,
 };

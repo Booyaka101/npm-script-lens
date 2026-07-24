@@ -46,6 +46,41 @@ npx npm-script-lens audit --diff /tmp/base-lock.json --fail-on-high
 
 In diff mode, a package that was already in the tree but changed version is compared against the base version's analysis: `**⚠️ gained vs 1.2.0:** net: fetch()` is the fingerprint of a hijacked release (event-stream, the 2025 Shai-Hulud wave); `no new capabilities vs 1.2.0` is a boring upgrade.
 
+## review: see what you're approving, not just its name
+
+npm v12's own pending list stops at the script *command*:
+
+```
+$ npm approve-scripts --allow-scripts-pending
+sharp@0.33.5   install: node install/check
+```
+
+What's inside `install/check`? npm can't tell you — [the #1 complaint in the v12 migration discussion](https://github.com/orgs/community/discussions/198547). `review` picks up exactly where npm stops:
+
+```bash
+npx npm-script-lens review                        # show every pending approval with evidence
+npx npm-script-lens review --output-allowscripts  # …and write the decisions into package.json
+```
+
+For each package awaiting an `allowScripts` decision it shows the script command, the **first 40 lines of the actual file the command runs** (from the version-pinned registry tarball — or `node_modules` with `--offline`), the behavioral scan verdict with signals, the OSV malware check, and publisher trust:
+
+```
+── sharp@0.33.5  [🔴 HIGH]
+   1.9y old · 75M dl/wk · 1 maintainer · no provenance
+   OSV: no known malicious advisories
+   install: node install/check
+     exec: node-gyp rebuild --directory=src
+     exec: require('child_process')
+   ┌─ install/check.js (first 40 of 42 lines)
+   │   1  // Copyright 2013 Lovell Fuller and others.
+   │   2  // SPDX-License-Identifier: Apache-2.0
+   …
+```
+
+The pending set comes from your own npm when it can answer: with npm ≥ 12, `review` runs `npm install --dry-run --json` and reads its `unreviewedScripts` — so what you review is literally what npm would block, even before a lockfile exists. On npm < 12 (or `--offline`) it computes the same set from the lockfile minus your `allowScripts` entries (bare-name and pinned keys both count, and `false` is a decision too — matching npm v12's semantics exactly).
+
+`--output-allowscripts` merges version-pinned entries for every reviewed package into `package.json`, preserving existing decisions: SAFE/LOW default to `true`, HIGH/MEDIUM and OSV-flagged packages to `false` — flip after reading the evidence. `--json` emits the whole review (pending, risk, content, suggested block) for scripting. `NPM_SCRIPT_LENS_NPM` overrides which npm the dry-run uses.
+
 ## Keeping allowScripts alive
 
 npm v12 entries are version-pinned, so every dependency bump silently invalidates approvals. Two commands make this a workflow instead of a one-shot:

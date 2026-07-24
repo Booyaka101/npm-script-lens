@@ -257,6 +257,25 @@ function analyzeCommand(cmd, files, signals, scripts = {}, visited = new Set()) 
   walkFiles(files, queue.map((q) => q.path), signals);
 }
 
+// The local files a shell line directly executes via `node <file>` — the
+// "what does node install.js actually contain" surface the review command
+// displays. Mirrors analyzeCommand's resolution without collecting signals.
+function commandEntryFiles(cmd, files) {
+  const out = [];
+  for (const part of splitShell(cmd)) {
+    const tokens = part.trim().split(/\s+/).filter(Boolean);
+    while (tokens.length > 0 && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]) || tokens[0] === 'cross-env')) tokens.shift();
+    if (tokens.length === 0) continue;
+    const bin = tokens[0].split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
+    if (bin !== 'node' && bin !== 'nodejs') continue;
+    if (tokens.some((t) => ['-e', '--eval', '-p', '--print'].includes(t))) continue;
+    const file = tokens.slice(1).find((t) => !t.startsWith('-'));
+    const resolved = file && resolveFile(files, 'x', `./${file.replace(/^\.\//, '')}`);
+    if (resolved && !out.includes(resolved)) out.push(resolved);
+  }
+  return out;
+}
+
 // Walk entry files from the tarball index, following relative requires up to
 // MAX_DEPTH / MAX_FILES. Shared by script analysis and cross-package bin/deep
 // resolution.
@@ -297,4 +316,4 @@ function analyzePackage(pkg) {
   });
 }
 
-module.exports = { analyzePackage, analyzeCommand, analyzeJs, walkFiles, resolveFile, splitShell, score };
+module.exports = { analyzePackage, analyzeCommand, analyzeJs, walkFiles, resolveFile, splitShell, score, commandEntryFiles };
