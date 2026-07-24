@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 (2026-07-24)
+
+- **`review` subcommand**: lists packages with pending npm v12 approve-scripts
+  approvals alongside the actual install-script content, so you can see exactly
+  what each lifecycle script would run before allowing it.
+
 ## 0.6.0 (2026-07-23)
 
 - **npm v12 approve-scripts gap check** (`audit --check-v12-gaps`, Action
