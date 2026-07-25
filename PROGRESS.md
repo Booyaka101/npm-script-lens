@@ -2,7 +2,7 @@
 
 > ▶️ **Read [`RESUME.md`](RESUME.md) first.**
 
-**State: v1.0.0 RELEASED (2026-07-25) — 128/128 tests pass. Committed (`7063255`), pushed, tagged `v1.0.0`, `v1` moved, GitHub Release live (with `.vsix` asset), published to npm as `npm-script-lens@1.0.0` (clean-room npx verified). Remaining owner-gated items: VS Code Marketplace PAT publish, GitHub Action Marketplace click-through, JetBrains (JVM), in-editor screenshots — see RESUME.md.**
+**State: v1.0.1 RELEASED (2026-07-25) — 129/129 tests pass, CI green on ubuntu/windows × node 20/22. v1.0.0 shipped the 0.8→1.0 arc; v1.0.1 patches `audit --since` on Windows (git 8.3 short-name path mismatch that CI caught on the 1.0.0 commit — published before CI finished; fixed forward). npm `latest`=1.0.1, `v1` tag→1.0.1, `.vsix` on both Releases. Remaining owner-gated items: VS Code Marketplace PAT publish, GitHub Action Marketplace click-through, JetBrains (JVM), in-editor screenshots — see RESUME.md.**
 
 ## v1.0.0 — VS Code extension + milestone (2026-07-25, all tested)
 - **VS Code extension** at `editors/vscode/` — thin, tested UI over the CLI engine (no analysis reimplemented):

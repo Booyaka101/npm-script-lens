@@ -1,10 +1,10 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-07-25 after the v1.0.0 release._
+_Updated 2026-07-25 after the v1.0.1 release._
 
 ## Where we are
-- **v1.0.0 RELEASED and verified.** Committed + pushed (`7063255`), tagged `v1.0.0`, `v1` moved to it, **GitHub Release live**, **published to npm** (`npm-script-lens@1.0.0`, `latest`), clean-room `npx` smoke passed. The `.vsix` is attached to the GitHub Release (installable via "Install from VSIX").
-- Working tree is now clean of the old 0.8→1.0 backlog — everything is committed.
+- **v1.0.1 RELEASED and verified — latest on npm + GitHub.** The 0.8→1.0 arc shipped as v1.0.0 (`7063255`); **v1.0.1** is a patch fixing `audit --since` on Windows (git 8.3 short-name path mismatch caught by CI on the 1.0.0 commit). Tagged, `v1` moved to 1.0.1, GitHub Releases live for both, npm `latest` = 1.0.1, clean-room `npx` verified. **CI green on ubuntu/windows × node 20/22.** `.vsix` attached to both Releases.
+- Working tree clean; everything committed. **Lesson logged: wait for CI green before `npm publish` (1.0.0 was published before CI finished and Windows caught a real `--since` bug → fixed forward in 1.0.1).**
 
 ## Shipped surfaces (all live)
 - **npm**: `npm-script-lens@1.0.0` — https://www.npmjs.com/package/npm-script-lens
@@ -31,8 +31,8 @@ _Updated 2026-07-25 after the v1.0.0 release._
 
 ## Sanity check
 ```
-node --test                # expect 128 pass
-node src/cli.js --version   # 1.0.0
-npm view npm-script-lens version   # 1.0.0
+node --test                # expect 129 pass
+node src/cli.js --version   # 1.0.1
+npm view npm-script-lens version   # 1.0.1
 git status --short         # clean
 ```
