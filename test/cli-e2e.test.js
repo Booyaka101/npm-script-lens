@@ -51,6 +51,29 @@ test('audit --json emits machine-readable output with per-package risk', async (
   assert.strictEqual(j.allowScripts['core-js@3.38.1'], true);
 });
 
+test('diff reports changed install scripts across versions, exit 1', async () => {
+  const out = await run(['diff', 'sharp@0.32.6', 'sharp@0.33.0']);
+  assert.strictEqual(out.status, 1, out.stderr);
+  assert.ok(out.stdout.includes('sharp@0.32.6 → sharp@0.33.0'), out.stdout);
+  assert.ok(out.stdout.includes('MODIFIED: install'), out.stdout);
+});
+
+test('diff --json emits the four buckets and exit 0 when identical', async () => {
+  const out = await run(['diff', 'sharp@0.33.0', 'sharp@0.33.0', '--json']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  const j = JSON.parse(out.stdout);
+  assert.deepStrictEqual(Object.keys(j).sort(), ['added', 'modified', 'removed', 'unchanged']);
+  assert.deepStrictEqual(j.added, []);
+  assert.deepStrictEqual(j.modified, []);
+  assert.ok(j.unchanged.includes('install'));
+});
+
+test('diff on a bad spec is a clean usage error, exit 2', async () => {
+  const out = await run(['diff', 'sharp', 'sharp@0.33.0']);
+  assert.strictEqual(out.status, 2, out.stderr);
+  assert.ok(out.stderr.includes('expected <package>@<version>'), out.stderr);
+});
+
 test('missing lockfile is a clean error, exit 2', async () => {
   const out = await run(['audit', '--path', 'does/not/exist']);
   assert.strictEqual(out.status, 2);

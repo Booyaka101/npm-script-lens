@@ -52,6 +52,30 @@ npx npm-script-lens audit --diff /tmp/base-lock.json --fail-on-high
 
 In diff mode, a package that was already in the tree but changed version is compared against the base version's analysis: `**⚠️ gained vs 1.2.0:** net: fetch()` is the fingerprint of a hijacked release (event-stream, the 2025 Shai-Hulud wave); `no new capabilities vs 1.2.0` is a boring upgrade.
 
+## diff: what did an upgrade change in the install scripts?
+
+Before you bump a pin, see exactly which install-time behavior a new version adds or changes — the surface npm v12 will ask you to re-approve. `diff` compares the `preinstall`/`install`/`postinstall` scripts (and the implicit `node-gyp rebuild` that ships with a root `binding.gyp`) between two versions, straight from the registry:
+
+```bash
+npx npm-script-lens diff sharp@0.32.6 sharp@0.33.0
+# --json   emit { unchanged, added, removed, modified } instead of colored text
+```
+
+```
+sharp@0.32.6 → sharp@0.33.0
+REMOVED: implicit node-gyp rebuild (binding.gyp)
+MODIFIED: install
+    - (node install/libvips && node install/dll-copy && prebuild-install) || …
+    + node install/check
+```
+
+- **UNCHANGED** (green) — key present in both, byte-identical
+- **ADDED** (red) — a new script, or a gained `binding.gyp` → `ADDED: implicit node-gyp rebuild (binding.gyp)`
+- **REMOVED** (yellow) — a script that went away
+- **MODIFIED** (red) — same key, changed content, with a line-level diff
+
+Exit `0` when everything is unchanged; exit `1` the moment any script is **added or modified** — so a Renovate/Dependabot CI step can fail the moment an upgrade grows its install-time surface. (A pure removal stays exit `0`.)
+
 ## review: see what you're approving, not just its name
 
 npm v12's own pending list stops at the script *command*:
@@ -308,7 +332,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `doctor` detected npm drift |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `doctor` detected npm drift · `diff` found an added/modified install script |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
@@ -318,6 +342,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | `audit` | scan a lockfile, report install-script risk (Markdown/JSON/SARIF); `--fail-on-high`, `--diff`/`--since`, `--check-v12-gaps` |
 | `allow` | split scripted packages into an auto-approved allowlist + `_review`, in your manager's native format; `--write`, `--ci-check`, `--manager`, `--policy` |
 | `review` | show pending approvals **with the actual script content** + verdict; `--output-allowscripts` writes decisions |
+| `diff` | compare a package's install scripts (+ implicit node-gyp) across two versions; exit 1 on any add/modify; `--json` |
 | `sync` | reconcile the native allowlist with the lockfile (drop stale, add new); `--check` for CI |
 | `doctor` | is this build still in sync with your npm? contract probe + drift alarm |
 | `init` | scaffold policy + CI workflow (`--auto-fix` bot, `--hook` git pre-commit) |

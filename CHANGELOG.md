@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 (2026-07-25)
+
+- **New `diff` command**: `npm-script-lens diff <pkg>@<old> <pkg>@<new>`
+  compares the install-time lifecycle scripts (`preinstall`/`install`/
+  `postinstall`) plus the implicit `node-gyp rebuild` (root `binding.gyp`)
+  between two registry versions. Prints UNCHANGED (green) / ADDED (red) /
+  REMOVED (yellow) / MODIFIED (red, with a line-level diff); `--json` emits
+  `{ unchanged, added, removed, modified }`. Exit `1` when any script was added
+  or modified (a CI gate for upgrades that grow their install surface), else
+  `0`. Reuses `registry.fetchPackage` for fetching + binding.gyp detection.
+
 ## 1.0.1 (2026-07-25)
 
 - Fix `audit --since <ref>` on Windows: resolve the base lockfile via

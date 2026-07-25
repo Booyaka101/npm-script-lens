@@ -2,7 +2,12 @@
 
 > ▶️ **Read [`RESUME.md`](RESUME.md) first.**
 
-**State: v1.0.1 RELEASED (2026-07-25) — 129/129 tests pass, CI green on ubuntu/windows × node 20/22. v1.0.0 shipped the 0.8→1.0 arc; v1.0.1 patches `audit --since` on Windows (git 8.3 short-name path mismatch that CI caught on the 1.0.0 commit — published before CI finished; fixed forward). npm `latest`=1.0.1, `v1` tag→1.0.1, `.vsix` on both Releases. Remaining owner-gated items: VS Code Marketplace PAT publish, GitHub Action Marketplace click-through, JetBrains (JVM), in-editor screenshots — see RESUME.md.**
+## v1.1.0 — `diff` command (2026-07-25, all tested; 143/143)
+- **New `diff` subcommand** `npm-script-lens diff <pkg>@<old> <pkg>@<new>` — compares install-time lifecycle scripts (preinstall/install/postinstall) + implicit `node-gyp rebuild` (root binding.gyp) across two registry versions. UNCHANGED (green) / ADDED (red, incl. `implicit node-gyp rebuild (binding.gyp)`) / REMOVED (yellow) / MODIFIED (red + line-level LCS diff). `--json` → `{ unchanged, added, removed, modified }`. **Exit 1 on any add/modify, else 0** (pure removal stays 0) — a CI gate for upgrades that grow install surface.
+- **Impl**: new `src/diff.js` (pure `parseSpec`/`computeScriptDiff`/`renderDiff`/`lineDiff` + `fetchScripts`). Reuses `registry.fetchPackage({forceTarball:true})` for fetch + binding.gyp detection (reads raw scripts from `allScripts` to avoid the synthesized implicit-install pollution). Colors gated on `stdout.isTTY && !NO_COLOR`. Wired into cli.js (`diffAction`). Live-verified on `sharp@0.32.6 → sharp@0.33.0` (install MODIFIED, binding.gyp REMOVED, exit 1).
+- **Tests**: `test/diff.test.js` (12 pure/unit) + 3 network e2e in `cli-e2e.test.js` (changed→exit1, identical --json→exit0, bad spec→exit2). Suite 140→143. README (diff section + Commands/Exit-codes tables) and CHANGELOG updated.
+
+**State: v1.1.0 (adds `diff` command; 143/143 tests pass). Prior: v1.0.1 RELEASED (2026-07-25) — 129/129 tests pass, CI green on ubuntu/windows × node 20/22. v1.0.0 shipped the 0.8→1.0 arc; v1.0.1 patches `audit --since` on Windows (git 8.3 short-name path mismatch that CI caught on the 1.0.0 commit — published before CI finished; fixed forward). npm `latest`=1.0.1, `v1` tag→1.0.1, `.vsix` on both Releases. Remaining owner-gated items: VS Code Marketplace PAT publish, GitHub Action Marketplace click-through, JetBrains (JVM), in-editor screenshots — see RESUME.md.**
 
 ## v1.0.0 — VS Code extension + milestone (2026-07-25, all tested)
 - **VS Code extension** at `editors/vscode/` — thin, tested UI over the CLI engine (no analysis reimplemented):

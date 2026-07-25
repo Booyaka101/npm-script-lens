@@ -17,6 +17,7 @@ const { npmDryRunPending, npmMajorVersion, isCovered } = require('./review');
 const { runDoctor, renderDoctor } = require('./doctor');
 const { managerFor, managerById } = require('./pm-contract');
 const { loadPolicy, evaluate: evaluatePolicy } = require('./policy');
+const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./diff');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
@@ -957,6 +958,24 @@ async function manifestAction(opts) {
   }
 }
 
+// --- diff: compare install-time scripts of a package across two versions ---
+
+async function diffAction(oldSpec, newSpec, opts) {
+  const a = parseSpec(oldSpec);
+  const b = parseSpec(newSpec);
+  const [oldPkg, newPkg] = await Promise.all([
+    fetchScripts(a.name, a.version),
+    fetchScripts(b.name, b.version),
+  ]);
+  const result = computeScriptDiff(oldPkg, newPkg);
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(result.json, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${renderDiff(oldPkg, newPkg, result)}\n`);
+  }
+  if (result.changed) process.exitCode = 1;
+}
+
 if (require.main === module) {
   program.name('npm-script-lens')
     .description('Audit npm lifecycle scripts for behavioral risks before approving them under npm v12 allowScripts')
@@ -1027,6 +1046,12 @@ if (require.main === module) {
     .description('print a shell completion script (bash | zsh | fish) — e.g. `source <(npm-script-lens completion bash)`')
     .argument('[shell]', 'bash | zsh | fish', 'bash')
     .action((shell) => process.stdout.write(require('./completion').completionScript(shell)));
+  program.command('diff')
+    .description('compare a package\'s install-time lifecycle scripts (preinstall/install/postinstall + implicit node-gyp) between two versions — exit 1 if any script was added or changed')
+    .argument('<old>', 'baseline spec, e.g. sharp@0.32.6')
+    .argument('<new>', 'candidate spec, e.g. sharp@0.33.0')
+    .option('--json', 'emit JSON { unchanged, added, removed, modified } instead of colored text')
+    .action(diffAction);
   program.command('mcp')
     .description('run as an MCP server on stdio (tools: audit_package, audit_lockfile, classify_allowscripts)')
     .action(() => require('./mcp').serve());
