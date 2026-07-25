@@ -297,6 +297,30 @@ test('audit --since <git-ref>: audits only packages changed vs the lockfile at a
   assert.deepStrictEqual(parsed.results.map((r) => r.name), ['pkga'], 'only the added package is audited');
 });
 
+test('audit --since <git-ref>: lockfile in a subdirectory below the repo root', async () => {
+  // git resolves `<ref>:./<file>` relative to the lockfile dir, so a lockfile
+  // nested under the repo root works without host-side path math (the case
+  // that broke on Windows CI when os.tmpdir and git toplevel disagreed on 8.3
+  // short names).
+  const root = path.join(tmp, 'sincemono');
+  const app = path.join(root, 'packages', 'app');
+  fs.mkdirSync(app, { recursive: true });
+  fs.writeFileSync(path.join(app, 'package.json'), '{"name":"app","version":"1.0.0"}\n');
+  writeLock(path.join(app, 'package-lock.json'), { 'node_modules/pkgb': { version: '2.0.0' } });
+  const id = ['-c', 'user.email=t@t.io', '-c', 'user.name=t', '-c', 'commit.gpgsign=false'];
+  const git = (args) => execFileSync('git', ['-C', root, ...args], { stdio: 'ignore' });
+  git(['init', '-q']);
+  git([...id, 'add', '-A']);
+  git([...id, 'commit', '-qm', 'base']);
+  writeLock(path.join(app, 'package-lock.json'), {
+    'node_modules/pkga': { version: '1.0.0' },
+    'node_modules/pkgb': { version: '2.0.0' },
+  });
+  const out = await runCli(['audit', '--since', 'HEAD', '--json', '--no-trust', '--path', app]);
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.deepStrictEqual(JSON.parse(out.stdout).results.map((r) => r.name), ['pkga']);
+});
+
 test('init --hook installs a git pre-commit hook when .git is present', async () => {
   const dir = path.join(tmp, 'hookproj');
   fs.mkdirSync(dir, { recursive: true });

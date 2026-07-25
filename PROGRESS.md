@@ -1,8 +1,8 @@
 # PROGRESS — npm-script-lens
 
-> ⏸️ **Continuing tomorrow — read [`RESUME.md`](RESUME.md) first** for the quick pick-up and next-step options.
+> ▶️ **Read [`RESUME.md`](RESUME.md) first.**
 
-**State: v1.0.0 BUILT locally (2026-07-25) — 128/128 tests pass. NOT yet committed (owner pushes/tags/releases). The whole 0.6.0→1.0.0 arc is one uncommitted working tree. Prior released state: v0.5.0 on npm + GitHub (Booyaka101/npm-script-lens, `v1` tag).**
+**State: v1.0.0 RELEASED (2026-07-25) — 128/128 tests pass. Committed (`7063255`), pushed, tagged `v1.0.0`, `v1` moved, GitHub Release live (with `.vsix` asset), published to npm as `npm-script-lens@1.0.0` (clean-room npx verified). Remaining owner-gated items: VS Code Marketplace PAT publish, GitHub Action Marketplace click-through, JetBrains (JVM), in-editor screenshots — see RESUME.md.**
 
 ## v1.0.0 — VS Code extension + milestone (2026-07-25, all tested)
 - **VS Code extension** at `editors/vscode/` — thin, tested UI over the CLI engine (no analysis reimplemented):

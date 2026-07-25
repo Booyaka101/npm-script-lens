@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 (2026-07-25)
+
+- Fix `audit --since <ref>` on Windows: resolve the base lockfile via
+  `git show <ref>:./<file>` from the lockfile's directory instead of computing
+  the repo-relative path host-side. The old `path.relative(toplevel, lockfile)`
+  broke when git's toplevel and `os.tmpdir()` disagreed on 8.3 short names
+  (e.g. `runneradmin` vs `RUNNER~1`), which git rejected as "outside
+  repository." Adds a subdirectory (monorepo) regression test.
+
 ## 1.0.0 (2026-07-25)
 
 **1.0** — npm-script-lens is now the complete, cross-ecosystem tool for the

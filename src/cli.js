@@ -196,23 +196,27 @@ async function v12GapsAction(opts) {
 function baseLockfileFromGit(target, ref) {
   const { path: lp } = resolveLockfile(target);
   const lockDir = path.dirname(lp);
+  const base = path.basename(lp);
   const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
-  let root;
   try {
-    root = git(['-C', lockDir, 'rev-parse', '--show-toplevel']).trim();
+    git(['-C', lockDir, 'rev-parse', '--show-toplevel']);
   } catch {
     throw new Error(`--since needs a git repository, but ${lockDir} is not inside one`);
   }
-  const rel = path.relative(root, lp).replace(/\\/g, '/');
+  // Let git resolve the path via `<ref>:./<file>` from inside lockDir. Doing
+  // the path math host-side (path.relative(toplevel, lp)) breaks on Windows
+  // when git's toplevel and os.tmpdir() disagree on 8.3 short names
+  // (runneradmin vs RUNNER~1) — git rejects the escaped path as "outside
+  // repository". The `./` prefix makes git resolve relative to -C, not root.
   let content;
   try {
-    content = git(['-C', root, 'show', `${ref}:${rel}`]);
+    content = git(['-C', lockDir, 'show', `${ref}:./${base}`]);
   } catch (err) {
-    throw new Error(`could not read ${rel} at git ref '${ref}': ${String(err.stderr || err.message || err).trim()}`);
+    throw new Error(`could not read ${base} at git ref '${ref}': ${String(err.stderr || err.message || err).trim()}`);
   }
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-since-'));
-  fs.writeFileSync(path.join(tmpDir, path.basename(lp)), content);
-  return path.join(tmpDir, path.basename(lp));
+  fs.writeFileSync(path.join(tmpDir, base), content);
+  return path.join(tmpDir, base);
 }
 
 async function auditAction(opts) {
