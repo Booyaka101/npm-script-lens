@@ -1,0 +1,37 @@
+# npm-compat canary: does this build still understand real npm? Drives the
+# ACTUAL npm (not the stub npms the unit tests use) across a matrix of npm
+# versions, so an upstream change to `npm install --dry-run --json` — the shape
+# `review`/`doctor` depend on — turns this workflow red. The unit tests can't
+# catch that; only a live-npm run can.
+name: npm-compat
+on:
+  # weekly, so drift surfaces on its own timeline, plus on demand
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # '12' pins the supported major; 'latest'/'next' catch drift early. A
+        # red leg means either shape drift OR npm bumped its node engine — the
+        # logs say which.
+        npm: ['12', 'latest', 'next']
+    name: npm@${{ matrix.npm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install tool dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Install npm@${{ matrix.npm }}
+        run: npm install -g npm@${{ matrix.npm }}
+      - name: Report npm version
+        run: npm --version
+      - name: Run compatibility canary
+        run: node scripts/npm-compat-canary.js

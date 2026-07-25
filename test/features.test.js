@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const tar = require('tar-stream');
 
 const ROOT = path.join(__dirname, '..');
@@ -269,10 +269,75 @@ test('mcp: initialize, tools/list, audit_package over stdio', async () => {
   assert.strictEqual(responses[0].result.serverInfo.name, 'npm-script-lens');
   assert.ok(responses[1].result.tools.map((t) => t.name).includes('audit_package'));
   assert.ok(responses[1].result.tools.map((t) => t.name).includes('audit_lockfile'));
+  assert.ok(responses[1].result.tools.map((t) => t.name).includes('classify_allowscripts'));
   const payload = JSON.parse(responses[2].result.content[0].text);
   assert.strictEqual(payload.risk, 'MEDIUM');
   assert.strictEqual(payload.malicious, true);
   assert.ok(payload.verdict.startsWith('DO NOT INSTALL'), payload.verdict);
+});
+
+test('audit --since <git-ref>: audits only packages changed vs the lockfile at a ref', async () => {
+  const dir = path.join(tmp, 'sinceproj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"proj","version":"1.0.0"}\n');
+  writeLock(path.join(dir, 'package-lock.json'), { 'node_modules/pkgb': { version: '2.0.0' } });
+  const id = ['-c', 'user.email=t@t.io', '-c', 'user.name=t', '-c', 'commit.gpgsign=false'];
+  const git = (args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore' });
+  git(['init', '-q']);
+  git([...id, 'add', '-A']);
+  git([...id, 'commit', '-qm', 'base']);
+  // working tree now adds pkga on top of the committed pkgb-only lockfile
+  writeLock(path.join(dir, 'package-lock.json'), {
+    'node_modules/pkga': { version: '1.0.0' },
+    'node_modules/pkgb': { version: '2.0.0' },
+  });
+  const out = await runCli(['audit', '--since', 'HEAD', '--json', '--no-trust', '--path', dir]);
+  assert.strictEqual(out.status, 0, out.stderr);
+  const parsed = JSON.parse(out.stdout);
+  assert.deepStrictEqual(parsed.results.map((r) => r.name), ['pkga'], 'only the added package is audited');
+});
+
+test('init --hook installs a git pre-commit hook when .git is present', async () => {
+  const dir = path.join(tmp, 'hookproj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"p","version":"1.0.0"}\n');
+  execFileSync('git', ['-C', dir, 'init', '-q'], { stdio: 'ignore' });
+  const out = await runCli(['init', '--path', dir, '--hook']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  const hook = path.join(dir, '.git', 'hooks', 'pre-commit');
+  assert.ok(fs.existsSync(hook), 'pre-commit hook written');
+  assert.ok(fs.readFileSync(hook, 'utf8').includes('sync --check'), 'hook runs sync --check');
+  assert.ok(out.stdout.includes('git pre-commit hook'), out.stdout);
+});
+
+test('audit --html writes a self-contained shareable report', async () => {
+  const htmlOut = path.join(tmp, 'report.html');
+  const out = await runCli(['audit', '--path', projDir, '--no-trust', '--html', htmlOut]);
+  assert.strictEqual(out.status, 0, out.stderr);
+  const html = fs.readFileSync(htmlOut, 'utf8');
+  assert.ok(html.startsWith('<!doctype html>'), 'valid doctype');
+  assert.ok(html.includes('pkga'), 'lists audited packages');
+  assert.ok(html.includes('Suggested allowScripts'), 'includes the allowlist block');
+  assert.ok(html.trimEnd().endsWith('</html>'), 'well-formed close');
+  assert.ok(!html.includes('<script'), 'no scripts — safe to open/share');
+});
+
+test('mcp: classify_allowscripts splits packages into allowScripts + _review', async () => {
+  const dir = writeProj('mcpallow', {
+    'node_modules/pkgc': { version: '1.0.0' }, // LOW (env read) → auto-approve
+    'node_modules/pkga': { version: '1.0.0' }, // malicious per OSV → _review
+  });
+  const lines = [
+    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } }),
+    JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'classify_allowscripts', arguments: { path: dir } } }),
+  ].join('\n') + '\n';
+  const out = await runCli(['mcp'], { input: lines });
+  const responses = out.stdout.trim().split('\n').map((l) => JSON.parse(l));
+  const payload = JSON.parse(responses[1].result.content[0].text);
+  assert.strictEqual(payload.allowScripts['pkgc@1.0.0'], true, JSON.stringify(payload));
+  assert.ok(!('pkga@1.0.0' in payload.allowScripts), 'malicious never auto-approved');
+  assert.ok(payload._review.includes('pkga@1.0.0'), JSON.stringify(payload._review));
+  assert.ok(payload.summary.includes('1 package(s) auto-approved'), payload.summary);
 });
 
 test('unresolved binaries are resolved against their lockfile owner and re-scored', async () => {

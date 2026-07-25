@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { runAudit } = require('./cli');
+const { runAudit, ciCheckResult } = require('./cli');
 const { resolveLockfile } = require('./lockfiles');
 const { buildReport, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport } = require('./reporter');
 const { checkV12Gaps } = require('./v12gaps');
@@ -94,8 +94,8 @@ async function main() {
 async function v12GapsMain() {
   const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
   const target = input('PATH', '.');
-  const findings = await checkV12Gaps(target, { log: console.log });
-  const report = buildGapsReport(findings);
+  const { findings, npmMajor } = await checkV12Gaps(target, { log: console.log });
+  const report = buildGapsReport(findings, { npmMajor });
   console.log(report);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${report}\n`);
   for (const f of findings) {
@@ -124,7 +124,34 @@ async function v12GapsMain() {
   }
 }
 
-(process.argv[2] === 'v12-gaps' ? v12GapsMain() : main()).catch((err) => {
+// `node action.js ci-check` — the fail-fast gate step (opt-in via the
+// `ci-check` input). Fails the job when npm v12 would silently disable every
+// dependency's install scripts: a workflow runs npm install, package.json has
+// no allowScripts block, and the runner's npm is v12+. No scan.
+async function ciCheckMain() {
+  const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
+  const target = input('PATH', '.');
+  const resolved = path.resolve(target);
+  const projectDir = fs.existsSync(resolved) && fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
+  const { willBreak, reason } = await ciCheckResult(projectDir);
+  if (willBreak) {
+    const msg = 'CI will break on npm v12: dependency install scripts are disabled by default and '
+      + 'package.json has no allowScripts block. Run `npx npm-script-lens allow --write` to generate one.';
+    console.log(`::error::${msg}`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ❌ npm v12 allowScripts check\n\n${msg}\n`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`npm v12 allowScripts check passed: ${reason}.`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ✅ npm v12 allowScripts check\n\nPassed: ${reason}.\n`);
+  }
+}
+
+const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain };
+(MODE[process.argv[2]] || main)().catch((err) => {
   console.log(`::error::${err.message}`);
   process.exitCode = 2;
 });

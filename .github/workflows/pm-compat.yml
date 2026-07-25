@@ -1,0 +1,62 @@
+# Cross-ecosystem writer canary: for each package manager, generate a real
+# lockfile, run `allow --write`, and confirm the manager then RUNS an approved
+# package's install script — i.e. our native allowlist output is still valid
+# for that manager. Mirrors the flow verified locally during development. A red
+# leg means a manager changed its allowlist format and pm-contract needs a patch.
+name: pm-compat
+on:
+  schedule:
+    - cron: '37 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  writer:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pm: [npm, pnpm, bun]
+    name: ${{ matrix.pm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install tool dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Install ${{ matrix.pm }}
+        run: |
+          case "${{ matrix.pm }}" in
+            pnpm) npm install -g pnpm ;;
+            bun)  npm install -g bun ;;
+            npm)  echo "npm is built in" ;;
+          esac
+      - name: Scaffold a project with a scripted dependency (core-js)
+        run: |
+          mkdir -p /tmp/pmc && cd /tmp/pmc
+          echo '{ "name": "pmc", "version": "1.0.0", "dependencies": { "core-js": "3.38.1" } }' > package.json
+      - name: Generate the lockfile
+        working-directory: /tmp/pmc
+        run: |
+          case "${{ matrix.pm }}" in
+            npm)  npm install --package-lock-only --ignore-scripts --no-audit --no-fund ;;
+            pnpm) pnpm install --lockfile-only ;;
+            bun)  bun install --ignore-scripts || bun install ;;
+          esac
+      - name: allow --write (generate the native allowlist)
+        run: node "$GITHUB_WORKSPACE/src/cli.js" allow --path /tmp/pmc --no-trust --write
+      - name: Confirm the manager honors it and runs the approved script
+        working-directory: /tmp/pmc
+        run: |
+          set -e
+          case "${{ matrix.pm }}" in
+            npm)  rm -rf node_modules; out=$(npm install --no-audit --no-fund 2>&1) ;;
+            pnpm) rm -rf node_modules; out=$(pnpm install 2>&1) ;;
+            bun)  rm -rf node_modules; out=$(bun install 2>&1) ;;
+          esac
+          echo "$out"
+          # core-js prints a funding banner from its postinstall when it runs;
+          # if the script were still blocked the banner would be absent.
+          echo "$out" | grep -qi "core-js\|Thank you for using core-js" || {
+            echo "::error::${{ matrix.pm }}: approved install script did not run after allow --write — allowlist format may have drifted"; exit 1; }

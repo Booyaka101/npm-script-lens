@@ -1,0 +1,13 @@
+# pre-commit framework integration (https://pre-commit.com). Add to a repo's
+# .pre-commit-config.yaml:
+#   - repo: https://github.com/Booyaka101/npm-script-lens
+#     rev: v1.0.0
+#     hooks:
+#       - id: npm-script-lens
+- id: npm-script-lens
+  name: npm-script-lens allowlist sync
+  description: Fail the commit when the install-script allowlist is out of sync with the lockfile.
+  entry: npm-script-lens sync --check
+  language: node
+  files: (^|/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock)$
+  pass_filenames: false

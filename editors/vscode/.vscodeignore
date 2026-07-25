@@ -1,0 +1,5 @@
+test/**
+scripts/**
+.vscode/**
+**/*.map
+.gitignore

@@ -10,6 +10,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { resolveLockfile } = require('./lockfiles');
 const { REGISTRY, LIFECYCLE } = require('./registry');
+const { npmMajorVersion } = require('./review');
+const { DETECTORS } = require('./npm-contract');
 
 // Best-effort version metadata: null on any failure — these checks warn on
 // what they can confirm and stay quiet (or fall back to lockfile facts)
@@ -89,12 +91,14 @@ async function checkOptionalGap(target, { concurrency = 6 } = {}) {
       else if (d.hasInstallScript === true) script = 'unknown (hasInstallScript in lockfile; registry metadata unavailable)';
       else continue; // v1 lockfile, registry unreachable — cannot confirm
       findings.push({
-        id: 'v12-optional-gap',
+        id: DETECTORS.optionalGap.id,
         severity: 'warn',
         package: d.name,
         version: d.version,
         script,
         fix: optionalGapFix(d.name),
+        issue: DETECTORS.optionalGap.issue,
+        upstream: DETECTORS.optionalGap.upstream,
       });
     }
   }));
@@ -191,13 +195,15 @@ async function checkEglobal(target, { concurrency = 6 } = {}) {
       const names = lifecycleNames(meta);
       if (names.length === 0 && !meta.hasInstallScript) continue;
       findings.push({
-        id: 'v12-eglobal-risk',
+        id: DETECTORS.eglobal.id,
         severity: 'warn',
         package: s.name,
         script: names.join(', ') || 'install (implicit node-gyp rebuild)',
         file: s.file,
         line: s.line,
         fix: eglobalFix(s.name),
+        issue: DETECTORS.eglobal.issue,
+        upstream: DETECTORS.eglobal.upstream,
       });
     }
   }));
@@ -205,10 +211,15 @@ async function checkEglobal(target, { concurrency = 6 } = {}) {
 }
 
 async function checkV12Gaps(target, { log = () => {} } = {}) {
-  const [optional, eglobal] = await Promise.all([checkOptionalGap(target), checkEglobal(target)]);
+  const { path: lockPath } = resolveLockfile(target);
+  const projectDir = path.dirname(lockPath);
+  const [optional, eglobal, npmMajor] = await Promise.all([
+    checkOptionalGap(target), checkEglobal(target), npmMajorVersion(projectDir),
+  ]);
   const findings = [...optional, ...eglobal];
-  log(`v12 gap check: ${optional.length} optional-dep gap(s), ${eglobal.length} EGLOBAL-prone global install(s)`);
-  return findings;
+  log(`v12 gap check: ${optional.length} optional-dep gap(s), ${eglobal.length} EGLOBAL-prone global install(s)`
+    + ` (local npm ${npmMajor === null ? 'version unknown' : `v${npmMajor}`})`);
+  return { findings, npmMajor };
 }
 
-module.exports = { checkV12Gaps, checkOptionalGap, checkEglobal, collectOptionalDeps, globalNpmInstalls, splitSpec };
+module.exports = { checkV12Gaps, checkOptionalGap, checkEglobal, collectOptionalDeps, globalNpmInstalls, splitSpec, workflowFiles };

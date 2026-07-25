@@ -2,7 +2,9 @@
 
 **Know what an install script actually does before you approve it.**
 
-Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/), dependency lifecycle scripts (`preinstall`, `install`, `postinstall`) and implicit `node-gyp` builds **no longer run unless explicitly allowed** via the `allowScripts` field in `package.json`. That leaves every team staring at a list of package names asking: *which of these are safe to approve?*
+_The install-script-approval tool for **npm · pnpm · yarn · bun** — from your **CLI**, **CI**, **editor**, and **AI agent**._
+
+Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/), dependency lifecycle scripts (`preinstall`, `install`, `postinstall`) and implicit `node-gyp` builds **no longer run unless explicitly allowed** via the `allowScripts` field in `package.json`. And npm isn't alone — **pnpm** (`allowBuilds`), **yarn** Berry (`dependenciesMeta.built`), and **bun** (`trustedDependencies`) all made install scripts opt-in too. That leaves every team, on every package manager, staring at a list of package names asking: *which of these are safe to approve?*
 
 `npm-script-lens` answers that with evidence, not vibes — the review-report mode the community asked for in [npm/rfcs#897](https://github.com/npm/rfcs/pull/897). For every package in your lockfile — `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (classic and berry), `pnpm-lock.yaml`, or `bun.lock` — it:
 
@@ -30,7 +32,9 @@ npx npm-script-lens audit --path ./my-project --fail-on-high
 # --json        machine-readable output
 # --out FILE    write report to a file
 # --sarif FILE  also write SARIF 2.1.0 for GitHub code scanning
+# --html FILE   also write a self-contained, shareable HTML report
 # --diff BASE   audit only packages added/upgraded vs a base lockfile
+# --since REF   like --diff, but extract the base lockfile from a git ref
 # --offline     analyze node_modules on disk instead of the registry
 # --no-trust    skip OSV/downloads/provenance enrichment
 # --no-cache    disable the on-disk result cache
@@ -40,6 +44,8 @@ npx npm-script-lens audit --path ./my-project --fail-on-high
 Reviewing a PR? Audit only what changed — and see what **upgrades gained**:
 
 ```bash
+npx npm-script-lens audit --since origin/main --fail-on-high   # base lockfile pulled from the ref for you
+# …or point --diff at a base lockfile you extracted yourself:
 git show origin/main:package-lock.json > /tmp/base-lock.json
 npx npm-script-lens audit --diff /tmp/base-lock.json --fail-on-high
 ```
@@ -81,19 +87,90 @@ The pending set comes from your own npm when it can answer: with npm ≥ 12, `re
 
 `--output-allowscripts` merges version-pinned entries for every reviewed package into `package.json`, preserving existing decisions: SAFE/LOW default to `true`, HIGH/MEDIUM and OSV-flagged packages to `false` — flip after reading the evidence. `--json` emits the whole review (pending, risk, content, suggested block) for scripting. `NPM_SCRIPT_LENS_NPM` overrides which npm the dry-run uses.
 
-## Keeping allowScripts alive
+## allow: pre-approve the safe packages, hold the risky ones — in any package manager
 
-npm v12 entries are version-pinned, so every dependency bump silently invalidates approvals. Two commands make this a workflow instead of a one-shot:
+`allow` runs the scan and splits every package that has install-time scripts into two buckets — the ones behavioral analysis found harmless (SAFE/LOW) go straight into the allowlist; everything that spawns processes, reaches the network, is known-malicious, or couldn't be fetched (MEDIUM/HIGH) is held back in a `_review` list for a human. It emits the block in **your package manager's native format**, auto-detected from the lockfile, on stdout — with a one-line summary on stderr:
 
 ```bash
-npx npm-script-lens sync --check     # CI: exit 1 when allowScripts drifted
-npx npm-script-lens sync --write     # update package.json: drop stale entries,
-                                     # re-pin upgrades (decisions are PRESERVED when
-                                     # the new version gained no capabilities,
-                                     # flagged for re-review when it did), add new
-npx npm-script-lens approve          # step through risky packages interactively:
-                                     # evidence per package, y/n, written to package.json
+npx npm-script-lens allow                     # scan, print the native allowlist block + _review
+npx npm-script-lens allow --write             # …and merge the auto-approved entries into the right file
+npx npm-script-lens allow --manager pnpm      # force a manager instead of auto-detecting
+npx npm-script-lens allow --input audit.json  # classify a saved `audit --json` result, no rescan
 ```
+
+Every major package manager adopted the same "scripts are opt-in, keep an allowlist" model. `allow` writes each one's native format — same risk policy, same analysis, different file:
+
+| manager | allowlist | file | `allow --write` target |
+|---|---|---|---|
+| **npm** 12 | `allowScripts: { "pkg@1.2.3": true }` | package.json | package.json |
+| **pnpm** 10.26+/11 | `allowBuilds: { pkg: true }` | pnpm-workspace.yaml | pnpm-workspace.yaml (comment-preserving) |
+| **yarn** Berry | `dependenciesMeta.<pkg>.built: true` | package.json | package.json + `enableScripts: false` in .yarnrc.yml |
+| **bun** | `trustedDependencies: ["pkg"]` | package.json | package.json |
+
+```jsonc
+// npm project → allowScripts (version-pinned)
+{ "allowScripts": { "core-js@3.38.1": true }, "_review": ["sharp@0.32.6"] }
+// pnpm project → allowBuilds (by name)
+{ "allowBuilds": { "core-js": true }, "_review": ["sharp@0.32.6"] }
+```
+
+```
+1 package auto-approved, 1 need manual review. (pnpm — allowlist in pnpm-workspace.yaml)   ← stderr
+```
+
+> **bun caveat** (surfaced automatically): defining `trustedDependencies` *replaces* bun's built-in trusted list, so packages bun trusted by default (esbuild, sharp…) stop running scripts unless listed. **yarn** needs `enableScripts: false` to turn `dependenciesMeta` into an allowlist — `allow --write` sets it for you.
+
+### CI guard
+
+`allow --ci-check` runs **no scan** — it's a fast gate for CI. It exits `1` when all three are true: a workflow in `.github/workflows/` runs `npm install`/`npm i`/`npm ci`, `package.json` has no `allowScripts` block, and the local npm is v12+ (probed via `npm --version`). That is exactly the combination where npm v12 will silently skip every dependency's install scripts and your build breaks with no obvious cause.
+
+```bash
+npx npm-script-lens allow --ci-check
+# CI will break on npm v12: run lens allow to generate allowScripts block.  (exit 1)
+```
+
+Any one of those conditions being false — npm < 12, an existing `allowScripts` block, or no `npm install` in CI — passes with a one-line reason. To fix a failing check, run `allow --write`: it writes the auto-approved entries and leaves the `_review` packages out (writing them would be deciding for you — they stay pending until a human looks).
+
+## Governance policy
+
+By default `allow`/`review`/`sync` auto-approve SAFE/LOW behavioral risk. A `script-lens.policy.json` in the project root (or `--policy <file>`) turns that fixed heuristic into a team decision:
+
+```json
+{
+  "autoApprove": {
+    "maxRisk": "LOW",            // approve up to this risk (SAFE|LOW|MEDIUM|HIGH)
+    "denyCapabilities": ["net"], // never auto-approve a script that reaches the network…
+    "minAgeDays": 30,            // …or a version published < 30 days ago (needs trust data)
+    "requireProvenance": false   // …or one without sigstore provenance
+  },
+  "waivers": {
+    "sharp": { "allow": true, "reason": "vetted native build", "expires": "2027-01-01" }
+  }
+}
+```
+
+Waivers are explicit human decisions that override the heuristic until they expire — an auditable record of *why* a risky package was trusted. With no policy file present, behavior is exactly the built-in default.
+
+## Keeping the allowlist alive — in any package manager
+
+Version-pinned npm entries are silently invalidated by every dependency bump; name-keyed managers (pnpm/yarn/bun) drift as packages come and go. `sync` reconciles your manager's native allowlist with the lockfile — auto-detected, written in the right format:
+
+```bash
+npx npm-script-lens sync --check     # CI: exit 1 when the allowlist drifted
+npx npm-script-lens sync --write     # drop stale entries, add new scripted packages,
+                                     # (npm) re-pin upgrades — PRESERVING decisions when
+                                     # the new version gained no capabilities
+npx npm-script-lens review --output-allowscripts  # review pending WITH script content, then write
+npx npm-script-lens approve          # step through risky packages interactively (npm)
+```
+
+## One-command adoption
+
+```bash
+npx npm-script-lens init             # scaffold script-lens.policy.json + a CI workflow
+```
+
+`init` writes a starter policy and a ready-to-commit GitHub Action (audit + `allow --ci-check` gate), skipping anything that already exists (`--force` to overwrite). Add `--auto-fix` for a Renovate/Dependabot bot workflow, or `--hook` to install a git pre-commit hook that runs `sync --check`. Prefer the [pre-commit framework](https://pre-commit.com)? This repo ships a [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml).
 
 ## npm v12 approve-scripts bug check
 
@@ -139,7 +216,7 @@ It records *behavior only* — no download counts, publish age, or OSV status �
 npx npm-script-lens mcp
 ```
 
-Runs an MCP stdio server with two tools: `audit_package` (audit one package — before an agent adds it as a dependency) and `audit_lockfile`. Claude Code config:
+Runs an MCP stdio server with three tools: `audit_package` (audit one package — before an agent adds it as a dependency), `audit_lockfile`, and `classify_allowscripts` (audit a lockfile and return the `allow` split — `{allowScripts, _review}` — so an agent can generate the block non-interactively). Claude Code config:
 
 ```json
 { "mcpServers": { "npm-script-lens": { "command": "npx", "args": ["npm-script-lens", "mcp"] } } }
@@ -186,7 +263,7 @@ jobs:
 
 The action writes the report to the job summary, comments on the PR (plain GitHub REST `issues/comments` call using `GITHUB_TOKEN` — same endpoint octokit uses), and fails the job when `fail-on-high` is true and a HIGH package exists.
 
-Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), and `sarif-file` for code scanning alerts:
+Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
 
 ```yaml
       - uses: Booyaka101/npm-script-lens@v1
@@ -210,6 +287,57 @@ npm test        # analyzer/lockfile/reporter units, offline mock-registry tests,
 
 Node.js ≥ 20 (uses global `fetch`). No paid APIs — the public npm registry, plus the free OSV.dev and npm downloads APIs for trust enrichment (`--no-trust` or `--offline` to skip).
 
+## Staying current with npm
+
+This tool's value is coupled to npm's own behavior — the `allowScripts` field, the `unreviewedScripts` shape in `npm install --dry-run --json`, the approve-scripts commands. Those will drift across npm releases, so npm-script-lens is built to notice when they do rather than fail silently:
+
+```bash
+npx npm-script-lens doctor          # does this build still understand your npm?
+npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
+```
+
+`doctor` probes your local npm and reports each contract assumption — version, allowScripts enforcement, a parser self-test, a live dry-run shape check, and each npm-bug detector's upstream status — then **exits 1 on genuine drift** (an npm output shape this build no longer recognizes). Under the hood:
+
+- Every npm coupling lives in one file (`src/npm-contract.js`) — a future npm change is a one-line patch, not a hunt.
+- `review` **warns loudly and falls back** instead of silently trusting an unfamiliar npm answer as "nothing pending".
+- A scheduled **npm-compat canary** (`.github/workflows/npm-compat.yml`) drives the *real* npm across `12`/`latest`/`next` on a matrix and goes red on drift — the tripwire the unit tests (which use stub npms) can't be.
+- The two npm-v12 approve-scripts bug detectors are **version-aware**: the report says which npm it checked and links each bug's upstream status, so a detector can't quietly outlive the bug it was written for.
+
+## Exit codes
+
+| code | meaning |
+|---|---|
+| `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `doctor` detected npm drift |
+| `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
+
+## Commands at a glance
+
+| command | does |
+|---|---|
+| `audit` | scan a lockfile, report install-script risk (Markdown/JSON/SARIF); `--fail-on-high`, `--diff`/`--since`, `--check-v12-gaps` |
+| `allow` | split scripted packages into an auto-approved allowlist + `_review`, in your manager's native format; `--write`, `--ci-check`, `--manager`, `--policy` |
+| `review` | show pending approvals **with the actual script content** + verdict; `--output-allowscripts` writes decisions |
+| `sync` | reconcile the native allowlist with the lockfile (drop stale, add new); `--check` for CI |
+| `doctor` | is this build still in sync with your npm? contract probe + drift alarm |
+| `init` | scaffold policy + CI workflow (`--auto-fix` bot, `--hook` git pre-commit) |
+| `manifest` | committable behavior receipt whose git diff is the approval-surface change |
+| `completion` | print a shell completion script (bash / zsh / fish) |
+| `mcp` | MCP server for AI agents (`audit_package`, `audit_lockfile`, `classify_allowscripts`) |
+
+## How it compares
+
+The install-script-allowlist space has good tools — but each covers one slice:
+
+| | behavioral risk analysis | npm | pnpm | yarn | bun | writes native allowlist | policy / waivers | CI drift gate | MCP |
+|---|---|---|---|---|---|---|---|---|---|
+| **npm-script-lens** | ✅ exec/net/fs/obf + OSV + trust | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `@lavamoat/allow-scripts` | ❌ (allowlist mgmt only) | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | partial | ❌ |
+| `can-i-ignore-scripts` | ❌ (lists scripts) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| native `npm approve-scripts` / `pnpm approve-builds` / `bun pm trust` | ❌ | one each | | | | ✅ | ❌ | ❌ | ❌ |
+
+The combination — **behavioral evidence** for the decision, in **every manager's** native format, with **policy** and **CI enforcement** — is what makes it the one tool to standardize on.
+
 ## Honest limitations
 
 - **Static capability detection, not proof of malice.** A HIGH score means "this script *can* spawn processes" — exactly the question to answer before approving, but plenty of HIGH packages (native builds) are legitimate. The lens gives evidence; you make the call. Only sandboxed execution could say more, and running untrusted install scripts to observe them is deliberately out of scope.
@@ -221,5 +349,8 @@ Node.js ≥ 20 (uses global `fetch`). No paid APIs — the public npm registry, 
 
 - **CLI**: `npx npm-script-lens audit` — [npmjs.com/package/npm-script-lens](https://www.npmjs.com/package/npm-script-lens)
 - **GitHub Action**: `uses: Booyaka101/npm-script-lens@v1` — [releases](https://github.com/Booyaka101/npm-script-lens/releases)
+- **VS Code extension**: inline install-script risk in `package.json` — [`editors/vscode`](editors/vscode)
+- **Neovim plugin**: `vim.diagnostic` on `package.json` — [`editors/nvim`](editors/nvim)
 - **MCP server** for AI agents: `npx npm-script-lens mcp`
+- **Pre-commit**: [`init --hook`](#one-command-adoption) or the [pre-commit framework](.pre-commit-hooks.yaml) · **HTML report**: `audit --html report.html`
 - Join the conversation: [npm/rfcs#897](https://github.com/npm/rfcs/issues/897) (allowScripts review-report RRFC) · [npm v12 migration discussion](https://github.com/community/community/discussions/198547)

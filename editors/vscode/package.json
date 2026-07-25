@@ -1,0 +1,91 @@
+{
+  "name": "npm-script-lens",
+  "displayName": "npm-script-lens",
+  "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists.",
+  "version": "1.0.0",
+  "publisher": "booyaka101",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#E11D2B",
+    "theme": "dark"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "npm",
+    "security",
+    "supply-chain",
+    "allowScripts",
+    "postinstall"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Booyaka101/npm-script-lens.git",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://github.com/Booyaka101/npm-script-lens#readme",
+  "bugs": "https://github.com/Booyaka101/npm-script-lens/issues",
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/package.json"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "npmScriptLens.audit", "title": "npm-script-lens: Audit install scripts" },
+      { "command": "npmScriptLens.allowWrite", "title": "npm-script-lens: Generate allowlist (write)" },
+      { "command": "npmScriptLens.review", "title": "npm-script-lens: Review pending approvals" },
+      { "command": "npmScriptLens.doctor", "title": "npm-script-lens: Doctor (npm compatibility)" }
+    ],
+    "configuration": {
+      "title": "npm-script-lens",
+      "properties": {
+        "npmScriptLens.command": {
+          "type": "string",
+          "default": "npx npm-script-lens",
+          "description": "Command used to run the npm-script-lens CLI (e.g. 'npx npm-script-lens' or an absolute path)."
+        },
+        "npmScriptLens.trust": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable OSV malware + publisher-trust enrichment when auditing from the editor (slower; hits the network)."
+        }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "npmScriptLens.gettingStarted",
+        "title": "Get started with npm-script-lens",
+        "description": "See what your dependencies' install scripts do, then lock down the allowlist.",
+        "steps": [
+          {
+            "id": "audit",
+            "title": "Audit your install scripts",
+            "description": "Open a package.json and risky install scripts are flagged inline — or run it now.\n[Audit install scripts](command:npmScriptLens.audit)",
+            "media": { "markdown": "walkthrough/audit.md" }
+          },
+          {
+            "id": "allow",
+            "title": "Generate your allowlist",
+            "description": "Auto-approve the packages behavioral analysis found safe; hold the rest for review — in your package manager's native format.\n[Generate allowlist](command:npmScriptLens.allowWrite)",
+            "media": { "markdown": "walkthrough/allow.md" }
+          },
+          {
+            "id": "ci",
+            "title": "Enforce it in CI",
+            "description": "Scaffold a policy + CI workflow so the allowlist stays enforced on every PR.\n[Review pending approvals](command:npmScriptLens.review)",
+            "media": { "markdown": "walkthrough/ci.md" }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

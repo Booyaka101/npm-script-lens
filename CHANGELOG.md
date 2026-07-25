@@ -1,5 +1,181 @@
 # Changelog
 
+## 1.0.0 (2026-07-25)
+
+**1.0** — npm-script-lens is now the complete, cross-ecosystem tool for the
+install-script-approval problem every package manager now has, reachable from
+every surface a developer works in.
+
+- **VS Code extension** (`editors/vscode`): inline install-script risk
+  diagnostics on `package.json`, a workspace status-bar summary, and commands
+  to audit / generate the allowlist / review / run doctor — a thin, tested UI
+  over the CLI engine. Ships a Marketplace-ready icon + gallery banner and a
+  Getting-Started **walkthrough** (audit → allowlist → CI); packaged and
+  installable (`.vsix`).
+- **`sync-check` Action input**: fails the job when the install-script allowlist
+  has drifted from the lockfile — cross-ecosystem (npm/pnpm/yarn/bun,
+  auto-detected), a stronger companion to `ci-check`.
+- **Neovim plugin** (`editors/nvim`): `vim.diagnostic` install-script risk on
+  `package.json` + `:NpmScriptLens*` commands; verified loading under headless
+  Neovim 0.12.
+- **Shareable HTML report**: `audit --html report.html` writes a self-contained,
+  script-free dashboard (risk summary, per-package table, allowlist block).
+- **Shell completions**: `npm-script-lens completion <bash|zsh|fish>`.
+- **Local enforcement**: `init --hook` installs a git pre-commit hook running
+  `sync --check`, and the repo ships a `.pre-commit-hooks.yaml` for the
+  pre-commit framework.
+- The full workflow — **`audit` · `allow` · `review` · `sync` · `approve` ·
+  `manifest` · `doctor` · `init`** — works across **npm, pnpm, yarn Berry, and
+  bun**, all four verified end-to-end against the real binary, each writing its
+  native allowlist (`allowScripts` / `allowBuilds` / `dependenciesMeta` /
+  `trustedDependencies`).
+- **Governance** (`script-lens.policy.json`): risk ceiling, capability bans,
+  age/provenance requirements (trust-enriched for every candidate), and
+  per-package waivers with expiry.
+- **CI**: `allow --ci-check`, `sync --check`, a GitHub Action, an auto-fix bot
+  workflow (`init --auto-fix`), and two self-drift canaries (npm-compat,
+  pm-compat).
+- **Durability**: a centralized manager contract (`npm-contract` +
+  `pm-contract`) and a `doctor` that fails on drift, so the tool stays correct
+  as npm/pnpm/yarn/bun evolve.
+- **AI agents**: MCP server with `audit_package`, `audit_lockfile`, and
+  `classify_allowscripts`.
+
+Reaching 1.0 from the v0.5 release spanned: cross-ecosystem allow/review/sync,
+policy, init, doctor, `--since`, the MCP allow tool, the canaries, and the
+editor extension. 124 tests.
+
+## 0.12.0 (2026-07-25)
+
+- **Auto-fix bot**: `init --auto-fix` scaffolds a workflow that, on
+  Renovate/Dependabot branches, runs `sync --write` and commits the reconciled
+  allowlist back — so a dependency bump can't silently leave the branch with an
+  uninstallable allowlist.
+- **Policy age/provenance now enforce for every package**: a policy with
+  `minAgeDays` or `requireProvenance` triggers trust enrichment for *all*
+  scripted packages (previously only HIGH/MEDIUM had trust data), so those
+  rules work on LOW packages too. With `--no-trust` the rules fail closed (an
+  unverifiable package is held for review, never auto-approved).
+
+## 0.11.0 (2026-07-25)
+
+The whole workflow is cross-ecosystem, governable, and one command to adopt.
+
+- **`review` and `sync` now speak every package manager**, joining `allow`.
+  They auto-detect the manager, read its existing native allowlist for
+  coverage, and write decisions back in the right format/file (npm
+  `allowScripts` · pnpm `allowBuilds` · yarn `dependenciesMeta.built` · bun
+  `trustedDependencies`). `--manager` overrides detection on all three.
+- **All four managers are now verified end-to-end against the real binary**
+  (npm, pnpm 11, yarn Berry 4, bun 1.3): `allow --write` generates the native
+  allowlist and the manager then runs a previously-blocked install script.
+- **Governance policy** (`script-lens.policy.json`, or `--policy <file>`):
+  codify what auto-approves instead of the fixed SAFE/LOW heuristic —
+  `autoApprove.maxRisk`, `denyCapabilities` (never auto-approve a given
+  exec/net/fs/… capability), `minAgeDays` and `requireProvenance` (need trust
+  data), and per-package `waivers` with a reason and an `expires` date. With no
+  policy file, behavior is exactly the built-in default. Honored by `allow`,
+  `review`, and `sync`.
+- **`init`**: scaffolds `script-lens.policy.json` + a ready-to-commit CI
+  workflow (audit + `allow --ci-check` gate) in one command; skips existing
+  files unless `--force`.
+- **`classify_allowscripts` MCP tool** and the CLI share one decision engine,
+  so agents get the same policy-aware split.
+- **pm-compat canary** (`.github/workflows/pm-compat.yml`): a scheduled matrix
+  (npm/pnpm/bun) that drives each real manager through `allow --write` and
+  asserts the approved script runs — the cross-ecosystem drift tripwire.
+- **`src/pm-contract.js`** gained `readExisting`/`covers` (coverage),
+  `writeDecisions` (true/false where the format allows) and `writeFull`
+  (replace, so `sync` can drop stale entries) per manager.
+
+## 0.10.0 (2026-07-24)
+
+Cross-ecosystem release — install-script approval isn't an npm-only problem
+anymore, so `allow` isn't npm-only anymore.
+
+- **`allow` now speaks every major package manager's native allowlist**, auto-
+  detected from the lockfile:
+  - **npm** → `allowScripts` (`"pkg@1.2.3": true`) in package.json
+  - **pnpm** → `allowBuilds` (`pkg: true`) in pnpm-workspace.yaml (pnpm ≥ 10.26
+    / v11; older pnpm 10 uses the `onlyBuiltDependencies` array)
+  - **yarn Berry** → `dependenciesMeta.<pkg>.built: true` in package.json
+    (+ `enableScripts: false` in .yarnrc.yml)
+  - **bun** → `trustedDependencies: ["pkg"]` in package.json
+  The same SAFE/LOW→approve, MEDIUM/HIGH/malicious→`_review` policy and the same
+  behavioral analysis drive all four; only the emitted format differs. stdout is
+  the manager's native block, directly pasteable.
+- **`allow --write`** merges the auto-approved entries into the right file for
+  the detected manager (package.json / pnpm-workspace.yaml / .yarnrc.yml),
+  preserving everything else. The pnpm-workspace.yaml merge is comment- and
+  key-preserving with no YAML dependency.
+- **`allow --manager <npm|pnpm|yarn|bun>`** overrides auto-detection.
+- **Safety notes surfaced**: bun's `trustedDependencies` *replaces* bun's built-
+  in trusted list (so default-trusted scripted deps can be dropped) — `allow`
+  warns; yarn needs `enableScripts: false` to be an allowlist — `allow --write`
+  sets it.
+- **`doctor`** now reports the detected package manager and which allowlist file
+  `allow` will target.
+- **`src/pm-contract.js`**: one adapter per manager (detect / key / render /
+  write), so adding or tracking a manager's format is a single-file change.
+- Verified end-to-end against **real pnpm 11**: `allow --write` generated a
+  `pnpm-workspace.yaml` that pnpm accepted and used to run an approved package's
+  install script. npm is likewise live-verified; yarn/bun formats are verified
+  against their official docs and unit-tested (those binaries weren't installed
+  in the build environment).
+
+## 0.9.0 (2026-07-24)
+
+Durability release — keeping the tool useful as npm itself changes.
+
+- **`doctor` command**: probes your local npm and reports, check by check,
+  whether the npm contract this build assumes still holds — npm version,
+  allowScripts enforcement, a parser self-test against the canonical dry-run
+  shapes, a live `npm install --dry-run --json` shape check, the assumed
+  contract, and each detector's upstream status. Exits 1 on genuine drift (an
+  unrecognized output shape). `--json` for machine output; `--no-live`/
+  `--offline` skip the live probe.
+- **Loud drift detection**: `review` no longer silently treats an unfamiliar
+  npm output as "nothing pending". A v12+ npm whose `--dry-run --json` shape
+  isn't recognized now warns and falls back to the lockfile, pointing at
+  `doctor`.
+- **npm-compat canary** (`.github/workflows/npm-compat.yml` +
+  `scripts/npm-compat-canary.js`): a scheduled matrix over npm `12`/`latest`/
+  `next` that drives the **real** npm (not the test stubs) against a scratch
+  project and fails on drift — the automated tripwire the unit tests can't be.
+- **Centralized npm contract** (`src/npm-contract.js`): every npm coupling —
+  field name, version threshold, dry-run args, `unreviewedScripts` key, summary
+  keys, command/flag names, and the detector upstream-status table — lives in
+  one file, so a future npm change is a one-file patch.
+- **Version-aware v12 gap detectors**: the gap report now states which local
+  npm it checked against, and each finding carries its upstream issue and fix
+  status (e.g. npm/cli#9463's fix landing in `c14e87c`).
+- **`audit --since <git-ref>`**: like `--diff`, but extracts the base lockfile
+  from a git ref (branch/tag/SHA) automatically — audit only what changed since
+  then, ideal for Renovate/Dependabot branches.
+- **`classify_allowscripts` MCP tool**: agents can get the `allow` split
+  (`{allowScripts, _review}`) non-interactively over the existing MCP server.
+
+## 0.8.0 (2026-07-24)
+
+- **`allow` subcommand**: one-shot split of every package with install-time
+  scripts into a pre-approved `allowScripts` block (behavioral risk SAFE/LOW,
+  not known-malicious) and a `_review` list (MEDIUM/HIGH, known-malicious, or
+  un-fetchable). Emits `{ "allowScripts": { … }, "_review": [ … ] }` as JSON on
+  stdout and an `X packages auto-approved, Y need manual review.` summary on
+  stderr. `--input <audit.json>` classifies a saved `audit --json` result
+  instead of re-running the scan. `--write` merges the auto-approved entries
+  into `package.json` (preserving existing keys); `_review` packages are left
+  out so a human still decides on them.
+- **`allow --ci-check`**: a fast CI guard (no scan) that exits `1` when a
+  workflow in `.github/workflows/` runs `npm install`/`i`/`ci`, `package.json`
+  has no `allowScripts` block, and the local npm is v12+ (probed via
+  `npm --version`) — the exact combination where npm v12 silently skips every
+  dependency's install scripts. Passes with a one-line reason otherwise.
+- **GitHub Action `ci-check` input** (default `'false'`, opt-in): runs the
+  `allow --ci-check` gate as a fail-fast composite step (`if: always()`), so the
+  same npm-v12 break check fails the job with a `::error` annotation and a job
+  summary line. Shares one detection function with the CLI (`ciCheckResult`).
+
 ## 0.7.0 (2026-07-24)
 
 - **`review` subcommand**: lists packages with pending npm v12 approve-scripts

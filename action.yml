@@ -52,6 +52,20 @@ inputs:
       global installs in workflows (npm/cli#9463). 'auto' runs when the
       runner's npm is v12+; 'true'/'false' force.
     default: 'auto'
+  ci-check:
+    description: >-
+      Fail the job (exit 1) when npm v12 would silently disable dependency
+      install scripts: a workflow runs npm install, package.json has no
+      allowScripts block, and the runner's npm is v12+. Runs no scan.
+      'true' to enable (opt-in).
+    default: 'false'
+  sync-check:
+    description: >-
+      Fail the job (exit 1) when the install-script allowlist has drifted from
+      the lockfile (a new scripted dependency isn't covered, or a stale entry
+      lingers). Works for npm, pnpm, yarn, and bun — auto-detected. 'true' to
+      enable (opt-in).
+    default: 'false'
   github-token:
     description: Token used to post the PR comment
     default: ${{ github.token }}
@@ -91,4 +105,22 @@ runs:
           node "$GITHUB_ACTION_PATH/src/action.js" v12-gaps
         else
           echo "Skipping npm v12 approve-scripts gap checks (npm major version $major, mode $mode)"
+        fi
+    - name: Check npm v12 allowScripts CI break
+      # opt-in fail-fast gate; runs even when the audit step failed the job
+      if: ${{ always() && inputs.ci-check == 'true' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+      run: node "$GITHUB_ACTION_PATH/src/action.js" ci-check
+    - name: Check the install-script allowlist is in sync
+      # opt-in cross-ecosystem drift gate (npm/pnpm/yarn/bun, auto-detected)
+      if: ${{ always() && inputs.sync-check == 'true' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+      run: |
+        if ! node "$GITHUB_ACTION_PATH/src/cli.js" sync --check --path "${INPUT_PATH:-.}"; then
+          echo "::error::install-script allowlist is out of sync with the lockfile — run 'npx npm-script-lens sync --write' and commit the result"
+          exit 1
         fi

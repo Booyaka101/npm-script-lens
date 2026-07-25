@@ -36,6 +36,20 @@ const TOOLS = [
       required: ['path'],
     },
   },
+  {
+    name: 'classify_allowscripts',
+    description: 'Audit a lockfile and split every package with install-time scripts into a ready-to-commit ' +
+      'npm v12 allowScripts decision: SAFE/LOW-risk packages are auto-approved (allowScripts: true), while ' +
+      'MEDIUM/HIGH-risk, known-malicious, and un-fetchable packages are held in _review for a human. Use to ' +
+      'generate the allowScripts block for a project non-interactively.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'project directory or lockfile path' },
+      },
+      required: ['path'],
+    },
+  },
 ];
 
 async function auditPackageTool({ name, version }) {
@@ -90,6 +104,20 @@ async function auditLockfileTool({ path: target }) {
   };
 }
 
+// Non-interactive allowScripts split for agents: same auto-approve policy as
+// the `allow` CLI (SAFE/LOW → true; MEDIUM/HIGH/malicious/error → _review).
+async function classifyAllowScriptsTool({ path: target }) {
+  const { runAudit, classifyForAllow } = require('./cli');
+  const results = await runAudit(target, { log: () => {} });
+  const { allowScripts, _review } = classifyForAllow(results);
+  return {
+    allowScripts,
+    _review,
+    summary: `${Object.keys(allowScripts).length} package(s) auto-approved (SAFE/LOW), ` +
+      `${_review.length} need manual review (MEDIUM/HIGH/malicious/un-fetchable)`,
+  };
+}
+
 function serve() {
   const send = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
   const rl = readline.createInterface({ input: process.stdin });
@@ -117,7 +145,8 @@ function serve() {
         try {
           payload = name === 'audit_package' ? await auditPackageTool(args || {})
             : name === 'audit_lockfile' ? await auditLockfileTool(args || {})
-              : null;
+              : name === 'classify_allowscripts' ? await classifyAllowScriptsTool(args || {})
+                : null;
           if (payload === null) throw new Error(`unknown tool: ${name}`);
           send({
             jsonrpc: '2.0',
