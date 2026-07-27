@@ -30,7 +30,11 @@ jobs:
           case "${{ matrix.pm }}" in
             pnpm) npm install -g pnpm ;;
             bun)  npm install -g bun ;;
-            npm)  echo "npm is built in" ;;
+            # the runner's bundled npm is v11, where install scripts still run
+            # by DEFAULT — the allowlist would never be consulted and the leg
+            # would pass without testing anything. v12 is where allowScripts is
+            # enforced, so that is the only version this canary is meaningful on.
+            npm)  npm install -g npm@12 ;;
           esac
       - name: Scaffold a project with a scripted dependency (core-js)
         run: |
@@ -48,15 +52,26 @@ jobs:
         run: node "$GITHUB_WORKSPACE/src/cli.js" allow --path /tmp/pmc --no-trust --write
       - name: Confirm the manager honors it and runs the approved script
         working-directory: /tmp/pmc
+        # core-js's postinstall prints its banner only when it does NOT think it
+        # is on CI: isBannerRequired() bails on ADBLOCK/CI/DISABLE_OPENCOLLECTIVE/
+        # npm_config_loglevel/OPEN_SOURCE_CONTRIBUTOR. GitHub always sets CI=true,
+        # so with it set the banner can never appear and this check can never
+        # pass. Blank it for this step only. (Verified against core-js 3.38.1's
+        # postinstall.js source.)
+        env:
+          CI: ''
         run: |
           set -e
+          # npm SUPPRESSES lifecycle-script stdout unless --foreground-scripts,
+          # so without it the banner is invisible even when the script ran.
+          # (Verified locally: 0 banner lines without the flag, 1 with it.)
           case "${{ matrix.pm }}" in
-            npm)  rm -rf node_modules; out=$(npm install --no-audit --no-fund 2>&1) ;;
+            npm)  rm -rf node_modules; out=$(npm install --no-audit --no-fund --foreground-scripts 2>&1) ;;
             pnpm) rm -rf node_modules; out=$(pnpm install 2>&1) ;;
             bun)  rm -rf node_modules; out=$(bun install 2>&1) ;;
           esac
           echo "$out"
           # core-js prints a funding banner from its postinstall when it runs;
           # if the script were still blocked the banner would be absent.
-          echo "$out" | grep -qi "core-js\|Thank you for using core-js" || {
+          echo "$out" | grep -qi "Thank you for using core-js" || {
             echo "::error::${{ matrix.pm }}: approved install script did not run after allow --write — allowlist format may have drifted"; exit 1; }

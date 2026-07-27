@@ -7,6 +7,8 @@ _Updated 2026-07-27 after building v1.3.0._
 
 **Owner steps:** commit → push → **wait for CI green on ubuntu/windows × node 20/22** (the 1.0.0 lesson) → tag `v1.3.0`, move `v1` → GitHub Release → `npm publish` (needs `npm login`; account is **Booyaka101**).
 
+**Also on this branch: the two red scheduled canaries on `main` are fixed** (they were failing on their own schedule at v1.2.0 — nothing to do with v1.3.0). `npm-compat` was installing `npm@next`, a dist-tag npm does not publish (ETARGET every run); `pm-compat` could never pass because GitHub sets `CI=true`, which makes core-js suppress the banner the check greps for, *and* npm hides script output without `--foreground-scripts`. Details in PROGRESS.md. These only execute on GitHub, so they stay unverified until you push — worth watching on the first run.
+
 **What it adds** — two things, one release:
 1. **The gyp lens.** New `src/gyp.js` reads *inside* `binding.gyp` and the `.gypi`/`.gyp` files it includes (tolerant non-JSON parser: single quotes, `#` comments, trailing commas). Covers every gyp execution channel — `<!( <!@( >!( >!@( ^!( ^!@(`, `<!pymod_do_main(`, `<|( >|( ^|(`, `actions/rules/postbuilds[].action`, `make_global_settings`, Python-eval `conditions` — and never flags plain `<(var)` interpolation. Feeds `audit` (`gyp:` signals, scores HIGH), `review` (findings printed above the raw file), `--sarif` (`gyp-exec-channel`), and policy `denyCapabilities`.
 2. **`diff` false negative FIXED** — it compared `binding.gyp` by existence, so a version that *rewrote* an existing one read `UNCHANGED` and exited 0. Now content-compared: `MODIFIED` + line diff + `gainedChannels` + exit 1. Proven live on `bufferutil@4.0.8 → 4.0.9`.
