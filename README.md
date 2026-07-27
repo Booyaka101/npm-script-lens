@@ -414,7 +414,7 @@ jobs:
   lens:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Booyaka101/npm-script-lens@v1
         with:
           path: '.'               # dir or lockfile; npm/yarn/pnpm auto-detected
@@ -430,7 +430,7 @@ Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockf
       - uses: Booyaka101/npm-script-lens@v1
         with:
           sarif-file: lens.sarif
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: lens.sarif
