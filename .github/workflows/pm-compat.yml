@@ -62,21 +62,29 @@ jobs:
         run: |
           set -e
           case "${{ matrix.pm }}" in
-            npm)  BLOCKED='allow-scripts' ;;              # npm warn allow-scripts … not yet covered by allowScripts
-            pnpm) BLOCKED='gnored build script' ;;        # Ignored build scripts: core-js
-            bun)  BLOCKED='locked [0-9]+ postinstall' ;;  # Blocked 1 postinstall. Run `bun pm untrusted`…
+            # npm 11.18/12 renamed the warning prefix from `allow-scripts` to
+            # `install-scripts` (the new `npm install-scripts approve|deny|ls|
+            # prune` front-end; `approve-scripts` lives on as an alias). Match
+            # either so this works on both lines.
+            npm)  BLOCKED='(allow|install)-scripts' ;;
+            pnpm) BLOCKED='gnored build script' ;;   # Ignored build scripts: core-js
+            # bun reports "Blocked N postinstall" only on the install that first
+            # discovers them, so a re-install is silent and the probe would look
+            # unblocked. `bun pm untrusted` is the stateless query bun's own
+            # message points at, so ask that instead of scraping install output.
+            bun)  BLOCKED='core-js' ;;
           esac
-          run_install() {
+          probe() {
             rm -rf node_modules
             case "${{ matrix.pm }}" in
               npm)  npm install --no-audit --no-fund 2>&1 || true ;;
               pnpm) pnpm install 2>&1 || true ;;
-              bun)  bun install 2>&1 || true ;;
+              bun)  bun install >/dev/null 2>&1 || true; bun pm untrusted 2>&1 || true ;;
             esac
           }
 
           echo "── BEFORE allow --write ─────────────────────────"
-          before=$(run_install); echo "$before"
+          before=$(probe); echo "$before"
           if echo "$before" | grep -Eqi "$BLOCKED"; then
             baseline=blocked
           else
@@ -88,7 +96,7 @@ jobs:
           node "$GITHUB_WORKSPACE/src/cli.js" allow --path /tmp/pmc --no-trust --write
 
           echo "── AFTER allow --write ──────────────────────────"
-          after=$(run_install); echo "$after"
+          after=$(probe); echo "$after"
           if echo "$after" | grep -Eqi "$BLOCKED"; then
             echo "::error::${{ matrix.pm }}: still reports blocked install scripts after allow --write — our native allowlist format has drifted"
             exit 1
