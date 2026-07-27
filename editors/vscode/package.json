@@ -2,7 +2,7 @@
   "name": "npm-script-lens",
   "displayName": "npm-script-lens",
   "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists.",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "publisher": "booyaka101",
   "license": "MIT",
   "engines": {
@@ -37,10 +37,30 @@
   ],
   "contributes": {
     "commands": [
-      { "command": "npmScriptLens.audit", "title": "npm-script-lens: Audit install scripts" },
-      { "command": "npmScriptLens.allowWrite", "title": "npm-script-lens: Generate allowlist (write)" },
-      { "command": "npmScriptLens.review", "title": "npm-script-lens: Review pending approvals" },
-      { "command": "npmScriptLens.doctor", "title": "npm-script-lens: Doctor (npm compatibility)" }
+      {
+        "command": "npmScriptLens.audit",
+        "title": "npm-script-lens: Audit install scripts"
+      },
+      {
+        "command": "npmScriptLens.allowWrite",
+        "title": "npm-script-lens: Generate allowlist (write)"
+      },
+      {
+        "command": "npmScriptLens.review",
+        "title": "npm-script-lens: Review pending approvals"
+      },
+      {
+        "command": "npmScriptLens.doctor",
+        "title": "npm-script-lens: Doctor (npm compatibility)"
+      },
+      {
+        "command": "npmScriptLens.sync",
+        "title": "npm-script-lens: Sync allowlist with the lockfile"
+      },
+      {
+        "command": "npmScriptLens.sources",
+        "title": "npm-script-lens: Least-privilege .npmrc sources"
+      }
     ],
     "configuration": {
       "title": "npm-script-lens",
@@ -67,19 +87,25 @@
             "id": "audit",
             "title": "Audit your install scripts",
             "description": "Open a package.json and risky install scripts are flagged inline — or run it now.\n[Audit install scripts](command:npmScriptLens.audit)",
-            "media": { "markdown": "walkthrough/audit.md" }
+            "media": {
+              "markdown": "walkthrough/audit.md"
+            }
           },
           {
             "id": "allow",
             "title": "Generate your allowlist",
             "description": "Auto-approve the packages behavioral analysis found safe; hold the rest for review — in your package manager's native format.\n[Generate allowlist](command:npmScriptLens.allowWrite)",
-            "media": { "markdown": "walkthrough/allow.md" }
+            "media": {
+              "markdown": "walkthrough/allow.md"
+            }
           },
           {
             "id": "ci",
             "title": "Enforce it in CI",
             "description": "Scaffold a policy + CI workflow so the allowlist stays enforced on every PR.\n[Review pending approvals](command:npmScriptLens.review)",
-            "media": { "markdown": "walkthrough/ci.md" }
+            "media": {
+              "markdown": "walkthrough/ci.md"
+            }
           }
         ]
       }

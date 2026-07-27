@@ -27,8 +27,23 @@ A first-run **walkthrough** (Get Started → *Get started with npm-script-lens*)
 - **Commands** (Command Palette):
   - **npm-script-lens: Audit install scripts**
   - **npm-script-lens: Generate allowlist (write)** — runs `allow --write` for your detected package manager
+  - **npm-script-lens: Sync allowlist with the lockfile** — reconciles the native allowlist, dropping stale entries
   - **npm-script-lens: Review pending approvals**
+  - **npm-script-lens: Least-privilege .npmrc sources** — the minimal `allow-git` / `allow-remote` your tree actually needs
   - **npm-script-lens: Doctor (npm compatibility)**
+
+## It reads inside `binding.gyp`
+
+Native packages often have no install script at all — npm runs an implicit
+`node-gyp rebuild`, and gyp *executes* the commands inside `binding.gyp` before a
+line of C is compiled. That is where the June 2026 campaign hid its payload
+([ReversingLabs](https://www.reversinglabs.com/blog/npm-bindinggyp-cicd-secrets),
+286 malicious versions across 56 packages).
+
+The CLI reads inside `binding.gyp` and the `.gypi` files it includes — command
+expansion (`<!(`, and the late `>!(` / `^!(` forms), `pymod_do_main`, build
+actions, and compiler hijacks via `make_global_settings` — so those findings show
+up on the line in your `package.json` like any other.
 
 ## Requirements
 
