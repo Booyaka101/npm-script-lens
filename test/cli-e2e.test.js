@@ -62,10 +62,13 @@ test('diff --json emits the four buckets and exit 0 when identical', async () =>
   const out = await run(['diff', 'sharp@0.33.0', 'sharp@0.33.0', '--json']);
   assert.strictEqual(out.status, 0, out.stderr);
   const j = JSON.parse(out.stdout);
-  assert.deepStrictEqual(Object.keys(j).sort(), ['added', 'modified', 'removed', 'unchanged']);
+  assert.deepStrictEqual(Object.keys(j).sort(), ['added', 'gyp', 'modified', 'removed', 'unchanged']);
   assert.deepStrictEqual(j.added, []);
   assert.deepStrictEqual(j.modified, []);
   assert.ok(j.unchanged.includes('install'));
+  // same version on both sides: the binding.gyp bytes are identical, so the
+  // gyp channel reports no change and nothing was gained
+  assert.deepStrictEqual(j.gyp, { changed: false, gainedChannels: [] });
 });
 
 test('diff on a bad spec is a clean usage error, exit 2', async () => {

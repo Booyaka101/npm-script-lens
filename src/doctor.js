@@ -130,7 +130,9 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
   add('assumed contract', 'info',
     `field=${ALLOWSCRIPTS_FIELD} · dry-run=\`npm ${DRY_RUN_ARGS.join(' ')}\` · key=${UNREVIEWED_KEY} · min npm=v${MIN_ALLOWSCRIPTS_NPM}`);
   for (const d of Object.values(DETECTORS)) {
-    add(`detector ${d.id}`, 'info', `${d.issue} — ${d.upstream}${d.fixedInNpm ? ` (fixed in npm v${d.fixedInNpm})` : ' (fixed-version not yet pinned — verify against your npm)'}`);
+    add(`detector ${d.id}`, 'info', `${d.issue} — ${d.upstream}`
+      + (d.fixedInNpm ? ` (fixed in npm v${d.fixedInNpm}${d.note ? `; ${d.note}` : ''})`
+        : ' (fixed-version not yet pinned — verify against your npm)'));
   }
 
   const failed = checks.some((c) => c.status === 'fail');

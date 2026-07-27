@@ -13,6 +13,7 @@ const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
 const { buildReport, buildHtml, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport, BADGE } = require('./reporter');
 const { checkV12Gaps, workflowFiles } = require('./v12gaps');
+const { collectGypFindings, KIND_LABEL: GYP_KIND_LABEL } = require('./gyp');
 const { npmDryRunPending, npmMajorVersion, isCovered } = require('./review');
 const { runDoctor, renderDoctor } = require('./doctor');
 const { analyzeSources, sourcesJson, renderSources, rootWarnings, checkSourceConfig, readSourceConfig } = require('./sources');
@@ -184,8 +185,8 @@ const failCount = (results) => results.filter((r) => r.malicious || packageRisk(
 // (npm/cli#9562 optional-dep gap, npm/cli#9463 EGLOBAL), same output surfaces
 // as a full audit: Markdown, --json, --sarif, --out.
 async function v12GapsAction(opts) {
-  const { findings, npmMajor } = await checkV12Gaps(opts.path, { log: (m) => process.stderr.write(`${m}\n`) });
-  const output = opts.json ? JSON.stringify({ findings }, null, 2) : buildGapsReport(findings, { npmMajor });
+  const { findings, npmMajor, npmVersion } = await checkV12Gaps(opts.path, { log: (m) => process.stderr.write(`${m}\n`) });
+  const output = opts.json ? JSON.stringify({ findings }, null, 2) : buildGapsReport(findings, { npmMajor, npmVersion });
   if (opts.out) fs.writeFileSync(opts.out, output);
   else process.stdout.write(`${output}\n`);
   if (opts.sarif) {
@@ -523,7 +524,16 @@ async function scriptContent(r, ctx, lockDep) {
       }
       for (const file of entries) {
         const all = (pkg.files.get(file) || '').split(/\r?\n/);
-        out.push({ script, command, file, totalLines: all.length, lines: all.slice(0, CONTENT_LINES) });
+        const entry = { script, command, file, totalLines: all.length, lines: all.slice(0, CONTENT_LINES) };
+        // binding.gyp is not inert data — gyp runs `<!(...)` expansions during
+        // configure. Lead with what actually executes, then the raw lines.
+        if (file === 'binding.gyp') {
+          const { findings, partial, notes } = collectGypFindings(pkg.files);
+          if (findings.length > 0) entry.gyp = findings;
+          if (partial) entry.gypPartial = true;
+          if (notes.length > 0) entry.gypNotes = notes;
+        }
+        out.push(entry);
       }
     }
     return out;
@@ -631,6 +641,12 @@ async function reviewAction(opts) {
         for (const c of contents.get(key) || []) {
           if (c.error) { lines.push(`   (content unavailable: ${c.error})`); continue; }
           if (!c.file) { lines.push(`   ${c.script}: ${c.note}`); continue; }
+          for (const f of c.gyp || []) {
+            lines.push(`   ${f.file || c.file}:${f.line == null ? '?' : f.line}  ${f.channel} ${GYP_KIND_LABEL[f.kind] || f.kind}`
+              + ` → ${String(f.command).trim()}${f.truncated ? '  (unterminated — no closing paren)' : ''}`);
+          }
+          if (c.gypPartial) lines.push(`   ${c.file}: did not parse as GYP — scanned as raw text (findings above may be incomplete)`);
+          for (const n of c.gypNotes || []) lines.push(`   ${n}`);
           lines.push('', `   ┌─ ${c.file} (${c.totalLines > c.lines.length
             ? `first ${c.lines.length} of ${c.totalLines} lines` : `${c.totalLines} line${c.totalLines === 1 ? '' : 's'}`})`);
           c.lines.forEach((l, idx) => lines.push(`   │ ${String(idx + 1).padStart(3)}  ${l}`));

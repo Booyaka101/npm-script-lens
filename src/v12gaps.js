@@ -10,8 +10,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { resolveLockfile } = require('./lockfiles');
 const { REGISTRY, LIFECYCLE } = require('./registry');
-const { npmMajorVersion } = require('./review');
-const { DETECTORS } = require('./npm-contract');
+const { npmFullVersion } = require('./review');
+const { DETECTORS, INERT_SKIP_FROM, skipsInertOptional } = require('./npm-contract');
 
 // Best-effort version metadata: null on any failure — these checks warn on
 // what they can confirm and stay quiet (or fall back to lockfile facts)
@@ -42,7 +42,17 @@ function collectOptionalDeps(lock) {
       const name = entry.name || key.split('node_modules/').pop();
       if (!name || name.startsWith('.')) continue;
       const id = `${name}@${entry.version}`;
-      if (!out.has(id)) out.set(id, { name, version: entry.version, hasInstallScript: entry.hasInstallScript === true });
+      if (!out.has(id)) {
+        out.set(id, {
+          name,
+          version: entry.version,
+          hasInstallScript: entry.hasInstallScript === true,
+          // npm records os/cpu on the lockfile entry for platform-specific
+          // deps; the registry copy (versionMeta) is the fallback.
+          os: Array.isArray(entry.os) ? entry.os : null,
+          cpu: Array.isArray(entry.cpu) ? entry.cpu : null,
+        });
+      }
     }
   } else if (lock.dependencies) {
     const visit = (obj) => {
@@ -59,11 +69,34 @@ function collectOptionalDeps(lock) {
   return [...out.values()];
 }
 
-const optionalGapFix = (name) => `Add to allowScripts in package.json: { "allowScripts": { "${name}": true } } — npm approve-scripts will not surface this package but npm ci --strict-allow-scripts will reject it (npm/cli#9562)`;
+const optionalGapFix = (name, npmVersion) => `Add to allowScripts in package.json: { "allowScripts": { "${name}": true } } — npm approve-scripts will not surface this package but npm ci --strict-allow-scripts will reject it (npm/cli#9562). Checked against npm ${npmVersion || 'version unknown'}; fixed for INERT optional deps in npm >= ${INERT_SKIP_FROM.npm11} (and >= ${INERT_SKIP_FROM.npm12} on the v12 line) via PR #9597, which skips inert nodes during the script-collection walk — this package is still reported because it is not inert on this platform (or your npm predates the fix).`;
+
+// npm's os/cpu matching: a bare entry allowlists, a `!`-prefixed one blocks.
+// Empty/absent list = every platform. Mirrors npm's own checkPlatform.
+function platformAllows(list, value) {
+  if (!Array.isArray(list) || list.length === 0) return true;
+  const blocked = [];
+  const allowed = [];
+  for (const raw of list) {
+    if (typeof raw !== 'string') continue;
+    if (raw.startsWith('!')) blocked.push(raw.slice(1));
+    else allowed.push(raw);
+  }
+  if (blocked.includes(value)) return false;
+  if (allowed.length > 0) return allowed.includes(value) || allowed.includes('any');
+  return true;
+}
+
+// "Inert" the way npm's reify means it: the dependency's os/cpu exclude this
+// machine, so npm removes it from the tree BEFORE install scripts run. Since
+// PR #9597 the strict check skips these, so warning about them (the classic
+// "allowlist fsevents on Linux" false positive) is wrong on a modern npm.
+const isInertHere = (osList, cpuList) => !platformAllows(osList, process.platform) || !platformAllows(cpuList, process.arch);
 
 // Check 1 — optional deps with install scripts missing from allowScripts.
 // npm-lockfile-only: the bug lives in npm's own approve-scripts/ci pair.
-async function checkOptionalGap(target, { concurrency = 6 } = {}) {
+// Version-gated: on an npm carrying PR #9597 the inert candidates are dropped.
+async function checkOptionalGap(target, { concurrency = 6, npmVersion } = {}) {
   const { path: lockPath, type } = resolveLockfile(target);
   if (type !== 'npm') return [];
   let lock;
@@ -72,17 +105,25 @@ async function checkOptionalGap(target, { concurrency = 6 } = {}) {
   try {
     allow = JSON.parse(fs.readFileSync(path.join(path.dirname(lockPath), 'package.json'), 'utf8')).allowScripts || {};
   } catch { /* no package.json — nothing is approved */ }
+  const localNpm = npmVersion === undefined ? await npmFullVersion(path.dirname(lockPath)) : npmVersion;
+  const skipInert = skipsInertOptional(localNpm);
   const candidates = collectOptionalDeps(lock)
     // hasInstallScript false is authoritative (v2/v3): no install scripts, skip
     .filter((d) => d.hasInstallScript !== false)
     // covered under either allowScripts key form: bare name or name@version
-    .filter((d) => !(d.name in allow) && !(`${d.name}@${d.version}` in allow));
+    .filter((d) => !(d.name in allow) && !(`${d.name}@${d.version}` in allow))
+    // on a fixed npm, a dep the lockfile already marks platform-inert never
+    // reaches the strict check — drop it before spending a registry request
+    .filter((d) => !(skipInert && (d.os || d.cpu) && isInertHere(d.os, d.cpu)));
   const findings = [];
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, async () => {
     while (i < candidates.length) {
       const d = candidates[i++];
       const meta = await versionMeta(d.name, d.version);
+      // the registry copy of os/cpu answers when the lockfile omitted them
+      if (skipInert && meta && (Array.isArray(meta.os) || Array.isArray(meta.cpu))
+          && isInertHere(meta.os, meta.cpu)) continue;
       const names = lifecycleNames(meta);
       let script;
       if (names.length > 0) script = names.join(', ');
@@ -96,7 +137,7 @@ async function checkOptionalGap(target, { concurrency = 6 } = {}) {
         package: d.name,
         version: d.version,
         script,
-        fix: optionalGapFix(d.name),
+        fix: optionalGapFix(d.name, localNpm),
         issue: DETECTORS.optionalGap.issue,
         upstream: DETECTORS.optionalGap.upstream,
       });
@@ -213,13 +254,21 @@ async function checkEglobal(target, { concurrency = 6 } = {}) {
 async function checkV12Gaps(target, { log = () => {} } = {}) {
   const { path: lockPath } = resolveLockfile(target);
   const projectDir = path.dirname(lockPath);
-  const [optional, eglobal, npmMajor] = await Promise.all([
-    checkOptionalGap(target), checkEglobal(target), npmMajorVersion(projectDir),
+  // Probed once up front: the optional-gap detector is version-gated on it
+  // (PR #9597), so it must not be a second, racing `npm --version` spawn.
+  const npmVersion = await npmFullVersion(projectDir);
+  const npmMajor = npmVersion ? parseInt(npmVersion.split('.')[0], 10) : null;
+  const [optional, eglobal] = await Promise.all([
+    checkOptionalGap(target, { npmVersion }), checkEglobal(target),
   ]);
   const findings = [...optional, ...eglobal];
   log(`v12 gap check: ${optional.length} optional-dep gap(s), ${eglobal.length} EGLOBAL-prone global install(s)`
-    + ` (local npm ${npmMajor === null ? 'version unknown' : `v${npmMajor}`})`);
-  return { findings, npmMajor };
+    + ` (local npm ${npmVersion === null ? 'version unknown' : `v${npmVersion}`}`
+    + `${skipsInertOptional(npmVersion) ? '; carries the npm/cli#9562 inert-optional fix, so inert optional deps are not reported' : ''})`);
+  return { findings, npmMajor, npmVersion };
 }
 
-module.exports = { checkV12Gaps, checkOptionalGap, checkEglobal, collectOptionalDeps, globalNpmInstalls, splitSpec, workflowFiles };
+module.exports = {
+  checkV12Gaps, checkOptionalGap, checkEglobal, collectOptionalDeps,
+  globalNpmInstalls, splitSpec, workflowFiles, platformAllows, isInertHere,
+};

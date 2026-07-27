@@ -5,6 +5,7 @@
 // added or changed before bumping a pin. Reuses registry.fetchPackage, which
 // already downloads the tarball and indexes binding.gyp.
 const { fetchPackage, LIFECYCLE } = require('./registry');
+const { collectGypFindings } = require('./gyp');
 
 // Split "<pkg>@<version>" into { name, version }. Handles scoped names
 // (@scope/pkg@1.2.3) by splitting on the LAST '@'.
@@ -14,16 +15,23 @@ function parseSpec(spec) {
   return { name: spec.slice(0, at), version: spec.slice(at + 1) };
 }
 
-// Pull the lifecycle scripts + binding.gyp flag for one version. forceTarball
-// makes fetchPackage download even scriptless packages so binding.gyp is
-// always checked. We read the raw scripts from allScripts (fetchPackage
-// synthesizes scripts.install for implicit-gyp packages, which we don't want
-// to conflate with a real install script here).
+// Pull the lifecycle scripts + binding.gyp CONTENT for one version.
+// forceTarball makes fetchPackage download even scriptless packages so
+// binding.gyp is always checked. We read the raw scripts from allScripts
+// (fetchPackage synthesizes scripts.install for implicit-gyp packages, which
+// we don't want to conflate with a real install script here).
+//
+// gypText, not a boolean: a version that REWRITES an existing binding.gyp
+// changes what runs at install time while `files.has('binding.gyp')` stays
+// true in both versions — the false negative that let the June 2026 Miasma
+// wave-2 releases diff as "UNCHANGED: implicit node-gyp rebuild".
 async function fetchScripts(name, version) {
   const { allScripts, files } = await fetchPackage(name, version, { forceTarball: true });
   const scripts = {};
   for (const k of LIFECYCLE) if (typeof allScripts[k] === 'string') scripts[k] = allScripts[k];
-  return { name, version, scripts, hasGyp: files.has('binding.gyp') };
+  const gypText = files.has('binding.gyp') ? files.get('binding.gyp') : null;
+  const gypFindings = gypText === null ? [] : collectGypFindings(files).findings;
+  return { name, version, scripts, gypText, gypFindings };
 }
 
 // Minimal LCS line diff → array of { t: ' '|'-'|'+', line }.
@@ -70,20 +78,44 @@ function computeScriptDiff(oldPkg, newPkg) {
   }
   // npm runs an implicit `node-gyp rebuild` when a package ships a root
   // binding.gyp without its own install script — treat gaining one as an
-  // added install-time behavior.
-  if (newPkg.hasGyp && !oldPkg.hasGyp) {
+  // added install-time behavior. Keeping one but REWRITING it is equally an
+  // install-time change: gyp executes `<!(...)` command expansions during
+  // configure, so new bytes in binding.gyp are new commands. (`hasGyp` is
+  // still honored so callers holding only the old boolean shape keep working.)
+  const gypTextOf = (p) => (typeof p.gypText === 'string' ? p.gypText : null);
+  const hasGypOf = (p) => (gypTextOf(p) !== null || p.hasGyp === true);
+  const channelsOf = (p) => new Set((p.gypFindings || []).map((f) => f.channel));
+  let gypChanged = false;
+  let gainedChannels = [];
+  if (hasGypOf(newPkg) && !hasGypOf(oldPkg)) {
     added.push({ key: 'binding.gyp', script: 'node-gyp rebuild', implicit: true });
-  } else if (oldPkg.hasGyp && !newPkg.hasGyp) {
+    gypChanged = true;
+    gainedChannels = [...channelsOf(newPkg)].sort();
+  } else if (hasGypOf(oldPkg) && !hasGypOf(newPkg)) {
     removed.push({ key: 'binding.gyp', implicit: true });
-  } else if (oldPkg.hasGyp && newPkg.hasGyp) {
-    unchanged.push({ key: 'binding.gyp', implicit: true });
+  } else if (hasGypOf(oldPkg) && hasGypOf(newPkg)) {
+    const o = gypTextOf(oldPkg);
+    const n = gypTextOf(newPkg);
+    if (o !== null && n !== null && o !== n) {
+      const oldChannels = channelsOf(oldPkg);
+      gainedChannels = [...channelsOf(newPkg)].filter((c) => !oldChannels.has(c)).sort();
+      modified.push({ key: 'binding.gyp', old: o, new: n, diff: lineDiff(o, n), implicit: true, gainedChannels });
+      gypChanged = true;
+    } else {
+      unchanged.push({ key: 'binding.gyp', implicit: true });
+    }
   }
   const changed = added.length > 0 || modified.length > 0;
   const json = {
     unchanged: unchanged.map((e) => e.key),
     added: added.map((e) => (e.implicit ? { key: e.key, script: e.script, implicit: true } : { key: e.key, script: e.script })),
     removed: removed.map((e) => e.key),
-    modified: modified.map((e) => ({ key: e.key, old: e.old, new: e.new })),
+    modified: modified.map((e) => (e.implicit
+      ? { key: e.key, old: e.old, new: e.new, implicit: true, gainedChannels: e.gainedChannels }
+      : { key: e.key, old: e.old, new: e.new })),
+    // `changed` here means the gyp was ADDED or REWRITTEN (both grow the
+    // install surface and both exit 1); a pure removal shows up in `removed`.
+    gyp: { changed: gypChanged, gainedChannels },
   };
   return { unchanged, added, removed, modified, changed, json };
 }
@@ -110,7 +142,10 @@ function renderDiff(oldPkg, newPkg, result, { color = process.stdout.isTTY && !p
     else out.push(c(`ADDED: ${e.key}: ${e.script}`, 'red'));
   }
   for (const e of result.modified) {
-    out.push(c(`MODIFIED: ${e.key}`, 'red'));
+    out.push(c(`MODIFIED: ${e.implicit ? 'binding.gyp (implicit node-gyp rebuild — contents changed)' : e.key}`, 'red'));
+    if (e.gainedChannels && e.gainedChannels.length > 0) {
+      out.push(c(`    gained gyp execution channel(s): ${e.gainedChannels.join(', ')}`, 'red'));
+    }
     for (const d of e.diff) {
       if (d.t === ' ') out.push(c(`    ${d.t} ${d.line}`, 'dim'));
       else if (d.t === '-') out.push(c(`    - ${d.line}`, 'yellow'));

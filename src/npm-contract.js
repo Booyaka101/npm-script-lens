@@ -79,8 +79,12 @@ const DETECTORS = {
   optionalGap: {
     id: 'v12-optional-gap',
     issue: 'https://github.com/npm/cli/issues/9562',
-    upstream: 'closed via npm/cli PR #9597',
-    fixedInNpm: null,
+    upstream: 'closed via npm/cli PR #9597 (merged 2026-06-23), backported as #9602',
+    // PR #9597 made collectUnreviewedScripts skip INERT nodes so the strict
+    // check matches what actually installs. Shipped in npm 11.18.0 via the
+    // release/v11 backport, and carried forward into npm 12.0.0 (2026-07-08).
+    fixedInNpm: '11.18.0',
+    note: 'npm 12.0.0+ also carries this fix (the v11 backport landed before the v12 cut)',
   },
   eglobal: {
     id: 'v12-eglobal-risk',
@@ -100,6 +104,27 @@ const DETECTORS = {
   },
 };
 
+// The npm versions from which `--strict-allow-scripts` skips INERT optional
+// dependencies (a dep whose os/cpu excludes the current platform, which reify
+// removes before install scripts run). Two lines because the fix reached the
+// v11 and v12 release lines at different versions, and "12.0.0 > 11.18.0" is
+// not a comparison that answers "does THIS npm have it" for an npm 11.x user.
+const INERT_SKIP_FROM = { npm11: '11.18.0', npm12: '12.0.0' };
+
+// Does this npm full version ("11.17.0") skip inert optional deps in the
+// strict check? null/unparseable ⇒ false (fail loud, keep warning).
+function skipsInertOptional(fullVersion) {
+  if (typeof fullVersion !== 'string') return false;
+  const m = fullVersion.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return false;
+  const [major, minor, patch] = m.slice(1).map(Number);
+  const floor = major >= 12 ? INERT_SKIP_FROM.npm12 : INERT_SKIP_FROM.npm11;
+  const [fMajor, fMinor, fPatch] = floor.split('.').map(Number);
+  if (major !== fMajor) return major > fMajor;
+  if (minor !== fMinor) return minor > fMinor;
+  return patch >= fPatch;
+}
+
 // npm >= MIN is where allowScripts is enforced.
 const enforcesAllowScripts = (major) => typeof major === 'number' && major >= MIN_ALLOWSCRIPTS_NPM;
 
@@ -113,5 +138,7 @@ module.exports = {
   SAMPLE_DRY_RUN,
   SOURCES,
   DETECTORS,
+  INERT_SKIP_FROM,
+  skipsInertOptional,
   enforcesAllowScripts,
 };

@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.3.0 (2026-07-27)
+
+**The gyp lens.** Until now this tool — like every other install-script
+allowlist/approval tool — only checked that `binding.gyp` *exists*, and called
+the result "implicit `node-gyp rebuild`". But `binding.gyp` is not inert data:
+gyp evaluates it at configure time and **runs the shell commands inside it**
+(`subprocess.run(contents, shell=…)` in gyp-next's `pylib/gyp/input.py`). That
+made the build file a place to hide install-time code where nobody was
+looking — which is what the [June 2026 npm campaign ReversingLabs
+documented](https://www.reversinglabs.com/blog/npm-bindinggyp-cicd-secrets)
+(286 malicious versions across 56 packages) actually did, and what
+[Aikido's 2026-06-09
+teardown](https://www.aikido.dev/blog/exploring-binding-gyp-npm-build-system)
+enumerated channel by channel.
+
+- **New `src/gyp.js` reads inside `binding.gyp` and the `.gypi` files it
+  includes.** GYP is not JSON — single-quoted strings, `#` comments, trailing
+  commas — so it gets a tolerant reader, and a raw-text fallback that marks
+  results `partial` rather than ever passing a file silently. Every channel is
+  covered, taken from gyp-next's `early_variable_re` / `late_variable_re` /
+  `latelate_variable_re`:
+  - command expansions `<!(` `<!@(` and their late/latelate twins `>!(` `>!@(`
+    `^!(` `^!@(` — the one-character evasions a naive `/<!\(/` scan misses;
+  - `<!pymod_do_main(` (and `>`/`^` variants) — imports a Python module and
+    calls its `DoMain()`;
+  - listfile expansions `<|(` `>|(` `^|(`;
+  - `actions[].action`, `rules[].action`, `postbuilds[].action` build steps;
+  - `make_global_settings` compiler/linker hijacks;
+  - `conditions` strings reaching for the Python-eval sandbox escape
+    (`__class__`/`__subclasses__`/`__import__`/`__builtins__`).
+  Plain `<(var)` / `>(var)` / `^(var)` / `<@(var)` interpolation is **not**
+  flagged — the true-positive/false-positive pair in one real file
+  (`bufferutil`'s `<!(cc -v …)` next to its `<(clang_version)`) is a test.
+- **`.gypi` files are now indexed** from the tarball and from `node_modules`
+  (`--offline`), and `includes` arrays plus `deps/x.gyp:target` dependencies
+  are followed one level (max 10 files, cycle-guarded). On real
+  `better-sqlite3@11.10.0` this surfaces two `actions[].action` steps living in
+  `deps/sqlite3.gyp` — a file the parent `binding.gyp` never shows you.
+- **Wired through the whole tool**: `audit` adds `gyp: <channel> <command>`
+  signals to any install-time script that reaches node-gyp (explicitly, or via
+  the implicit rebuild); `gyp` scores **HIGH** alongside `exec`/`obf` and can
+  be named in a policy's `denyCapabilities`; `review` prints
+  `binding.gyp:5  <!( command expansion → …` above the raw lines; `--sarif`
+  gains the rule `gyp-exec-channel` (level `warning`).
+- **FIX — `diff` had a false negative on exactly the shape the June 2026
+  wave-2 releases used.** `diff` compared `binding.gyp` by *existence*, so a
+  version that **rewrote an existing** `binding.gyp` printed
+  `UNCHANGED: implicit node-gyp rebuild (binding.gyp)` and exited **0**. It now
+  compares contents: a rewritten build file is `MODIFIED` with a line-level
+  diff and a `gainedChannels` list, and **exits 1**. `--json` gains
+  `{ gyp: { changed, gainedChannels } }`. (Live: `bufferutil@4.0.8 →
+  4.0.9` used to read UNCHANGED/exit 0; it now reads MODIFIED/exit 1.)
+- ⚠️ **Re-baseline your manifest.** `manifest --check` baselines that contain
+  native packages may now show a new `gyp` capability, because the tool sees
+  something it previously could not. That is a real capability, not drift —
+  re-baseline once with `npm-script-lens manifest --write` and commit the diff.
+
+**The `v12-optional-gap` detector is now version-gated** — it was
+false-positiving on every modern npm. [npm/cli#9562](https://github.com/npm/cli/issues/9562)
+was closed by [PR #9597](https://github.com/npm/cli/pull/9597) (merged
+2026-06-23), which skips **inert** nodes during the script-collection walk
+since reify removes those dependencies before install scripts execute. It
+shipped via backport #9602 in **npm 11.18.0** and is carried in **npm 12.0.0**
+(2026-07-08). So on a fixed npm the detector no longer tells you to allowlist
+`fsevents` on Linux: it drops optional deps whose `os`/`cpu` exclude your
+platform (honoring `!`-negated entries), reading them from the lockfile entry
+or the registry metadata. Optional deps that really would install here are
+still reported, and on an older npm behavior is unchanged. The `fix` string and
+the gaps report now state which npm was checked and the version the bug was
+fixed in.
+
 ## 1.2.0 (2026-07-27)
 
 npm v12 flips **three** defaults, not one — this release covers the other two:

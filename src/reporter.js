@@ -1,5 +1,6 @@
 'use strict';
 const { trustLabel } = require('./trust');
+const { INERT_SKIP_FROM, skipsInertOptional } = require('./npm-contract');
 
 const RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, SAFE: 3, ERROR: 4 };
 const BADGE = { HIGH: '🔴 HIGH', MEDIUM: '🟠 MEDIUM', LOW: '🟡 LOW', SAFE: '🟢 SAFE', ERROR: '⚪ ERROR' };
@@ -104,15 +105,23 @@ const GAP_RULES = {
   },
 };
 
-function buildGapsReport(findings, { npmMajor = null } = {}) {
+function buildGapsReport(findings, { npmMajor = null, npmVersion = null } = {}) {
   const lines = ['# npm v12 approve-scripts gap check', ''];
   lines.push('Checks for two known npm v12 tooling bugs: optional dependencies with install scripts that '
     + '`npm approve-scripts` never surfaces but `npm ci --strict-allow-scripts` rejects '
     + '([npm/cli#9562](https://github.com/npm/cli/issues/9562)), and global installs in CI where '
     + '`approve-scripts` fails with EGLOBAL ([npm/cli#9463](https://github.com/npm/cli/issues/9463)).', '');
-  lines.push(`_Checked against your local npm ${npmMajor === null ? '(version could not be determined)' : `v${npmMajor}`}. `
+  const shownVersion = npmVersion || (npmMajor === null ? null : `${npmMajor}.x`);
+  lines.push(`_Checked against your local npm ${shownVersion === null ? '(version could not be determined)' : `v${shownVersion}`}. `
     + 'These detectors track specific npm bugs — follow each linked issue for current upstream status, '
     + 'since a fixed npm can make a detector obsolete._', '');
+  lines.push(`_npm/cli#9562 (optional deps) was fixed by [PR #9597](https://github.com/npm/cli/pull/9597) — `
+    + `\`--strict-allow-scripts\` skips **inert** optional dependencies from npm **${INERT_SKIP_FROM.npm11}** `
+    + `(and **${INERT_SKIP_FROM.npm12}** on the v12 line). `
+    + (skipsInertOptional(npmVersion)
+      ? 'Your npm carries that fix, so optional deps whose `os`/`cpu` exclude this platform are **not** reported below — only ones that really would install here.'
+      : 'Your npm predates that fix (or its version could not be read), so every uncovered optional dep with install scripts is reported.')
+    + '_', '');
   if (findings.length === 0) {
     lines.push('🟢 **No gaps found** — every optional dependency with install scripts is covered by '
       + '`allowScripts`, and no CI workflow installs a scripted package globally without `--allow-scripts`.');
@@ -141,6 +150,14 @@ const SARIF_RULES = {
 };
 const SARIF_LEVEL = { MALICIOUS: 'error', HIGH: 'error', MEDIUM: 'warning', LOW: 'note', ERROR: 'note' };
 
+// binding.gyp / .gypi execution channels, reported alongside the risk rules.
+// A separate rule id so code-scanning can triage "this package's BUILD FILE
+// runs shell commands" apart from "this package's install SCRIPT does".
+const GYP_RULE = {
+  id: 'gyp-exec-channel',
+  text: 'binding.gyp or an included .gypi uses a gyp execution channel (command expansion, pymod_do_main, listfile, action, make_global_settings, or a Python-eval condition) — node-gyp runs it at install time',
+};
+
 function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', findings = [] } = {}) {
   const uri = lockPath.replace(/\\/g, '/');
   const lines = lockText.split(/\r?\n/);
@@ -163,7 +180,18 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
     partialFingerprints: { gap: `${f.id}:${f.package}` },
   }));
   const sarifResults = [];
+  const gypSarifResults = [];
   for (const r of results) {
+    const gypSignals = (r.rows || []).flatMap((row) => (row.signals || []).filter((s) => s.startsWith('gyp: ')));
+    if (gypSignals.length > 0) {
+      gypSarifResults.push({
+        ruleId: GYP_RULE.id,
+        level: 'warning',
+        message: { text: `${r.name}@${r.version} — ${GYP_RULE.text}. ${[...new Set(gypSignals)].join(' | ')}` },
+        locations: [{ physicalLocation: { artifactLocation: { uri }, region: { startLine: lineOf(r.name) } } }],
+        partialFingerprints: { gyp: `gyp-exec-channel:${r.name}@${r.version}` },
+      });
+    }
     const risk = r.malicious ? 'MALICIOUS' : packageRisk(r);
     if (risk === 'SAFE') continue;
     const detail = r.malicious ? `Advisories: ${r.advisories.join(', ')}`
@@ -183,7 +211,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
       partialFingerprints: { packageVersion: `${r.name}@${r.version}` },
     });
   }
-  sarifResults.push(...gapResults);
+  sarifResults.push(...gypSarifResults, ...gapResults);
   return {
     version: '2.1.0',
     $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
@@ -193,7 +221,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
           name: 'npm-script-lens',
           informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
-          rules: [...Object.values(SARIF_RULES), ...Object.values(GAP_RULES)].map((rule) => ({
+          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES)].map((rule) => ({
             id: rule.id,
             shortDescription: { text: rule.text },
           })),

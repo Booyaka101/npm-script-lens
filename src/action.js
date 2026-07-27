@@ -94,8 +94,8 @@ async function main() {
 async function v12GapsMain() {
   const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
   const target = input('PATH', '.');
-  const { findings, npmMajor } = await checkV12Gaps(target, { log: console.log });
-  const report = buildGapsReport(findings, { npmMajor });
+  const { findings, npmMajor, npmVersion } = await checkV12Gaps(target, { log: console.log });
+  const report = buildGapsReport(findings, { npmMajor, npmVersion });
   console.log(report);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${report}\n`);
   for (const f of findings) {

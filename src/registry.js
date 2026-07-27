@@ -33,8 +33,10 @@ async function fetchOk(url, timeoutMs, attempt = 0) {
   }
 }
 
-// Download a tarball and index its text files (js/json/gyp) into a Map of
-// path (without the leading "package/" folder) -> file content string.
+// Download a tarball and index its text files (js/json/gyp/gypi) into a Map of
+// path (without the leading "package/" folder) -> file content string. .gypi is
+// indexed too because binding.gyp routinely `includes` one (better-sqlite3's
+// deps/common.gypi) and the gyp scanner follows those.
 async function downloadTarball(url) {
   const res = await fetchOk(url, 120000);
   return new Promise((resolve, reject) => {
@@ -42,7 +44,7 @@ async function downloadTarball(url) {
     const extract = tar.extract();
     extract.on('entry', (header, stream, next) => {
       const p = header.name.replace(/^[^/]+\//, '');
-      const keep = /\.(js|cjs|mjs|json|gyp)$/.test(p) && header.size <= MAX_FILE_BYTES;
+      const keep = /\.(js|cjs|mjs|json|gyp|gypi)$/.test(p) && header.size <= MAX_FILE_BYTES;
       const chunks = [];
       if (keep) stream.on('data', (c) => chunks.push(c));
       stream.on('end', () => {
@@ -91,7 +93,8 @@ async function fetchPackage(name, version, { forceTarball = false } = {}) {
 }
 
 // Offline mode: index the package already unpacked in node_modules the same
-// way downloadTarball indexes a tarball (js/json/gyp text files, size-capped).
+// way downloadTarball indexes a tarball (js/json/gyp/gypi text files,
+// size-capped).
 function indexLocalDir(dir) {
   const files = new Map();
   const walk = (d, rel) => {
@@ -101,7 +104,7 @@ function indexLocalDir(dir) {
       const full = path.join(d, e.name);
       const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(full, r);
-      else if (/\.(js|cjs|mjs|json|gyp)$/.test(e.name) && e.isFile()) {
+      else if (/\.(js|cjs|mjs|json|gyp|gypi)$/.test(e.name) && e.isFile()) {
         if (fs.statSync(full).size <= MAX_FILE_BYTES) files.set(r, fs.readFileSync(full, 'utf8'));
       }
     }

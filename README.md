@@ -11,8 +11,9 @@ Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-inst
 1. fetches the version metadata from the public npm registry,
 2. stream-downloads the tarball and indexes its source files (`tar-stream`, nothing written to disk) — skipped entirely for the majority of packages with no install-time scripts, which is why real audits take seconds,
 3. statically analyzes each `preinstall`/`install`/`postinstall` script with `acorn` — including the JS the script actually runs: `node <file>` targets, `node -e` eval bodies, relative `require()`/`import` chains, `path.join(__dirname, …)` indirections, and `npm run <target>` recursion into the package's own scripts (3 levels deep, cycle-safe). Packages that ship a root `binding.gyp` with no install script get their **implicit `node-gyp rebuild`** surfaced too — npm v12 blocks those builds as well. (`prepare` is deliberately excluded: npm never runs it for registry-installed deps, and flagging leftover `"prepare": "husky install"` lines would be noise.)
-4. scores the behavior and emits a Markdown report plus a **ready-to-paste, version-pinned `allowScripts` block**,
-5. adds context to every risky package: **how it entered your tree** (`via prisma → @prisma/engines`), **whether OSV lists it as malicious** (⛔ hard flag, always denied), and **publisher trust signals** — publish age, weekly downloads, maintainer count, sigstore provenance — so "🔴 HIGH, 74M dl/wk, 10 years old" reads differently from "🔴 HIGH, published 4 days ago, 12 dl/wk".
+4. **reads inside `binding.gyp`** (and the `.gypi`/`.gyp` files it includes) for native packages — see [the gyp lens](#the-gyp-lens-what-is-actually-inside-bindinggyp) — because gyp *runs* the commands in that file at configure time,
+5. scores the behavior and emits a Markdown report plus a **ready-to-paste, version-pinned `allowScripts` block**,
+6. adds context to every risky package: **how it entered your tree** (`via prisma → @prisma/engines`), **whether OSV lists it as malicious** (⛔ hard flag, always denied), and **publisher trust signals** — publish age, weekly downloads, maintainer count, sigstore provenance — so "🔴 HIGH, 74M dl/wk, 10 years old" reads differently from "🔴 HIGH, published 4 days ago, 12 dl/wk".
 
 | Risk | Meaning |
 |---|---|
@@ -52,13 +53,72 @@ npx npm-script-lens audit --diff /tmp/base-lock.json --fail-on-high
 
 In diff mode, a package that was already in the tree but changed version is compared against the base version's analysis: `**⚠️ gained vs 1.2.0:** net: fetch()` is the fingerprint of a hijacked release (event-stream, the 2025 Shai-Hulud wave); `no new capabilities vs 1.2.0` is a boring upgrade.
 
+## The gyp lens: what is actually inside `binding.gyp`?
+
+`npm-script-lens` is the only install-script allowlist/approval tool that reads
+**inside** `binding.gyp` and `.gypi` — and the only one that **diffs them
+between versions**.
+
+Every such tool (including this one, before v1.3.0) treated `binding.gyp` as a
+flag: present ⇒ "implicit `node-gyp rebuild`". But gyp *evaluates* that file
+before a line of C is compiled, and executes the commands in it —
+[`subprocess.run(contents, stdout=PIPE, shell=use_shell, …)`](https://github.com/nodejs/gyp-next/blob/main/pylib/gyp/input.py)
+in gyp-next. So the build file is a place to put install-time code where
+approval tooling was not looking. That is what the June 2026 campaign used —
+[ReversingLabs, 2026-06-04](https://www.reversinglabs.com/blog/npm-bindinggyp-cicd-secrets)
+(286 malicious versions across 56 packages), whose payload was a single line:
+
+```json
+{"targets":[{"target_name":"Setup","type":"none","sources":["<!(node index.js > /dev/null 2>&1 && echo stub.c)"]}]}
+```
+
+[Aikido's 2026-06-09 teardown](https://www.aikido.dev/blog/exploring-binding-gyp-npm-build-system)
+enumerates the channels; `npm-script-lens` covers all of them:
+
+| Channel | What it does |
+|---|---|
+| `<!(` `<!@(` | command expansion — gyp runs it in a shell and substitutes the output |
+| `>!(` `>!@(` `^!(` `^!@(` | the same thing in gyp's *late* and *latelate* phases — one character apart from `<!(`, and invisible to a naive scan |
+| `<!pymod_do_main(` (+ `>`/`^`) | imports a Python module and calls its `DoMain()` |
+| `<\|(` `>\|(` `^\|(` | listfile expansion |
+| `actions[].action` · `rules[].action` · `postbuilds[].action` | explicit build steps that run commands |
+| `make_global_settings` | replaces `CC`/`CXX`/`LINK` — a compiler hijack |
+| `conditions` | flagged when the condition string reaches for the Python-eval sandbox escape (`__class__`, `__subclasses__`, `__import__`, `__builtins__`) |
+
+Plain `<(var)` / `<@(var)` interpolation is **never** flagged — real files mix
+both, and `bufferutil`'s `<!(cc -v …)` sitting next to its `<(clang_version)`
+is a committed regression test.
+
+`review` prints what will run above the file itself. Real output for
+`better-sqlite3@11.10.0` — note the findings come from `deps/sqlite3.gyp`, a
+file the parent `binding.gyp` only *references*:
+
+```
+── better-sqlite3@11.10.0  [🔴 HIGH]
+   deps/sqlite3.gyp:28  actions[].action build action → node copy.js <(SHARED_INTERMEDIATE_DIR)/sqlite3
+   deps/sqlite3.gyp:41  actions[].action build action → node copy.js <(SHARED_INTERMEDIATE_DIR)/sqlite3 <(sqlite3)
+   ┌─ binding.gyp (39 lines)
+   │   1  # ===
+   │   2  # This is the main GYP file, which builds better-sqlite3 with SQLite itself.
+   …
+```
+
+In `audit`, these become `gyp:` signals that score **HIGH** (a shell command at
+install time is a shell command), appear in `--sarif` under the rule
+`gyp-exec-channel`, and can be banned outright via a policy's
+`denyCapabilities: ["gyp"]`.
+
+> **Upgrading from ≤ 1.2.0?** A `manifest --check` baseline containing native
+> packages may now show a new `gyp` capability — the tool sees something it
+> previously could not. Re-baseline once with `manifest --write` and commit it.
+
 ## diff: what did an upgrade change in the install scripts?
 
 Before you bump a pin, see exactly which install-time behavior a new version adds or changes — the surface npm v12 will ask you to re-approve. `diff` compares the `preinstall`/`install`/`postinstall` scripts (and the implicit `node-gyp rebuild` that ships with a root `binding.gyp`) between two versions, straight from the registry:
 
 ```bash
 npx npm-script-lens diff sharp@0.32.6 sharp@0.33.0
-# --json   emit { unchanged, added, removed, modified } instead of colored text
+# --json   emit { unchanged, added, removed, modified, gyp } instead of colored text
 ```
 
 ```
@@ -73,6 +133,30 @@ MODIFIED: install
 - **ADDED** (red) — a new script, or a gained `binding.gyp` → `ADDED: implicit node-gyp rebuild (binding.gyp)`
 - **REMOVED** (yellow) — a script that went away
 - **MODIFIED** (red) — same key, changed content, with a line-level diff
+
+`binding.gyp` is compared **by content, not by existence** (fixed in 1.3.0). A
+version that keeps its build file but *rewrites* it changes what runs at
+install time, and used to slip through as `UNCHANGED` / exit 0 — the shape the
+June 2026 wave-2 releases had. Now:
+
+```
+$ npx npm-script-lens diff bufferutil@4.0.8 bufferutil@4.0.9
+bufferutil@4.0.8 → bufferutil@4.0.9
+UNCHANGED: install
+MODIFIED: binding.gyp (implicit node-gyp rebuild — contents changed)
+      {
+    +   'variables': {
+    +     'openssl_fips': ''
+    +   },
+        'targets': [
+…
+$ echo $?
+1
+```
+
+`--json` carries `{ gyp: { changed, gainedChannels } }`; `gainedChannels` lists
+gyp execution channels present in the new version and absent from the old (here
+it is empty — a benign build-file edit, no new way to run a command).
 
 Exit `0` when everything is unchanged; exit `1` the moment any script is **added or modified** — so a Renovate/Dependabot CI step can fail the moment an upgrade grows its install-time surface. (A pure removal stays exit `0`.)
 
@@ -253,7 +337,7 @@ npx npm-script-lens init             # scaffold script-lens.policy.json + a CI w
 
 npm v12's own tooling has two known bugs that leave teams with a green `approve-scripts` run and a red `npm ci`:
 
-- **Optional dependency gap** ([npm/cli#9562](https://github.com/npm/cli/issues/9562)): `npm approve-scripts --allow-scripts-pending` never lists optional dependencies — but `npm ci --strict-allow-scripts` still rejects any optional dep with install scripts that is missing from `allowScripts`. The classic trap is `fsevents`: it only *installs* on macOS, so on a Linux CI runner nothing surfaces it, and strict mode fails the build anyway.
+- **Optional dependency gap** ([npm/cli#9562](https://github.com/npm/cli/issues/9562)): `npm approve-scripts --allow-scripts-pending` never lists optional dependencies — but `npm ci --strict-allow-scripts` still rejects any optional dep with install scripts that is missing from `allowScripts`. The classic trap was `fsevents`: it only *installs* on macOS, so on a Linux CI runner nothing surfaced it, and strict mode failed the build anyway. **This one is fixed upstream** — [PR #9597](https://github.com/npm/cli/pull/9597) (merged 2026-06-23) makes the strict check skip **inert** nodes, since reify removes them before install scripts run; it shipped in **npm 11.18.0** and is in **npm 12.0.0**. So the detector is version-gated: on an npm carrying the fix it drops optional deps whose `os`/`cpu` exclude your platform (`!`-negated entries honored) and reports only the ones that really would install here; on an older npm nothing changes. The report tells you which npm it checked and the version the bug was fixed in.
 - **EGLOBAL in global installs** ([npm/cli#9463](https://github.com/npm/cli/issues/9463)): when `npm install -g <pkg>` warns about unreviewed install scripts, the suggested `npm approve-scripts` command errors with `EGLOBAL` — there is no post-install approval path in global contexts. The working form is allowing at install time: `npm install -g --allow-scripts=<pkg> <pkg>`.
 
 ```bash

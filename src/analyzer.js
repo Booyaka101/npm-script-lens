@@ -3,6 +3,7 @@ const acorn = require('acorn');
 const loose = require('acorn-loose');
 const walk = require('acorn-walk');
 const { builtinModules } = require('node:module');
+const { collectGypFindings } = require('./gyp');
 const BUILTINS = new Set(builtinModules);
 
 const EXEC_FNS = new Set(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork']);
@@ -300,18 +301,36 @@ function walkFiles(files, entryPaths, signals) {
 function score(signals) {
   const kinds = new Set([...signals].map((s) => s.split(':')[0]));
   // obf ranks with exec: code that decodes/constructs itself at install time
-  // can do anything once it runs, and hiding is itself the signal.
-  if (kinds.has('exec') || kinds.has('obf')) return 'HIGH';
+  // can do anything once it runs, and hiding is itself the signal. gyp joins
+  // them: a binding.gyp command expansion is a shell command node-gyp runs
+  // during configure, before a single line of C is compiled.
+  if (kinds.has('exec') || kinds.has('obf') || kinds.has('gyp')) return 'HIGH';
   if (kinds.has('net')) return 'MEDIUM';
   if (kinds.has('fs') || kinds.has('env')) return 'LOW';
   return 'SAFE';
 }
 
+// A script that hands control to node-gyp — explicitly (`node-gyp rebuild`,
+// `prebuild-install || node-gyp rebuild`) or via the implicit rebuild npm runs
+// for a package shipping a root binding.gyp with no install script.
+const RUNS_NODE_GYP = /(^|\s)node-gyp(\s|$)/;
+
 // pkg: { name, version, scripts, files } -> rows of { script, command, risk, signals }
 function analyzePackage(pkg) {
+  // Read INSIDE binding.gyp (and the .gypi files it includes) when node-gyp
+  // will actually run: gyp executes `<!(...)`-style expansions during
+  // configure, so the build file is install-time code, not just a manifest.
+  let gypSignals = [];
+  if (pkg.files && pkg.files.has('binding.gyp')) {
+    const { findings, partial, notes } = collectGypFindings(pkg.files);
+    gypSignals = findings.map((f) => `gyp: ${f.channel} ${short(String(f.command).trim())}`);
+    if (partial) gypSignals.push('gyp: binding.gyp did not parse — scanned as raw text');
+    for (const n of notes) if (/not scanned/.test(n)) gypSignals.push(`gyp: ${short(n)}`);
+  }
   return Object.entries(pkg.scripts).map(([script, command]) => {
     const signals = new Set();
     analyzeCommand(command, pkg.files, signals, pkg.allScripts || pkg.scripts, new Set([script]));
+    if (RUNS_NODE_GYP.test(command)) for (const s of gypSignals) signals.add(s);
     return { script, command, risk: score(signals), signals: [...signals].sort() };
   });
 }

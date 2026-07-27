@@ -26,7 +26,14 @@ const DOCS = {
   '/toolg/2.0.0': { version: '2.0.0', scripts: { postinstall: 'node setup.js' } },
   '/cleang/latest': { version: '1.0.0', scripts: {} },
   '/gypg/latest': { version: '1.0.0', scripts: {}, hasInstallScript: true },
+  '/fsevents/2.3.3': { version: '2.3.3', scripts: { install: 'node-gyp rebuild' } },
+  '/live-opt/1.0.0': { version: '1.0.0', scripts: { postinstall: 'node x.js' } },
+  '/negated-opt/1.0.0': { version: '1.0.0', scripts: { postinstall: 'node x.js' } },
 };
+
+// A platform that is definitively NOT the one this test runs on, so the
+// "inert" fixture is inert wherever the suite runs (CI matrix included).
+const NOT_HERE = process.platform === 'darwin' ? 'linux' : 'darwin';
 
 function runCli(args) {
   return new Promise((resolve) => {
@@ -91,6 +98,104 @@ test('checkOptionalGap: bare-name allowScripts entries count as covered', async 
   }));
   const findings = await checkOptionalGap(dir);
   assert.deepStrictEqual(findings, [], 'name and name@version keys, true or false, all count as decisions');
+});
+
+// --- npm/cli#9562 was FIXED: PR #9597 (npm 11.18.0 / 12.0.0) makes the strict
+// check skip INERT optional deps, so the detector must stop false-positiving
+// on the fsevents-on-Linux shape it was originally written for.
+
+// fsevents is optional + darwin-only (the literal package from the issue);
+// live-opt installs everywhere; negated-opt is excluded via a `!` entry.
+const inertLockDir = (dir) => {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0' }));
+  fs.writeFileSync(path.join(dir, 'package-lock.json'), JSON.stringify({
+    name: 'p',
+    version: '1.0.0',
+    lockfileVersion: 3,
+    packages: {
+      '': { name: 'p', version: '1.0.0' },
+      'node_modules/fsevents': {
+        version: '2.3.3', optional: true, hasInstallScript: true, os: [NOT_HERE],
+      },
+      'node_modules/negated-opt': {
+        version: '1.0.0', optional: true, hasInstallScript: true, os: [`!${process.platform}`],
+      },
+      'node_modules/live-opt': {
+        version: '1.0.0', optional: true, hasInstallScript: true, os: [process.platform],
+      },
+    },
+  }));
+  return dir;
+};
+
+test('checkOptionalGap: a fixed npm drops inert optional deps, keeps the ones that install here', async () => {
+  const { checkOptionalGap } = require('../src/v12gaps');
+  const dir = inertLockDir(path.join(tmp, 'inert-fixed'));
+  const findings = await checkOptionalGap(dir, { npmVersion: '12.0.1' });
+  assert.deepStrictEqual(findings.map((f) => f.package), ['live-opt'],
+    'fsevents (os excludes this platform) and negated-opt (!thisPlatform) are inert — reify removes them before scripts run');
+  assert.ok(findings[0].fix.includes('12.0.1'), 'the fix names the npm that was checked');
+  assert.ok(findings[0].fix.includes('11.18.0'), 'the fix names the version the bug was fixed in');
+  assert.ok(!requests.some((u) => u.startsWith('/fsevents')),
+    'an inert candidate is dropped before it costs a registry request');
+});
+
+test('checkOptionalGap: an older npm still reports the inert optional deps (behavior unchanged)', async () => {
+  const { checkOptionalGap } = require('../src/v12gaps');
+  const dir = inertLockDir(path.join(tmp, 'inert-old'));
+  const findings = await checkOptionalGap(dir, { npmVersion: '11.17.0' });
+  assert.deepStrictEqual(findings.map((f) => f.package), ['fsevents', 'live-opt', 'negated-opt'],
+    'npm 11.17.0 predates PR #9597, so the strict check really does reject these');
+  assert.ok(findings[0].fix.includes('11.17.0'));
+});
+
+test('skipsInertOptional: the v11 and v12 release lines have different floors', () => {
+  const { skipsInertOptional, INERT_SKIP_FROM } = require('../src/npm-contract');
+  assert.deepStrictEqual(INERT_SKIP_FROM, { npm11: '11.18.0', npm12: '12.0.0' });
+  assert.strictEqual(skipsInertOptional('11.17.0'), false);
+  assert.strictEqual(skipsInertOptional('11.18.0'), true);
+  assert.strictEqual(skipsInertOptional('11.18.1'), true);
+  assert.strictEqual(skipsInertOptional('12.0.0'), true);
+  assert.strictEqual(skipsInertOptional('12.0.1'), true);
+  assert.strictEqual(skipsInertOptional('10.9.3'), false);
+  // unknown version = do not assume the fix; keep warning
+  assert.strictEqual(skipsInertOptional(null), false);
+  assert.strictEqual(skipsInertOptional('not-a-version'), false);
+});
+
+test('platformAllows: bare entries allowlist, ! entries block, empty means everywhere', () => {
+  const { platformAllows, isInertHere } = require('../src/v12gaps');
+  assert.strictEqual(platformAllows(['darwin'], 'darwin'), true);
+  assert.strictEqual(platformAllows(['darwin'], 'linux'), false);
+  assert.strictEqual(platformAllows(['!win32'], 'win32'), false);
+  assert.strictEqual(platformAllows(['!win32'], 'linux'), true);
+  assert.strictEqual(platformAllows([], 'linux'), true);
+  assert.strictEqual(platformAllows(null, 'linux'), true);
+  assert.strictEqual(platformAllows(['any'], 'linux'), true);
+  assert.strictEqual(isInertHere([process.platform], [process.arch]), false);
+  assert.strictEqual(isInertHere(null, ['definitely-not-an-arch']), true);
+});
+
+test('cli e2e: the gaps report names the checked npm and the fixed-in version', async () => {
+  const dir = inertLockDir(path.join(tmp, 'inert-cli'));
+  const stubNpm = path.join(tmp, 'npm12stub.js');
+  fs.writeFileSync(stubNpm, "if (process.argv.includes('--version')) { console.log('12.0.1'); process.exit(0); }\nprocess.exit(1);\n");
+  const child = spawn(process.execPath, [CLI, 'audit', '--check-v12-gaps', '--path', dir], {
+    cwd: ROOT,
+    timeout: 60000,
+    env: { ...process.env, NPM_SCRIPT_LENS_REGISTRY: base, NPM_SCRIPT_LENS_NPM: `node ${stubNpm}` },
+  });
+  let stdout = '';
+  child.stdout.on('data', (d) => { stdout += d; });
+  child.stdin.end();
+  const status = await new Promise((r) => child.on('exit', r));
+  assert.strictEqual(status, 0);
+  assert.ok(stdout.includes('local npm v12.0.1'), stdout);
+  assert.ok(stdout.includes('11.18.0') && stdout.includes('12.0.0'), stdout);
+  assert.ok(stdout.includes('Your npm carries that fix'), stdout);
+  assert.ok(stdout.includes('`live-opt@1.0.0`'), `the non-inert optional dep is still reported:\n${stdout}`);
+  assert.ok(!stdout.includes('`fsevents@'), 'the inert one is not');
 });
 
 test('checkEglobal: flags scripted global installs in workflows (#9463)', async () => {

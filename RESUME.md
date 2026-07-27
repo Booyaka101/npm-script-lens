@@ -1,6 +1,22 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-07-27 after the v1.2.0 release._
+_Updated 2026-07-27 after building v1.3.0._
+
+## v1.3.0 — BUILT, GREEN, NOT YET RELEASED ⬅️ start here
+201/201 tests (`node --test`, ~5 s). Working tree has the whole 1.3.0 change; nothing pushed.
+
+**Owner steps:** commit → push → **wait for CI green on ubuntu/windows × node 20/22** (the 1.0.0 lesson) → tag `v1.3.0`, move `v1` → GitHub Release → `npm publish` (needs `npm login`; account is **Booyaka101**).
+
+**What it adds** — two things, one release:
+1. **The gyp lens.** New `src/gyp.js` reads *inside* `binding.gyp` and the `.gypi`/`.gyp` files it includes (tolerant non-JSON parser: single quotes, `#` comments, trailing commas). Covers every gyp execution channel — `<!( <!@( >!( >!@( ^!( ^!@(`, `<!pymod_do_main(`, `<|( >|( ^|(`, `actions/rules/postbuilds[].action`, `make_global_settings`, Python-eval `conditions` — and never flags plain `<(var)` interpolation. Feeds `audit` (`gyp:` signals, scores HIGH), `review` (findings printed above the raw file), `--sarif` (`gyp-exec-channel`), and policy `denyCapabilities`.
+2. **`diff` false negative FIXED** — it compared `binding.gyp` by existence, so a version that *rewrote* an existing one read `UNCHANGED` and exited 0. Now content-compared: `MODIFIED` + line diff + `gainedChannels` + exit 1. Proven live on `bufferutil@4.0.8 → 4.0.9`.
+3. **`v12-optional-gap` version-gated** — npm/cli#9562 was fixed by PR #9597 (npm 11.18.0 / 12.0.0), so the detector no longer tells modern-npm users to allowlist `fsevents` on Linux.
+
+⚠️ **Release-note callout for users**: a `manifest --check` baseline containing native packages may now show a new `gyp` capability — real capability, not drift. Re-baseline once with `manifest --write`.
+
+⚠️ **Do not "tidy" the Miasma fixture into one plain `.gyp` file.** It is the real payload; Windows Defender quarantines it off disk (`Trojan:JS/PhantomWorm.DA!MTB`) and base64 does not hide it (Defender decodes containers). The structure lives in `fixtures/gyp/malicious-miasma.gyp.template`, the command in `test/gyp.test.js`, joined at runtime. Merging them passes on Linux and then deletes itself on Windows and on `windows-latest` CI. Rationale in `fixtures/gyp/README.md`.
+
+**Promo hook (owner-approved posts only, NOT posted):** the ReversingLabs 2026-06-04 write-up (286 malicious versions / 56 packages hiding in `binding.gyp`) and Aikido's 2026-06-09 teardown are the natural anchors — no other allowlist/approval tool reads inside that file.
 
 ## v1.2.0 — RELEASED (2026-07-27), latest on npm + GitHub
 - Pushed `bc0f8a9` → **CI green on ubuntu/windows × node 20/22** (waited this time — the 1.0.0 lesson) → tagged `v1.2.0`, moved `v1` → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.2.0) → `npm publish`. npm `latest` = **1.2.0**; clean-room registry install re-verified (`npm i npm-script-lens@1.2.0` → `sources` reproduces the worked example exactly).
