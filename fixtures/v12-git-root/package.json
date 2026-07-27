@@ -1,0 +1,8 @@
+{
+  "name": "v12-git-root-fixture",
+  "version": "1.0.0",
+  "dependencies": {
+    "left-pad": "github:left-pad/left-pad",
+    "plainpkg": "1.0.0"
+  }
+}

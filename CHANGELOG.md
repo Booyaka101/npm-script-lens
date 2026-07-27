@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.2.0 (2026-07-27)
+
+npm v12 flips **three** defaults, not one — this release covers the other two:
+`allow-git` and `allow-remote` (both the strict enum `all`|`none`|`root`,
+default `none`), under which git and remote-tarball dependencies stop
+resolving entirely unless opted in.
+
+- **New `sources` command**: finds every git (`git+ssh`/`git+https`/`git://`,
+  `github:`/`gitlab:`/`bitbucket:`) and remote-tarball dependency in the
+  lockfile — all four dialects: package-lock v1/v2/v3, yarn classic + berry,
+  pnpm, bun.lock — and classifies each as ROOT (declared in the root
+  package.json, `allow-git=root` suffices) or TRANSITIVE (forces
+  `allow-git=all`, with the via-chain that drags it in). Prints the **minimal
+  correct .npmrc** and, when a transitive dep forces `all`, exactly which dep
+  to re-point to tighten back to `root`. Pure lockfile+config analysis — no
+  network. `--json` emits `{ git, remote, npmrc }`.
+- **`sources --check`** (CI gate, exit 1) fails three distinct ways:
+  *insufficient* (npm v12 will refuse the install), *over-permissive* (`all`
+  committed where `root` suffices — tighten it), and *invalid* — the
+  `allow-git=true` that several published migration guides recommend is not in
+  the enum and npm treats it as unset. **`sources --write`** merges the
+  minimal values into `.npmrc` preserving every other key, comment, and line
+  byte-for-byte (npm lockfiles only — surfaced as such for yarn/pnpm/bun).
+- **`allow --ci-check` now also fails** when git/remote deps exist and the
+  committed config is insufficient or invalid — the same silent-CI-break shape
+  as a missing allowScripts block, same fast no-scan gate.
+- **`doctor`** reports git/remote dep counts, minimal values vs the committed
+  `.npmrc`, whether your npm even has the keys yet (introduced in 11.10.0 /
+  11.15.0 — checked at full-version precision), and warns that
+  `allow-git=root` is unreliable on npm 11 (npm/cli#9189, closed via PR #9206;
+  root-level git deps were wrongly rejected) — recommend `all` there.
+- **GitHub Action `sources-check` input** (default `'false'`, opt-in): fails
+  the job with an `::error` annotation and a job-summary line when the
+  committed `.npmrc` doesn't match the lockfile's git/remote reality.
+- New fixtures `v12-git-root`, `v12-git-transitive`, `v12-remote-tarball`;
+  the audit/analyzer path is untouched (non-registry deps were and are skipped
+  there), so existing reports are byte-identical. 174 tests.
+
 ## 1.1.0 (2026-07-25)
 
 - **New `diff` command**: `npm-script-lens diff <pkg>@<old> <pkg>@<new>`

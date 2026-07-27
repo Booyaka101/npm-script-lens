@@ -4,7 +4,7 @@
 
 _The install-script-approval tool for **npm · pnpm · yarn · bun** — from your **CLI**, **CI**, **editor**, and **AI agent**._
 
-Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/), dependency lifecycle scripts (`preinstall`, `install`, `postinstall`) and implicit `node-gyp` builds **no longer run unless explicitly allowed** via the `allowScripts` field in `package.json`. And npm isn't alone — **pnpm** (`allowBuilds`), **yarn** Berry (`dependenciesMeta.built`), and **bun** (`trustedDependencies`) all made install scripts opt-in too. That leaves every team, on every package manager, staring at a list of package names asking: *which of these are safe to approve?*
+Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/), dependency lifecycle scripts (`preinstall`, `install`, `postinstall`) and implicit `node-gyp` builds **no longer run unless explicitly allowed** via the `allowScripts` field in `package.json` — and [git and remote-URL dependencies **no longer resolve at all**](#git-and-remote-dependencies-the-other-two-npm-v12-flips) unless opted in via `allow-git`/`allow-remote`. And npm isn't alone — **pnpm** (`allowBuilds`), **yarn** Berry (`dependenciesMeta.built`), and **bun** (`trustedDependencies`) all made install scripts opt-in too. That leaves every team, on every package manager, staring at a list of package names asking: *which of these are safe to approve?*
 
 `npm-script-lens` answers that with evidence, not vibes — the review-report mode the community asked for in [npm/rfcs#897](https://github.com/npm/rfcs/pull/897). For every package in your lockfile — `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (classic and berry), `pnpm-lock.yaml`, or `bun.lock` — it:
 
@@ -75,6 +75,59 @@ MODIFIED: install
 - **MODIFIED** (red) — same key, changed content, with a line-level diff
 
 Exit `0` when everything is unchanged; exit `1` the moment any script is **added or modified** — so a Renovate/Dependabot CI step can fail the moment an upgrade grows its install-time surface. (A pure removal stays exit `0`.)
+
+## git and remote dependencies: the other two npm v12 flips
+
+npm v12 doesn't just gate install *scripts* — it also stops resolving **git
+dependencies** (`github:user/repo`, `git+ssh://…`) and **remote tarball URLs**
+(`https://…/pkg.tgz`) unless you opt in via `allow-git` / `allow-remote` in
+`.npmrc`. Both are the strict enum `all` | `none` | `root` (default `none`);
+`root` allows only deps declared in your **root** package.json, so a single
+*transitive* git dep forces `all`. There's no migration tooling upstream — the
+[official discussion](https://github.com/orgs/community/discussions/198547)'s
+best offer is `grep -r 'git+' package.json`. `sources` does the whole job:
+
+```bash
+npx npm-script-lens sources                # report + the minimal correct .npmrc
+npx npm-script-lens sources --check        # CI: exit 1 on insufficient, over-permissive, or invalid config
+npx npm-script-lens sources --write        # merge the minimal values into .npmrc (comment-preserving)
+npx npm-script-lens sources --json         # { git, remote, npmrc }
+```
+
+Real output for a project with a root-declared git dep and a transitive one:
+
+```
+git dependencies (2)
+  ROOT        left-pad @ github:left-pad/left-pad
+  TRANSITIVE  some-pkg @ git+ssh://git@github.com/a/b.git   via my-lib -> some-pkg
+remote dependencies (0)
+
+minimal correct .npmrc:
+  allow-git=all
+
+allow-git=all is required because 1 git dependency is transitive; allow-git=root would otherwise suffice.
+Re-point or drop `some-pkg` (via my-lib) to tighten this to allow-git=root.
+```
+
+It reads all four lockfile dialects (package-lock v1/v2/v3, yarn classic +
+berry, pnpm, bun.lock) with **zero network calls**, and `--check` fails in
+three *distinct* ways so CI tells you what to do:
+
+- **insufficient** — npm v12 will refuse the install (missing `.npmrc`, or
+  `root` committed while a transitive git dep exists);
+- **over-permissive** — `all` committed where `root` (or nothing) suffices:
+  the least-privilege ratchet;
+- **invalid** — `allow-git=true` or a bare `--allow-git`, which several
+  published migration guides recommend, is **not in the enum**: npm treats it
+  as unset and your install still breaks. The check names the valid three.
+
+`allow --ci-check` folds the insufficient/invalid cases into its fast CI gate
+too, and `doctor` reports whether your npm has the keys at all (they appeared
+in 11.10.0 / 11.15.0) and warns that `allow-git=root` is unreliable on npm 11
+([npm/cli#9189](https://github.com/npm/cli/issues/9189), closed via PR #9206 —
+root-level git deps were wrongly rejected): prefer `all` there. The `.npmrc`
+emitter is npm-only; for yarn/pnpm/bun lockfiles the dependency report still
+works, the write is skipped with a note.
 
 ## review: see what you're approving, not just its name
 
@@ -287,7 +340,7 @@ jobs:
 
 The action writes the report to the job summary, comments on the PR (plain GitHub REST `issues/comments` call using `GITHUB_TOKEN` — same endpoint octokit uses), and fails the job when `fail-on-high` is true and a HIGH package exists.
 
-Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
+Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable — fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover — insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
 
 ```yaml
       - uses: Booyaka101/npm-script-lens@v1
@@ -332,7 +385,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `doctor` detected npm drift · `diff` found an added/modified install script |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · `doctor` detected npm drift · `diff` found an added/modified install script |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
@@ -343,6 +396,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | `allow` | split scripted packages into an auto-approved allowlist + `_review`, in your manager's native format; `--write`, `--ci-check`, `--manager`, `--policy` |
 | `review` | show pending approvals **with the actual script content** + verdict; `--output-allowscripts` writes decisions |
 | `diff` | compare a package's install scripts (+ implicit node-gyp) across two versions; exit 1 on any add/modify; `--json` |
+| `sources` | git + remote-URL deps vs npm v12's `allow-git`/`allow-remote`: ROOT/TRANSITIVE per dep, minimal correct `.npmrc`; `--check`, `--write`, `--json` |
 | `sync` | reconcile the native allowlist with the lockfile (drop stale, add new); `--check` for CI |
 | `doctor` | is this build still in sync with your npm? contract probe + drift alarm |
 | `init` | scaffold policy + CI workflow (`--auto-fix` bot, `--hook` git pre-commit) |

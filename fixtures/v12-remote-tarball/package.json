@@ -1,0 +1,8 @@
+{
+  "name": "v12-remote-tarball-fixture",
+  "version": "1.0.0",
+  "dependencies": {
+    "plainpkg": "1.0.0",
+    "tarpkg": "https://example.com/tarpkg-1.0.0.tgz"
+  }
+}

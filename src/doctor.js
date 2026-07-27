@@ -7,12 +7,13 @@
 // run exactly these checks.
 const fs = require('node:fs');
 const path = require('node:path');
-const { npmMajorVersion, npmDryRunPending, classifyDryRun } = require('./review');
+const { npmFullVersion, npmDryRunPending, classifyDryRun } = require('./review');
 const { resolveLockfile } = require('./lockfiles');
 const { managerFor } = require('./pm-contract');
+const { analyzeSources, checkSourceConfig, readSourceConfig, versionGte } = require('./sources');
 const {
   MIN_ALLOWSCRIPTS_NPM, ALLOWSCRIPTS_FIELD, DRY_RUN_ARGS, UNREVIEWED_KEY,
-  SAMPLE_DRY_RUN, DETECTORS, enforcesAllowScripts,
+  SAMPLE_DRY_RUN, SOURCES, DETECTORS, enforcesAllowScripts,
 } = require('./npm-contract');
 
 const dirOf = (target) => {
@@ -28,7 +29,8 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
   const add = (name, status, detail) => checks.push({ name, status, detail });
   const projectDir = dirOf(target);
 
-  const major = await npmMajorVersion(projectDir);
+  const fullVersion = await npmFullVersion(projectDir);
+  const major = fullVersion ? parseInt(fullVersion.split('.')[0], 10) : null;
   if (major === null) add('npm version', 'warn', 'could not run `npm --version` — is npm on PATH? review/allow will use the lockfile fallback');
   else add('npm version', 'ok', `npm v${major} detected`);
 
@@ -88,6 +90,42 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     hasAllow ? `package.json has ${count} ${ALLOWSCRIPTS_FIELD} entr${count === 1 ? 'y' : 'ies'}`
       : `no ${ALLOWSCRIPTS_FIELD} block in ${projectDir}/package.json — run \`npm-script-lens allow --write\` to generate one`);
 
+  // git/remote dependency sources — npm v12's allow-git / allow-remote flips.
+  // Counts + minimal values from the lockfile, compared against the committed
+  // .npmrc, plus whether the local npm even has the keys yet (they need minor
+  // precision: introduced in 11.10.0 / 11.15.0) and whether it is new enough
+  // for `root` to be trusted (npm 11 shipped npm/cli#9189).
+  let sources = null;
+  try {
+    const analysis = await analyzeSources(target, { probeNpm: false });
+    const config = readSourceConfig(analysis.projectDir);
+    const { failures } = checkSourceConfig(analysis, config);
+    sources = {};
+    for (const kind of ['git', 'remote']) {
+      const { key } = SOURCES[kind];
+      const a = analysis[kind];
+      const committed = config[kind];
+      sources[kind] = { count: a.deps.length, minimal: a.minimal, committed };
+      const failure = failures.find((f) => f.source === kind);
+      if (failure) add(`${key} config`, 'warn', failure.message);
+      else if (a.deps.length === 0) add(`${key} config`, 'info', `no ${kind} dependencies in the lockfile — the npm v${SOURCES.enforcedInNpm} default (${key}=${SOURCES.default}) is correct here`);
+      else add(`${key} config`, 'ok', `${a.deps.length} ${kind} dependenc${a.deps.length === 1 ? 'y' : 'ies'} — .npmrc ${key}=${committed} is the minimal correct value`);
+      if (a.minimal === 'root' && major === SOURCES.enforcedInNpm - 1) {
+        const d = DETECTORS.allowGitRoot;
+        add(`${key}=root reliability`, 'warn',
+          `npm v${major} wrongly rejected root-level git deps under ${key}=root (${d.issue} — ${d.upstream}${d.fixedInNpm ? `, fixed in npm v${d.fixedInNpm}` : '; fixed npm version not yet pinned'}) — prefer ${key}=all until your npm verifiably carries the fix`);
+      }
+    }
+  } catch {
+    add('dependency sources', 'info', 'no lockfile at this path — allow-git/allow-remote check skipped');
+  }
+  for (const kind of ['git', 'remote']) {
+    const { key, introduced } = SOURCES[kind];
+    if (fullVersion === null) add(`${key} support`, 'info', `npm version unknown — cannot tell whether ${key} is available (introduced in npm ${introduced})`);
+    else if (versionGte(fullVersion, introduced)) add(`${key} support`, 'ok', `npm v${fullVersion} supports ${key} (introduced in npm ${introduced}; enforced by default from v${SOURCES.enforcedInNpm})`);
+    else add(`${key} support`, 'info', `npm v${fullVersion} predates ${key} (introduced in npm ${introduced}) — the setting takes effect after upgrading`);
+  }
+
   // Contract summary + detector currency
   add('assumed contract', 'info',
     `field=${ALLOWSCRIPTS_FIELD} · dry-run=\`npm ${DRY_RUN_ARGS.join(' ')}\` · key=${UNREVIEWED_KEY} · min npm=v${MIN_ALLOWSCRIPTS_NPM}`);
@@ -96,7 +134,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
   }
 
   const failed = checks.some((c) => c.status === 'fail');
-  return { tool: 'npm-script-lens', npmMajor: major, ok: !failed, checks };
+  return { tool: 'npm-script-lens', npmMajor: major, npmVersion: fullVersion, ok: !failed, sources, checks };
 }
 
 const ICON = { ok: '✅', warn: '⚠️ ', info: 'ℹ️ ', fail: '❌' };

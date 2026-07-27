@@ -15,6 +15,9 @@ const { buildReport, buildHtml, buildAllowScripts, buildSarif, buildManifest, se
 const { checkV12Gaps, workflowFiles } = require('./v12gaps');
 const { npmDryRunPending, npmMajorVersion, isCovered } = require('./review');
 const { runDoctor, renderDoctor } = require('./doctor');
+const { analyzeSources, sourcesJson, renderSources, rootWarnings, checkSourceConfig, readSourceConfig } = require('./sources');
+const { mergeNpmrc } = require('./npmrc');
+const { SOURCES } = require('./npm-contract');
 const { managerFor, managerById } = require('./pm-contract');
 const { loadPolicy, evaluate: evaluatePolicy } = require('./policy');
 const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./diff');
@@ -722,19 +725,40 @@ async function ciCheckResult(projectDir) {
   const installsInCi = workflowsRunNpmInstall(projectDir);
   const hasAllow = projectHasAllowScripts(projectDir);
   const npmMajor = await npmMajorVersion(projectDir);
-  const willBreak = installsInCi && !hasAllow && npmMajor !== null && npmMajor >= 12;
+  const enforcing = npmMajor !== null && npmMajor >= 12;
+  const scriptsBreak = installsInCi && !hasAllow && enforcing;
+  // npm v12 also refuses to RESOLVE git/remote dependencies unless allow-git /
+  // allow-remote covers them — the same silent-CI-break shape as allowScripts.
+  // Over-permission doesn't break an install, so only insufficient/invalid
+  // config counts here (`sources --check` is the strict gate).
+  let sourcesFailures = [];
+  if (installsInCi && enforcing) {
+    try {
+      const analysis = await analyzeSources(projectDir, { probeNpm: false });
+      if (analysis.lockType === 'npm') {
+        const { failures } = checkSourceConfig(analysis, readSourceConfig(analysis.projectDir));
+        sourcesFailures = failures.filter((f) => f.kind !== 'over-permissive');
+      }
+    } catch { /* no lockfile here — nothing for npm to resolve */ }
+  }
+  const sourcesBreak = sourcesFailures.length > 0;
+  const willBreak = scriptsBreak || sourcesBreak;
   const reason = willBreak ? null
     : !installsInCi ? 'no workflow runs npm install'
       : hasAllow ? 'package.json already has an allowScripts block'
         : npmMajor === null ? 'local npm version could not be determined'
           : `local npm is v${npmMajor} (< 12)`;
-  return { willBreak, reason, installsInCi, hasAllow, npmMajor };
+  return { willBreak, reason, installsInCi, hasAllow, npmMajor, scriptsBreak, sourcesBreak, sourcesFailures };
 }
 
 async function ciCheckAction(opts) {
-  const { willBreak, reason } = await ciCheckResult(dirOf(opts.path));
+  const { willBreak, reason, scriptsBreak, sourcesBreak, sourcesFailures } = await ciCheckResult(dirOf(opts.path));
   if (willBreak) {
-    process.stderr.write('CI will break on npm v12: run lens allow to generate allowScripts block.\n');
+    if (scriptsBreak) process.stderr.write('CI will break on npm v12: run lens allow to generate allowScripts block.\n');
+    if (sourcesBreak) {
+      for (const f of sourcesFailures) process.stderr.write(`CI will break on npm v12: ${f.message}\n`);
+      process.stderr.write('Run lens sources --write to set the minimal correct .npmrc.\n');
+    }
     process.exitCode = 1;
     return;
   }
@@ -904,6 +928,62 @@ async function initAction(opts) {
   process.stdout.write(`${lines.join('\n')}\n`);
 }
 
+// --- sources: git/remote deps vs npm v12's allow-git / allow-remote --------
+// npm v12's third flipped default: git and remote-URL dependencies stop
+// resolving unless allow-git / allow-remote (enum all|none|root) is set.
+// Pure lockfile+package.json+.npmrc analysis — no scan, no network.
+
+async function sourcesAction(opts) {
+  const analysis = await analyzeSources(opts.path);
+  const config = readSourceConfig(analysis.projectDir);
+  if (opts.json) process.stdout.write(`${JSON.stringify(sourcesJson(analysis), null, 2)}\n`);
+  else process.stdout.write(`${renderSources(analysis)}\n`);
+  for (const w of rootWarnings(analysis)) process.stderr.write(`${w}\n`);
+  const npmrcApplies = analysis.lockType === 'npm';
+
+  if (opts.write) {
+    if (!npmrcApplies) {
+      process.stderr.write(`--write skipped: the .npmrc emitter is npm-only, and this is a ${analysis.lockType} lockfile\n`);
+    } else {
+      // set each needed key to its minimal value; a committed key that is no
+      // longer needed is tightened to an explicit 'none' rather than deleted
+      const updates = {};
+      for (const kind of ['git', 'remote']) {
+        const minimal = analysis[kind].minimal;
+        if (minimal !== 'none') updates[SOURCES[kind].key] = minimal;
+        else if (config[kind] !== null) updates[SOURCES[kind].key] = 'none';
+      }
+      if (Object.keys(updates).length === 0) {
+        process.stderr.write('nothing to write: no git/remote dependencies and no allow-git/allow-remote entries to correct\n');
+      } else {
+        const text = config.exists ? fs.readFileSync(config.file, 'utf8') : '';
+        const merged = mergeNpmrc(text, updates);
+        if (merged === text) {
+          process.stderr.write(`${config.file} already has the minimal correct values — nothing to write\n`);
+        } else {
+          fs.writeFileSync(config.file, merged);
+          process.stderr.write(`wrote ${Object.keys(updates).map((k) => `${k}=${updates[k]}`).join(', ')} to ${config.file}\n`);
+        }
+      }
+    }
+  }
+
+  if (opts.check) {
+    if (!npmrcApplies) {
+      process.stderr.write(`sources check skipped: .npmrc allow-git/allow-remote is npm-only, and this is a ${analysis.lockType} lockfile\n`);
+      return;
+    }
+    const { ok, failures } = checkSourceConfig(analysis, config);
+    if (ok) {
+      process.stderr.write('sources check passed: .npmrc matches the minimal correct allow-git/allow-remote for this lockfile\n');
+      return;
+    }
+    for (const f of failures) process.stderr.write(`FAIL (${f.kind}): ${f.message}\n`);
+    process.stderr.write('Run `npm-script-lens sources --write` to set the minimal correct values.\n');
+    process.exitCode = 1;
+  }
+}
+
 // --- doctor: does this build still understand your npm? -------------------
 
 async function doctorAction(opts) {
@@ -1035,6 +1115,13 @@ if (require.main === module) {
     .option('--hook', 'also install a git pre-commit hook that runs `sync --check`')
     .option('--force', 'overwrite existing files')
     .action(initAction);
+  program.command('sources')
+    .description('report git and remote-URL dependencies against npm v12\'s allow-git/allow-remote defaults: ROOT vs TRANSITIVE per dep, the minimal correct .npmrc, and which transitive deps force allow-git=all — no scan, no network')
+    .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock)', '.')
+    .option('--json', 'emit { git, remote, npmrc } JSON instead of text')
+    .option('--write', 'merge the minimal correct allow-git/allow-remote into .npmrc, preserving every other key and comment (npm lockfiles only)')
+    .option('--check', 'exit 1 when the committed .npmrc is insufficient, over-permissive, or holds an invalid value for these keys (for CI)')
+    .action(sourcesAction);
   program.command('doctor')
     .description('check whether this build still understands your local npm (contract probe + parser self-test + live dry-run shape check) — exit 1 on drift')
     .option('--path <path>', 'project dir or lockfile to probe live', '.')

@@ -65,13 +65,21 @@ function runCmd(cmd, cwd, timeoutMs) {
   });
 }
 
-// The local npm's major version, or null when it cannot be determined.
-// NPM_SCRIPT_LENS_NPM overrides the command (tests, alternate npms).
-async function npmMajorVersion(cwd) {
+// The local npm's full version ("11.16.1"), or null when it cannot be
+// determined. NPM_SCRIPT_LENS_NPM overrides the command (tests, alternate
+// npms). The allow-git/allow-remote support checks need minor precision
+// (introduced in 11.10.0 / 11.15.0), which the major alone can't answer.
+async function npmFullVersion(cwd) {
   const npmCmd = process.env.NPM_SCRIPT_LENS_NPM || 'npm';
   const ver = await runCmd(`${npmCmd} --version`, cwd, 30000);
-  const m = ver && ver.out.match(/(\d+)\.\d+\.\d+/);
-  return m ? parseInt(m[1], 10) : null;
+  const m = ver && ver.out.match(/(\d+\.\d+\.\d+)/);
+  return m ? m[1] : null;
+}
+
+// The local npm's major version, or null when it cannot be determined.
+async function npmMajorVersion(cwd) {
+  const full = await npmFullVersion(cwd);
+  return full ? parseInt(full.split('.')[0], 10) : null;
 }
 
 // Ask the project's npm what is pending. Resolves:
@@ -99,4 +107,4 @@ async function npmDryRunPending(cwd, { timeoutMs = 180000 } = {}) {
 // name@version, true or false (verified against npm 12.0.1).
 const isCovered = (allow, name, version) => name in allow || `${name}@${version}` in allow;
 
-module.exports = { classifyDryRun, parseDryRun, npmDryRunPending, npmMajorVersion, isCovered };
+module.exports = { classifyDryRun, parseDryRun, npmDryRunPending, npmMajorVersion, npmFullVersion, isCovered };

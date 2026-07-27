@@ -1,0 +1,8 @@
+{
+  "name": "v12-git-transitive-fixture",
+  "version": "1.0.0",
+  "dependencies": {
+    "left-pad": "github:left-pad/left-pad",
+    "my-lib": "1.0.0"
+  }
+}

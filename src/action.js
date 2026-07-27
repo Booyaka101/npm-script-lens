@@ -150,7 +150,44 @@ async function ciCheckMain() {
   }
 }
 
-const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain };
+// `node action.js sources-check` — opt-in gate (the `sources-check` input):
+// fails the job when the committed .npmrc allow-git/allow-remote is
+// insufficient, over-permissive, or invalid for the git/remote dependencies
+// actually in the lockfile — npm v12 refuses to resolve uncovered ones.
+async function sourcesCheckMain() {
+  const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
+  const target = input('PATH', '.');
+  const { analyzeSources, checkSourceConfig, readSourceConfig } = require('./sources');
+  const { SOURCES } = require('./npm-contract');
+  let analysis;
+  try {
+    analysis = await analyzeSources(target, { probeNpm: false });
+  } catch (err) {
+    console.log(`npm v12 git/remote dependency check skipped: ${err.message}`);
+    return;
+  }
+  const counts = `${analysis.git.deps.length} git dep(s) (minimal ${SOURCES.git.key}=${analysis.git.minimal}) · ${analysis.remote.deps.length} remote dep(s) (minimal ${SOURCES.remote.key}=${analysis.remote.minimal})`;
+  if (analysis.lockType !== 'npm') {
+    console.log(`npm v12 git/remote dependency check: ${counts} — .npmrc check skipped (npm-only; this is a ${analysis.lockType} lockfile)`);
+    return;
+  }
+  const { ok, failures } = checkSourceConfig(analysis, readSourceConfig(analysis.projectDir));
+  if (ok) {
+    console.log(`npm v12 git/remote dependency check passed: ${counts}`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ✅ npm v12 git/remote dependency check\n\n${counts} — .npmrc matches.\n`);
+    }
+    return;
+  }
+  for (const f of failures) console.log(`::error::${f.message}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `\n## ❌ npm v12 git/remote dependency check\n\n${counts}\n\n${failures.map((f) => `- **${f.kind}**: ${f.message}`).join('\n')}\n\nRun \`npx npm-script-lens sources --write\` and commit the updated \`.npmrc\`.\n`);
+  }
+  process.exitCode = 1;
+}
+
+const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain };
 (MODE[process.argv[2]] || main)().catch((err) => {
   console.log(`::error::${err.message}`);
   process.exitCode = 2;

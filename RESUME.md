@@ -1,8 +1,13 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-07-25 after the v1.0.1 release._
+_Updated 2026-07-27 after building v1.2.0 (local, unpublished)._
 
-## Where we are
+## v1.2.0 — ready to ship (owner: push, tag, `npm publish` after CI green)
+- **New `sources` command** covers npm v12's other two flipped defaults, `allow-git`/`allow-remote` (enum `all|none|root`, default `none`): finds git + remote-tarball deps in all four lockfile dialects, classifies ROOT vs TRANSITIVE (transitive forces `all`), prints/writes the minimal correct `.npmrc` (comment-preserving), `--check` fails on insufficient / over-permissive / invalid (`=true`) config. `allow --ci-check`, `doctor`, and the Action (`sources-check` input) extended. 174/174 tests. See PROGRESS.md → v1.2.0.
+- Ship steps: `git push` → wait CI green (lesson from 1.0.0!) → tag `v1.2.0`, move `v1` → GitHub Release → `npm publish`.
+- Promo hook: discussion 198547's best migration tooling for git deps is literally `grep -r 'git+'` — `sources` is the purpose-built answer (owner-approved posts only).
+
+## Where we were (v1.0.1 release notes)
 - **v1.0.1 RELEASED and verified — latest on npm + GitHub.** The 0.8→1.0 arc shipped as v1.0.0 (`7063255`); **v1.0.1** is a patch fixing `audit --since` on Windows (git 8.3 short-name path mismatch caught by CI on the 1.0.0 commit). Tagged, `v1` moved to 1.0.1, GitHub Releases live for both, npm `latest` = 1.0.1, clean-room `npx` verified. **CI green on ubuntu/windows × node 20/22.** `.vsix` attached to both Releases.
 - Working tree clean; everything committed. **Lesson logged: wait for CI green before `npm publish` (1.0.0 was published before CI finished and Windows caught a real `--since` bug → fixed forward in 1.0.1).**
 

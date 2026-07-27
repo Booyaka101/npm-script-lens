@@ -52,6 +52,23 @@ const SAMPLE_DRY_RUN = {
   empty: 'add sharp 0.33.5\n' + JSON.stringify({ added: 1, audited: 0, removed: 0 }),
 };
 
+// npm v12's OTHER two flipped defaults: git and remote-URL dependency
+// resolution. Both keys are strict enums — `allow-git=true` / a bare
+// `--allow-git` is INVALID, which several published migration guides get
+// wrong. `root` allows only deps declared in the project's root package.json;
+// any transitive git/remote dep forces `all`. Verified against
+// npm/cli workspaces/config definitions.js (type ['all','none','root'],
+// default 'none') and the 2026-06-09 v12 breaking-changes changelog.
+const SOURCES = {
+  git: { key: 'allow-git', introduced: '11.10.0' },
+  remote: { key: 'allow-remote', introduced: '11.15.0' },
+  values: ['all', 'none', 'root'],
+  default: 'none',
+  // the npm major where 'none' becomes the enforced default (before that the
+  // keys exist behind warnings — 11.16.0+ warns, v12 blocks)
+  enforcedInNpm: 12,
+};
+
 // The two npm-v12 approve-scripts tooling bugs we detect, with their live
 // upstream status. Findings and reports pull ref/status from here so they
 // self-document how current they are — the antidote to a detector quietly
@@ -71,6 +88,16 @@ const DETECTORS = {
     upstream: 'suggestion added upstream (npm/cli commit c14e87c)',
     fixedInNpm: null,
   },
+  // allow-git=root wrongly rejected ROOT-level git deps in npm 11.12.1
+  // ("Fetching non-root packages of type git have been disabled") — so any
+  // `root` recommendation must be version-gated until the fixed npm version
+  // is pinned here.
+  allowGitRoot: {
+    id: 'v12-allow-git-root',
+    issue: 'https://github.com/npm/cli/issues/9189',
+    upstream: 'closed via npm/cli PR #9206',
+    fixedInNpm: null,
+  },
 };
 
 // npm >= MIN is where allowScripts is enforced.
@@ -84,6 +111,7 @@ module.exports = {
   SUMMARY_KEYS,
   NPM_CMD,
   SAMPLE_DRY_RUN,
+  SOURCES,
   DETECTORS,
   enforcesAllowScripts,
 };
