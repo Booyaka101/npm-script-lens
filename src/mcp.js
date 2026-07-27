@@ -118,6 +118,25 @@ async function classifyAllowScriptsTool({ path: target }) {
   };
 }
 
+/**
+ * Handshake state, dual-era.
+ *
+ * 2025-11-25 clients send an `initialize` request once. 2026-07-28 removes that
+ * handshake entirely and carries protocolVersion / clientInfo / capabilities in
+ * `params._meta` on *every* request instead. Until every client we care about has
+ * moved, both have to work — the spec date is a rollout window, not a kill switch.
+ */
+const peer = { protocolVersion: null, clientInfo: null, capabilities: null };
+
+/** Absorb 2026-07-28 per-request handshake data. Older clients simply omit it. */
+function absorbMeta(msg) {
+  const meta = msg && msg.params && msg.params._meta;
+  if (!meta || typeof meta !== 'object') return;
+  if (meta.protocolVersion) peer.protocolVersion = meta.protocolVersion;
+  if (meta.clientInfo) peer.clientInfo = meta.clientInfo;
+  if (meta.capabilities) peer.capabilities = meta.capabilities;
+}
+
 function serve() {
   const send = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
   const rl = readline.createInterface({ input: process.stdin });
@@ -125,14 +144,19 @@ function serve() {
     if (!line.trim()) return;
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
+    absorbMeta(msg); // 2026-07-28: handshake rides along on every request
     if (msg.id === undefined) return; // notification — nothing to answer
     try {
+      // Deliberate dual-era support: 2026-07-28 drops this handshake, but removing
+      // it would break every 2025-11-25 client still in the field. absorbMeta()
+      // above implements the new path; this stays until the old one is retired.
+      // mcp-vet-disable-next-line INITIALIZE_HANDLER
       if (msg.method === 'initialize') {
         send({
           jsonrpc: '2.0',
           id: msg.id,
           result: {
-            protocolVersion: (msg.params && msg.params.protocolVersion) || '2024-11-05',
+            protocolVersion: (msg.params && msg.params.protocolVersion) || peer.protocolVersion || '2024-11-05',
             capabilities: { tools: {} },
             serverInfo: { name: 'npm-script-lens', version: VERSION },
           },
