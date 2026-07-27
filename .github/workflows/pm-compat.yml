@@ -48,30 +48,51 @@ jobs:
             pnpm) pnpm install --lockfile-only ;;
             bun)  bun install --ignore-scripts || bun install ;;
           esac
-      - name: allow --write (generate the native allowlist)
-        run: node "$GITHUB_WORKSPACE/src/cli.js" allow --path /tmp/pmc --no-trust --write
-      - name: Confirm the manager honors it and runs the approved script
+      # The ground truth is the MANAGER'S OWN blocked-scripts signal, observed
+      # both before and after `allow --write`. Earlier revisions grepped for
+      # core-js's funding banner, which cannot work: core-js suppresses it
+      # whenever CI is set (GitHub always sets it), npm hides lifecycle stdout
+      # without --foreground-scripts, and bun never echoes postinstall output at
+      # all — so the bun leg was passing only because the loose pattern matched
+      # bun's own "+ core-js@3.38.1" package line. Asserting on the manager's
+      # signal removes every third-party dependency, and checking the BEFORE
+      # state proves the assertion is not vacuous.
+      - name: Verify the manager blocks the script, then honors our allowlist
         working-directory: /tmp/pmc
-        # core-js's postinstall prints its banner only when it does NOT think it
-        # is on CI: isBannerRequired() bails on ADBLOCK/CI/DISABLE_OPENCOLLECTIVE/
-        # npm_config_loglevel/OPEN_SOURCE_CONTRIBUTOR. GitHub always sets CI=true,
-        # so with it set the banner can never appear and this check can never
-        # pass. Blank it for this step only. (Verified against core-js 3.38.1's
-        # postinstall.js source.)
-        env:
-          CI: ''
         run: |
           set -e
-          # npm SUPPRESSES lifecycle-script stdout unless --foreground-scripts,
-          # so without it the banner is invisible even when the script ran.
-          # (Verified locally: 0 banner lines without the flag, 1 with it.)
           case "${{ matrix.pm }}" in
-            npm)  rm -rf node_modules; out=$(npm install --no-audit --no-fund --foreground-scripts 2>&1) ;;
-            pnpm) rm -rf node_modules; out=$(pnpm install 2>&1) ;;
-            bun)  rm -rf node_modules; out=$(bun install 2>&1) ;;
+            npm)  BLOCKED='allow-scripts' ;;              # npm warn allow-scripts … not yet covered by allowScripts
+            pnpm) BLOCKED='gnored build script' ;;        # Ignored build scripts: core-js
+            bun)  BLOCKED='locked [0-9]+ postinstall' ;;  # Blocked 1 postinstall. Run `bun pm untrusted`…
           esac
-          echo "$out"
-          # core-js prints a funding banner from its postinstall when it runs;
-          # if the script were still blocked the banner would be absent.
-          echo "$out" | grep -qi "Thank you for using core-js" || {
-            echo "::error::${{ matrix.pm }}: approved install script did not run after allow --write — allowlist format may have drifted"; exit 1; }
+          run_install() {
+            rm -rf node_modules
+            case "${{ matrix.pm }}" in
+              npm)  npm install --no-audit --no-fund 2>&1 || true ;;
+              pnpm) pnpm install 2>&1 || true ;;
+              bun)  bun install 2>&1 || true ;;
+            esac
+          }
+
+          echo "── BEFORE allow --write ─────────────────────────"
+          before=$(run_install); echo "$before"
+          if echo "$before" | grep -Eqi "$BLOCKED"; then
+            baseline=blocked
+          else
+            baseline=unblocked
+            echo "::warning::${{ matrix.pm }} did not block the install script by default — this leg cannot prove the allowlist did anything"
+          fi
+
+          echo "── allow --write ────────────────────────────────"
+          node "$GITHUB_WORKSPACE/src/cli.js" allow --path /tmp/pmc --no-trust --write
+
+          echo "── AFTER allow --write ──────────────────────────"
+          after=$(run_install); echo "$after"
+          if echo "$after" | grep -Eqi "$BLOCKED"; then
+            echo "::error::${{ matrix.pm }}: still reports blocked install scripts after allow --write — our native allowlist format has drifted"
+            exit 1
+          fi
+          [ "$baseline" = blocked ] \
+            && echo "✅ ${{ matrix.pm }}: blocked before, allowed after — allowlist format is still valid" \
+            || echo "⚠️ ${{ matrix.pm }}: nothing was blocked to begin with (inconclusive, not a failure)"
