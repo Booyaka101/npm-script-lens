@@ -517,3 +517,18 @@ The combination — **behavioral evidence** for the decision, in **every manager
 - **MCP server** for AI agents: `npx npm-script-lens mcp`
 - **Pre-commit**: [`init --hook`](#one-command-adoption) or the [pre-commit framework](.pre-commit-hooks.yaml) · **HTML report**: `audit --html report.html`
 - Join the conversation: [npm/rfcs#897](https://github.com/npm/rfcs/issues/897) (allowScripts review-report RRFC) · [npm v12 migration discussion](https://github.com/community/community/discussions/198547)
+
+## Related
+
+[**pnpm11-ci-guard**](https://github.com/Booyaka101/pnpm11-ci-guard) — the other half of
+the build-script story on pnpm v11.
+
+Once this tool writes an `allowBuilds` allowlist into `pnpm-workspace.yaml`, a
+`pnpm install` inside Docker will **prompt for approval and hang the build** unless the
+image sets `ENV CI=true`. pnpm11-ci-guard catches that, plus the rest of the v10 → v11
+migration that lands in Dockerfiles and CI workflows — `npm_config_*` env vars that v11
+silently stopped reading, and images that never `COPY pnpm-workspace.yaml`. pnpm's own
+codemod covers neither.
+
+Use npm-script-lens to decide *what may build*; use pnpm11-ci-guard to make sure your
+image and CI still work once you have decided.
