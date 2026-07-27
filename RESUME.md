@@ -1,11 +1,14 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-07-27 after building v1.2.0 (local, unpublished)._
+_Updated 2026-07-27 after the v1.2.0 release._
 
-## v1.2.0 — ready to ship (owner: push, tag, `npm publish` after CI green)
+## v1.2.0 — RELEASED (2026-07-27), latest on npm + GitHub
+- Pushed `bc0f8a9` → **CI green on ubuntu/windows × node 20/22** (waited this time — the 1.0.0 lesson) → tagged `v1.2.0`, moved `v1` → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.2.0) → `npm publish`. npm `latest` = **1.2.0**; clean-room registry install re-verified (`npm i npm-script-lens@1.2.0` → `sources` reproduces the worked example exactly).
+- VS Code extension unchanged this release (still 1.0.0; the `.vsix` on the v1.0.1 Release still applies) — no new asset attached.
+
+## What v1.2.0 added
 - **New `sources` command** covers npm v12's other two flipped defaults, `allow-git`/`allow-remote` (enum `all|none|root`, default `none`): finds git + remote-tarball deps in all four lockfile dialects, classifies ROOT vs TRANSITIVE (transitive forces `all`), prints/writes the minimal correct `.npmrc` (comment-preserving), `--check` fails on insufficient / over-permissive / invalid (`=true`) config. `allow --ci-check`, `doctor`, and the Action (`sources-check` input) extended. 174/174 tests. See PROGRESS.md → v1.2.0.
-- Ship steps: `git push` → wait CI green (lesson from 1.0.0!) → tag `v1.2.0`, move `v1` → GitHub Release → `npm publish`.
-- Promo hook: discussion 198547's best migration tooling for git deps is literally `grep -r 'git+'` — `sources` is the purpose-built answer (owner-approved posts only).
+- Promo hook (owner-approved posts only, NOT yet posted): discussion 198547's best migration tooling for git deps is literally `grep -r 'git+'` — `sources` is the purpose-built answer. Same for the npm v12 migration threads.
 
 ## Where we were (v1.0.1 release notes)
 - **v1.0.1 RELEASED and verified — latest on npm + GitHub.** The 0.8→1.0 arc shipped as v1.0.0 (`7063255`); **v1.0.1** is a patch fixing `audit --since` on Windows (git 8.3 short-name path mismatch caught by CI on the 1.0.0 commit). Tagged, `v1` moved to 1.0.1, GitHub Releases live for both, npm `latest` = 1.0.1, clean-room `npx` verified. **CI green on ubuntu/windows × node 20/22.** `.vsix` attached to both Releases.
