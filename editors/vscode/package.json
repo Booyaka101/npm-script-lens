@@ -2,7 +2,7 @@
   "name": "npm-script-lens",
   "displayName": "npm-script-lens",
   "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "publisher": "booyaka101",
   "license": "MIT",
   "engines": {

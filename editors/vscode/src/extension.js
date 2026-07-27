@@ -5,8 +5,17 @@
 // lives in the CLI; the pure mapping lives in core.js (unit-tested).
 const vscode = require('vscode');
 const cp = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 const core = require('./core');
+
+// The two files a decision can live in: package.json (npm allowScripts, yarn
+// dependenciesMeta, bun trustedDependencies) and pnpm-workspace.yaml
+// (allowBuilds). Editing either one changes what should be flagged, so both are
+// watched and both can carry diagnostics.
+const PKG = 'package.json';
+const PNPM_WORKSPACE = 'pnpm-workspace.yaml';
+const TRACKED = new Set([PKG, PNPM_WORKSPACE]);
 
 const SEVERITY = {
   error: vscode.DiagnosticSeverity.Error,
@@ -41,43 +50,85 @@ function runCli(args, cwd) {
   });
 }
 
-// Audit the workspace and return the results array (or null on failure).
+// Audit the workspace and return { results, recommended } (or null on failure).
 async function audit(cwd) {
   const { trust } = config();
   const args = ['audit', '--json'];
   if (!trust) args.push('--no-trust');
   const { stdout, stderr, code } = await runCli(args, cwd);
-  const results = core.parseAuditJson(stdout);
-  if (!results) {
+  const parsed = core.parseAudit(stdout);
+  if (!parsed) {
     channel.appendLine(`audit failed (exit ${code}): ${stderr.trim() || stdout.trim() || 'no output'}`);
     return null;
   }
-  return results;
+  return parsed;
 }
 
-// Refresh diagnostics for a package.json document.
+const readIfPresent = (cwd, file) => {
+  try { return fs.readFileSync(path.join(cwd, file), 'utf8'); } catch { return ''; }
+};
+
+// Re-audit the workspace that `doc` belongs to and repaint EVERY open allowlist
+// file in it — not just the one that was touched. The two files are one
+// decision surface: denying a package in pnpm-workspace.yaml clears its warning
+// over in package.json, so refreshing only the saved document would leave the
+// other one asserting something that is no longer true. One audit, all views.
 async function refresh(doc) {
-  if (!doc || path.basename(doc.uri.fsPath) !== 'package.json') return;
+  if (!doc || !TRACKED.has(path.basename(doc.uri.fsPath))) return;
   const cwd = workspaceDir(doc);
   if (!cwd) return;
-  const results = await audit(cwd);
-  if (!results) return;
-  const text = doc.getText();
-  const items = core.diagnosticsForPackageJson(text, results).map((d) => {
-    const range = doc.lineAt(d.line).range;
-    const diag = new vscode.Diagnostic(range, d.message, SEVERITY[d.severity] || vscode.DiagnosticSeverity.Information);
-    diag.source = 'npm-script-lens';
-    return diag;
-  });
-  diagnostics.set(doc.uri, items);
-  const sum = core.summarize(results);
+  const parsed = await audit(cwd);
+  if (!parsed) return;
+  const { results, recommended } = parsed;
+
+  const open = new Map([[doc.uri.toString(), doc]]);
+  for (const d of vscode.workspace.textDocuments) {
+    if (TRACKED.has(path.basename(d.uri.fsPath)) && workspaceDir(d) === cwd) open.set(d.uri.toString(), d);
+  }
+
+  // Prefer the live buffer over disk, so an unsaved allowlist edit is reflected
+  // as soon as anything triggers a refresh.
+  const textOf = (file) => {
+    for (const d of open.values()) if (path.basename(d.uri.fsPath) === file) return d.getText();
+    return readIfPresent(cwd, file);
+  };
+  const opts = {
+    recommended,
+    decisions: core.readDecisions(textOf(PKG) || '{}', textOf(PNPM_WORKSPACE)),
+  };
+
+  for (const d of open.values()) {
+    const text = d.getText();
+    const found = path.basename(d.uri.fsPath) === PKG
+      ? core.diagnosticsForPackageJson(text, results, opts)
+      : core.diagnosticsForWorkspaceYaml(text, results, opts);
+    diagnostics.set(d.uri, found.map((f) => {
+      const diag = new vscode.Diagnostic(d.lineAt(f.line).range, f.message,
+        SEVERITY[f.severity] || vscode.DiagnosticSeverity.Information);
+      diag.source = 'npm-script-lens';
+      return diag;
+    }));
+  }
+
+  const sum = core.summarize(results, opts);
   status.text = `$(shield) ${sum.text}`;
-  status.tooltip = 'npm-script-lens — click to audit install scripts';
+  status.tooltip = sum.undecided
+    ? `npm-script-lens — ${sum.undecided} install script(s) awaiting a decision; click to re-audit`
+    : 'npm-script-lens — click to audit install scripts';
   status.show();
 }
 
+// Re-audit after a command that writes an allowlist: the CLI edits the file on
+// disk, so onDidSaveTextDocument never fires and the diagnostics would still be
+// demanding a decision that was just made. One tracked document is enough —
+// refresh() repaints all of them.
+const refreshOpen = () => {
+  const doc = vscode.workspace.textDocuments.find((d) => TRACKED.has(path.basename(d.uri.fsPath)));
+  return doc ? refresh(doc).catch(() => {}) : Promise.resolve();
+};
+
 // A command that streams CLI output to the output channel.
-function cliCommand(title, argsFn) {
+function cliCommand(title, argsFn, { writes = false } = {}) {
   return async () => {
     const cwd = workspaceDir(vscode.window.activeTextEditor && vscode.window.activeTextEditor.document);
     if (!cwd) { vscode.window.showWarningMessage('npm-script-lens: open a workspace folder first'); return; }
@@ -86,6 +137,7 @@ function cliCommand(title, argsFn) {
     const { stdout, stderr } = await runCli(argsFn(), cwd);
     if (stdout) channel.appendLine(stdout.trimEnd());
     if (stderr) channel.appendLine(stderr.trimEnd());
+    if (writes) await refreshOpen();
     vscode.window.showInformationMessage(`npm-script-lens: ${title} finished`);
   };
 }
@@ -103,13 +155,13 @@ function activate(context) {
     vscode.workspace.onDidSaveTextDocument(rerun),
     vscode.commands.registerCommand('npmScriptLens.audit', () => {
       const doc = vscode.window.activeTextEditor && vscode.window.activeTextEditor.document;
-      if (doc && path.basename(doc.uri.fsPath) === 'package.json') rerun(doc);
+      if (doc && TRACKED.has(path.basename(doc.uri.fsPath))) rerun(doc);
       else cliCommand('audit', () => ['audit'])();
     }),
-    vscode.commands.registerCommand('npmScriptLens.allowWrite', cliCommand('generate allowlist', () => ['allow', '--write'])),
+    vscode.commands.registerCommand('npmScriptLens.allowWrite', cliCommand('generate allowlist', () => ['allow', '--write'], { writes: true })),
     vscode.commands.registerCommand('npmScriptLens.review', cliCommand('review', () => ['review'])),
     vscode.commands.registerCommand('npmScriptLens.doctor', cliCommand('doctor', () => ['doctor'])),
-    vscode.commands.registerCommand('npmScriptLens.sync', cliCommand('sync allowlist', () => ['sync', '--write'])),
+    vscode.commands.registerCommand('npmScriptLens.sync', cliCommand('sync allowlist', () => ['sync', '--write'], { writes: true })),
     vscode.commands.registerCommand('npmScriptLens.sources', cliCommand('sources', () => ['sources'])),
   );
 
