@@ -39,3 +39,9 @@ jobs:
       - name: MCP spec readiness (2026-07-28)
         continue-on-error: true
         run: npx --yes @booyaka/mcp-vet@latest .
+
+      # Drift gate: fails if a dependency gains an install script that nobody has
+      # approved. The allowlist is only worth having if it is enforced.
+      - name: Allowlist drift
+        continue-on-error: true
+        run: npx --yes npm-script-lens@latest sync --path . --check
