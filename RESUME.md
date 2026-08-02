@@ -57,7 +57,7 @@ _Updated 2026-08-02 after building v1.5.0._
 
 ## Still needs the owner (credential / manual gated — cannot be automated here)
 1. **VS Code Marketplace publish** — needs a Marketplace PAT (Azure DevOps) for publisher `booyaka101`. Then: `cd editors/vscode && npx vsce publish` (or upload the `.vsix` at https://marketplace.visualstudio.com/manage). No `VSCE_PAT` was in the environment.
-2. **GitHub Action Marketplace** — web-UI only: edit the `v1.0.0` Release → check "Publish this Action to the GitHub Marketplace" → categories Security + Dependency management. (Description already fits the 125-char limit from the v0.3.1 fix.)
+2. ~~**GitHub Action Marketplace**~~ — **DONE** (verified 2026-08-02): the listing is live at https://github.com/marketplace/actions/npm-script-lens and already shows **v1.5.0**. The release-edit checkbox `release[repository_action_release_attributes][published_on_marketplace]` reads checked. Nothing to click.
 3. **JetBrains plugin** — build-verified only; needs JVM/Gradle to run, not testable in this environment.
 4. **Real in-editor screenshots** — run VS Code (install the `.vsix`) / Neovim once and capture, for the README Preview + Marketplace listing.
 5. **Promo** (owner-approved posts only): v1.0.0 is a strong hook for community/discussions/198547, npm/rfcs#897, and the npm/cli #9562/#9463 gap threads.
