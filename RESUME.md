@@ -10,7 +10,11 @@ _Updated 2026-08-02 after building v1.5.0._
 
 **Done this session** (owner-directed): commit `6bab984` · push · CI green (4/4 matrix legs + Guards) · tag `v1.5.0` · `v1` moved to it · GitHub Release · `npm publish` as **booyaka** (gh **Booyaka101**). Nothing release-related is outstanding.
 
-**Promo hook (owner-approved posts only, NOT posted):** community discussion 201329 ("Upcoming changes to npm 2FA-bypass granular access tokens") has unanswered migration-gap comments and recommends no detection tool — `publish --check` is the purpose-built answer, same as `sources` was for 198547.
+**Promo — POSTED 2026-08-02** (owner-directed): community discussion 201329 ("Upcoming changes to npm 2FA-bypass granular access tokens") → https://github.com/community/community/discussions/201329#discussioncomment-17867170 — answers that thread's unanswered self-hosted / other-provider migration gaps with the staged-publishing route, plus the version floors and the pre-filled npmjs.com form.
+
+**GitHub Action Marketplace: DONE** — verified live 2026-08-02 at https://github.com/marketplace/actions/npm-script-lens, already showing **v1.5.0** (the release-edit checkbox `release[repository_action_release_attributes][published_on_marketplace]` reads checked). The old "needs a click-through" note was stale.
+
+**Still owner-gated (credential-blocked, not effort-blocked):** VS Code Marketplace publish — no `VSCE_PAT` in this environment, and minting one means signing into Azure DevOps and creating a credential on the account; JetBrains plugin — needs a JetBrains Marketplace token; in-editor screenshots — feasible here (`code` CLI + the 1.4.0 `.vsix` are both present), just not yet captured.
 
 ## v1.3.0 — released as part of the 1.3.0/1.4.0 arc
 201/201 tests (`node --test`, ~5 s). Working tree has the whole 1.3.0 change; nothing pushed.
