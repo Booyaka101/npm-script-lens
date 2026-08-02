@@ -2,13 +2,13 @@
 
 _Updated 2026-08-02 after building v1.5.0._
 
-## v1.5.0 — BUILT, GREEN, NOT YET RELEASED ⬅️ start here
+## v1.5.0 — RELEASED (2026-08-02), latest on npm + GitHub ⬅️ start here
 
-245/245 tests (`node --test`, ~6 s). Working tree holds the whole 1.5.0 change; nothing pushed.
+245/245 tests (`node --test`, ~6 s). Shipped end to end: pushed `6bab984` → **CI green on ubuntu/windows × node 20/22 + Guards BEFORE publishing** (the 1.0.0 lesson) → tagged `v1.5.0`, moved `v1` → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.5.0) → `npm publish`. npm `latest` = **1.5.0**; clean-room registry install re-verified (17 pkgs, `publish --check` reproduces the worked example on a fresh project and exits 1).
 
 **What it adds — the `publish` command**: will this repo's release workflow still work after npm's January-2027 change (bypass-2FA tokens lose direct publish — github.blog 2026-07-31: "We are targeting January 2027 for this update"), and is the recommended fix actually available here? Classifies every CI publish path (GH Actions / GitLab / CircleCI, tolerant reader, no YAML dep, no network) as TRUSTED / STAGED / TOKEN / UNKNOWN; `--check` exits 1 only on TOKEN; checks the doc-quoted version floors (trusted: npm 11.5.1 + Node 22.14.0; staged: npm 11.15.0 + Node 22.14.0) against setup-node pins and engines; marks trusted publishing UNAVAILABLE on self-hosted runners and routes to `npm stage publish` + `npm stage approve`; emits the YAML patch and the pre-filled npmjs.com trusted-publisher checklist. Plus `--json`, `--sarif` (rule `publish-token-cliff`), a doctor publish-readiness section, and the Action's opt-in `publish-check` input. Full detail in PROGRESS.md → v1.5.0.
 
-**Owner steps:** commit → push → **wait for CI green on ubuntu/windows × node 20/22** (the 1.0.0 lesson) → tag `v1.5.0`, move `v1` → GitHub Release → `npm publish` (npm login as **booyaka**; gh is **Booyaka101**).
+**Done this session** (owner-directed): commit `6bab984` · push · CI green (4/4 matrix legs + Guards) · tag `v1.5.0` · `v1` moved to it · GitHub Release · `npm publish` as **booyaka** (gh **Booyaka101**). Nothing release-related is outstanding.
 
 **Promo hook (owner-approved posts only, NOT posted):** community discussion 201329 ("Upcoming changes to npm 2FA-bypass granular access tokens") has unanswered migration-gap comments and recommends no detection tool — `publish --check` is the purpose-built answer, same as `sources` was for 198547.
 
