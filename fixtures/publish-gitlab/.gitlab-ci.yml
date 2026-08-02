@@ -1,0 +1,12 @@
+stages:
+  - release
+
+publish:
+  stage: release
+  image: node:24
+  id_tokens:
+    NPM_ID_TOKEN:
+      aud: npm:registry.npmjs.org
+  script:
+    - npm ci
+    - npm publish

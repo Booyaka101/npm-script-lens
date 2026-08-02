@@ -13,7 +13,7 @@ const { managerFor } = require('./pm-contract');
 const { analyzeSources, checkSourceConfig, readSourceConfig, versionGte } = require('./sources');
 const {
   MIN_ALLOWSCRIPTS_NPM, ALLOWSCRIPTS_FIELD, DRY_RUN_ARGS, UNREVIEWED_KEY,
-  SAMPLE_DRY_RUN, SOURCES, DETECTORS, enforcesAllowScripts,
+  SAMPLE_DRY_RUN, SOURCES, DETECTORS, PUBLISH, enforcesAllowScripts,
 } = require('./npm-contract');
 
 const dirOf = (target) => {
@@ -126,6 +126,33 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     else add(`${key} support`, 'info', `npm v${fullVersion} predates ${key} (introduced in npm ${introduced}) — the setting takes effect after upgrading`);
   }
 
+  // Publish readiness — npm's January-2027 change: bypass-2FA tokens lose
+  // direct publish, keeping only private-package reads and staged publishes.
+  // Static CI-config analysis (src/publish.js), so it can only warn, never
+  // fail: a TOKEN path is a coming break, not tool drift.
+  let publish = null;
+  try {
+    const { analyzePublish } = require('./publish');
+    const pub = analyzePublish(target);
+    const c = pub.counts;
+    publish = { counts: c, paths: pub.paths.length };
+    const mix = `${c.TRUSTED} trusted, ${c.STAGED} staged, ${c.TOKEN} token, ${c.UNKNOWN} unknown`;
+    if (pub.paths.length === 0) {
+      add('publish readiness', 'info', 'no publish steps found in CI configs (.github/workflows, .gitlab-ci.yml, .circleci/config.yml) — nothing is exposed to the January 2027 token cliff');
+    } else if (c.TOKEN > 0) {
+      add('publish readiness', 'warn', `${c.TOKEN} of ${pub.paths.length} publish path(s) still authenticate with a long-lived token (${mix}) — direct token publishing ends around ${PUBLISH.cliff.date}; run \`npm-script-lens publish\` for the migration patch and the npmjs.com checklist`);
+    } else {
+      add('publish readiness', 'ok', `${pub.paths.length} publish path(s): ${mix} — no long-lived token publishing, ready for the ${PUBLISH.cliff.date} change`);
+    }
+    for (const p of pub.paths) {
+      if (p.nodeBelowFloor) {
+        add('publish node floor', 'warn', `${p.file}:${p.nodeVersionLine || p.line} pins node-version ${p.nodeVersion}, below the Node ${PUBLISH.trusted.minNode} floor that both trusted publishing (npm >= ${PUBLISH.trusted.minNpm}) and staged publishing (npm >= ${PUBLISH.staged.minNpm}) require`);
+      }
+    }
+  } catch {
+    add('publish readiness', 'info', 'could not analyze the CI configs at this path');
+  }
+
   // Contract summary + detector currency
   add('assumed contract', 'info',
     `field=${ALLOWSCRIPTS_FIELD} · dry-run=\`npm ${DRY_RUN_ARGS.join(' ')}\` · key=${UNREVIEWED_KEY} · min npm=v${MIN_ALLOWSCRIPTS_NPM}`);
@@ -136,7 +163,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
   }
 
   const failed = checks.some((c) => c.status === 'fail');
-  return { tool: 'npm-script-lens', npmMajor: major, npmVersion: fullVersion, ok: !failed, sources, checks };
+  return { tool: 'npm-script-lens', npmMajor: major, npmVersion: fullVersion, ok: !failed, sources, publish, checks };
 }
 
 const ICON = { ok: '✅', warn: '⚠️ ', info: 'ℹ️ ', fail: '❌' };

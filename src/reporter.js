@@ -138,6 +138,14 @@ function buildGapsReport(findings, { npmMajor = null, npmVersion = null } = {}) 
   return lines.join('\n');
 }
 
+// A publish path that authenticates with a long-lived token (from
+// src/publish.js): direct token publishing ends around January 2027, so this
+// gets its own rule id, anchored to the workflow line that publishes.
+const PUBLISH_RULE = {
+  id: 'publish-token-cliff',
+  text: 'CI publish step authenticates with a long-lived npm token — 2FA-bypass tokens lose direct publish around January 2027; migrate to trusted publishing (OIDC) or staged publishing',
+};
+
 // SARIF 2.1.0 for GitHub code scanning: one result per risky package, level
 // mapped from risk, anchored to the package's line in the lockfile so alerts
 // annotate the right place.
@@ -170,14 +178,14 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
   // the package's lockfile line for optional-dep gaps
   const gapResults = findings.map((f) => ({
     ruleId: f.id,
-    level: 'warning',
+    level: f.level || 'warning',
     message: { text: `${f.package}${f.version ? `@${f.version}` : ''} — ${f.fix}` },
     locations: [{
       physicalLocation: f.file
         ? { artifactLocation: { uri: f.file }, region: { startLine: f.line || 1 } }
         : { artifactLocation: { uri }, region: { startLine: lineOf(f.package) } },
     }],
-    partialFingerprints: { gap: `${f.id}:${f.package}` },
+    partialFingerprints: { gap: f.fingerprint || `${f.id}:${f.package}` },
   }));
   const sarifResults = [];
   const gypSarifResults = [];
@@ -221,7 +229,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
           name: 'npm-script-lens',
           informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
-          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES)].map((rule) => ({
+          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE].map((rule) => ({
             id: rule.id,
             shortDescription: { text: rule.text },
           })),

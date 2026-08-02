@@ -104,6 +104,52 @@ const DETECTORS = {
   },
 };
 
+// The publish-side contract: npm's bypass-2FA granular access tokens lose
+// DIRECT PUBLISH around January 2027. Verified verbatim against the GitHub
+// changelog of 2026-07-31 ("restricting npm bypass-2FA granular access
+// tokens"): "2FA-bypass tokens will also lose direct publish. Their publishing
+// surface will reduce to reading private packages and staging a publish, which
+// a maintainer approves with 2FA. We are targeting January 2027 for this
+// update." The two sanctioned replacements each carry version floors, quoted
+// verbatim from docs.npmjs.com — every message naming a date, floor, command
+// or provider reads it from here.
+const PUBLISH = {
+  cliff: {
+    date: 'January 2027',
+    quote: '2FA-bypass tokens will also lose direct publish. Their publishing surface '
+      + 'will reduce to reading private packages and staging a publish, which a '
+      + 'maintainer approves with 2FA. We are targeting January 2027 for this update.',
+    changelog: 'https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/',
+  },
+  trusted: {
+    // "Trusted publishing requires npm CLI version 11.5.1 or later and Node
+    // version 22.14.0 or higher."
+    minNpm: '11.5.1',
+    minNode: '22.14.0',
+    docs: 'https://docs.npmjs.com/trusted-publishers',
+    // The docs support ONLY these three; verbatim: "Self-hosted runners are
+    // not currently supported but are planned for future releases."
+    providers: ['GitHub Actions (GitHub-hosted runners)', 'GitLab.com (shared runners)', 'CircleCI (cloud)'],
+    selfHostedQuote: 'Self-hosted runners are not currently supported but are planned for future releases.',
+    gitlabAudience: 'npm:registry.npmjs.org',
+    circleciTokenVar: 'NPM_ID_TOKEN',
+  },
+  staged: {
+    // "Staged publishing requires npm CLI version 11.15.0 or later and Node
+    // version 22.14.0 or higher."
+    minNpm: '11.15.0',
+    minNode: '22.14.0',
+    docs: 'https://docs.npmjs.com/staged-publishing',
+    commands: {
+      publish: 'npm stage publish',
+      list: 'npm stage list',
+      view: 'npm stage view <stage-id>',
+      download: 'npm stage download <stage-id>',
+      approve: 'npm stage approve <stage-id>',
+    },
+  },
+};
+
 // The npm versions from which `--strict-allow-scripts` skips INERT optional
 // dependencies (a dep whose os/cpu excludes the current platform, which reify
 // removes before install scripts run). Two lines because the fix reached the
@@ -137,6 +183,7 @@ module.exports = {
   NPM_CMD,
   SAMPLE_DRY_RUN,
   SOURCES,
+  PUBLISH,
   DETECTORS,
   INERT_SKIP_FROM,
   skipsInertOptional,

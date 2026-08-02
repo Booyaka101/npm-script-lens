@@ -1,5 +1,74 @@
 # Changelog
 
+## 1.5.0 (2026-08-02)
+
+**The publish-token cliff.** npm-script-lens already prevents the
+*install*-side npm v12 break in your workflows; this release covers the
+*publish*-side break in the same files. The GitHub changelog of 2026-07-31
+([restricting npm bypass-2FA granular access
+tokens](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/))
+states verbatim: *"2FA-bypass tokens will also lose direct publish. Their
+publishing surface will reduce to reading private packages and staging a
+publish, which a maintainer approves with 2FA. We are targeting January 2027
+for this update."* Phase 1 already landed on 2026-07-31 — publishing is the
+last thing a bypass-2FA token can still do, and it expires in January.
+
+- **New `publish` command** (`--check` / `--json` / `--sarif`): pure,
+  network-free analysis of `.github/workflows/*.yml`, `.gitlab-ci.yml` and
+  `.circleci/config.yml` (same tolerant-reader philosophy as the gyp lens — no
+  YAML dependency). Finds every publish step — `npm publish`,
+  `npm stage publish`, `pnpm publish`, `yarn npm publish`, `np`,
+  `semantic-release`, `changesets/action`, `JS-DevTools/npm-publish` — with
+  file and line, and classifies each as exactly one of **TRUSTED** (an
+  id-token grant — `permissions: id-token: write` or `write-all`; GitLab
+  `id_tokens` with audience `npm:registry.npmjs.org`; CircleCI
+  `NPM_ID_TOKEN` — and no token), **STAGED** (`npm stage publish`), **TOKEN**
+  (`NODE_AUTH_TOKEN`/`NPM_TOKEN` in the env or an `.npmrc` write containing
+  `_authToken`, with no id-token grant), or **UNKNOWN** (ambiguous — never a
+  failure). Reusable workflows are UNKNOWN; `publish --check` exits 1 **only
+  on TOKEN**, and a repo with no publish step passes with a one-line reason.
+- **Three checks no migration blog performs**, all doc-backed:
+  1. **Version floors.** docs.npmjs.com: *"Trusted publishing requires npm
+     CLI version 11.5.1 or later and Node version 22.14.0 or higher"*;
+     *"Staged publishing requires npm CLI version 11.15.0 or later and Node
+     version 22.14.0 or higher."* The command reads `actions/setup-node`
+     `node-version` and `package.json` `engines.node`, and a pin below the
+     floor says exactly which fix it blocks.
+  2. **Runner eligibility.** Trusted publishing supports only GitHub-hosted
+     runners, GitLab.com shared runners and CircleCI cloud (*"Self-hosted
+     runners are not currently supported but are planned for future
+     releases."*). A `runs-on: self-hosted` (or any non-GitHub-hosted label)
+     publish job gets trusted publishing marked **UNAVAILABLE** and is routed
+     to the only survivable path: `npm stage publish` +
+     `npm stage approve <stage-id>`.
+  3. **Pre-filled npmjs.com checklist.** The trusted-publisher settings form,
+     filled from the repo: org/user, repository, the workflow filename *with
+     its extension*, the environment name when the job declares one, and the
+     allowed actions (npm publish and/or npm stage publish).
+- TOKEN paths get the concrete YAML patch (add `permissions:` /
+  `id-token: write`, drop the token env) anchored to the real lines.
+- **`--sarif`**: new rule `publish-token-cliff` (level error), anchored to the
+  publishing workflow line. **`doctor`** gains a publish-readiness section
+  (path mix + floor warnings). **GitHub Action** gains the opt-in
+  `publish-check` input (default `'false'`, shaped exactly like
+  `sources-check`): `::error` annotation, job-summary line, findings merged
+  into the main SARIF file.
+- The January-2027 date, both version floors, the provider list, the GitLab
+  audience, the CircleCI variable and the full `npm stage` command set are
+  registered in `src/npm-contract.js`, so every npm coupling stays in one
+  file. New fixtures `publish-token` / `publish-trusted` / `publish-staged` /
+  `publish-selfhosted` / `publish-oldnode` / `publish-gitlab` /
+  `publish-circleci`; 245 tests, none of the new ones touch the network.
+
+## 1.4.0 (2026-07-27)
+
+- **VS Code extension 1.4.0** (`editors/vscode`, shipped separately to the
+  Marketplace): a diagnostic is now risk × your allowlist decision — packages
+  you have already approved/denied render differently from genuinely pending
+  ones. CI runs the extension's tests; the publisher preflight and allowlist
+  drift gate landed in the same arc. CLI behavior unchanged (no CHANGELOG
+  entry shipped at the time; recorded here retroactively).
+
 ## 1.3.0 (2026-07-27)
 
 **The gyp lens.** Until now this tool — like every other install-script

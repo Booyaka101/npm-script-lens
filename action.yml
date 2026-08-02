@@ -66,6 +66,14 @@ inputs:
       insufficient, over-permissive, or invalid — npm v12 refuses to resolve
       uncovered git/remote deps by default. 'true' to enable (opt-in).
     default: 'false'
+  publish-check:
+    description: >-
+      Fail the job (exit 1) when a CI publish step still authenticates with a
+      long-lived npm token (NODE_AUTH_TOKEN/NPM_TOKEN or an .npmrc _authToken
+      write, with no id-token grant) — bypass-2FA tokens lose direct publish
+      around January 2027; trusted (OIDC) and staged publishing survive.
+      'true' to enable (opt-in).
+    default: 'false'
   sync-check:
     description: >-
       Fail the job (exit 1) when the install-script allowlist has drifted from
@@ -127,6 +135,14 @@ runs:
       env:
         INPUT_PATH: ${{ inputs.path }}
       run: node "$GITHUB_ACTION_PATH/src/action.js" sources-check
+    - name: Check the release workflow survives the npm token cliff
+      # opt-in gate: publish paths that still rely on a long-lived token
+      if: ${{ always() && inputs.publish-check == 'true' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: node "$GITHUB_ACTION_PATH/src/action.js" publish-check
     - name: Check the install-script allowlist is in sync
       # opt-in cross-ecosystem drift gate (npm/pnpm/yarn/bun, auto-detected)
       if: ${{ always() && inputs.sync-check == 'true' }}

@@ -1,0 +1,693 @@
+'use strict';
+// Will this repo's release workflow still publish after npm's January-2027
+// change? The GitHub changelog of 2026-07-31 ("restricting npm bypass-2FA
+// granular access tokens") pins it: bypass-2FA tokens lose DIRECT PUBLISH,
+// keeping only private-package reads and staging a publish that a maintainer
+// approves with 2FA. npm's advice is trusted publishing (OIDC) or staged
+// publishing — but neither blog tells you whether the recommended fix is
+// actually AVAILABLE in your repo: trusted publishing has npm/Node version
+// floors and supports only hosted runners, and it needs npmjs.com-side config
+// nobody pre-fills for you. This module answers all three, purely from the
+// repo on disk — no network, no YAML dependency (the same tolerant-reader
+// philosophy as src/gyp.js: enough structure to answer our questions, never a
+// throw; anything unparseable can only make a path UNKNOWN, never a crash).
+//
+// Every date, floor, provider list and command name comes from PUBLISH in
+// npm-contract.js — verified verbatim against docs.npmjs.com/trusted-publishers,
+// docs.npmjs.com/staged-publishing and the 2026-07-31 changelog.
+const fs = require('node:fs');
+const path = require('node:path');
+const { PUBLISH } = require('./npm-contract');
+const { workflowFiles } = require('./v12gaps');
+const { versionGte } = require('./sources');
+
+// --- tolerant YAML-subset reader ------------------------------------------
+// Indentation-based mappings, `- ` list items, `|`/`>` block scalars (kept
+// line-by-line so findings anchor to real line numbers), quoted keys/values,
+// comments. Not a YAML parser — a structural reader for the small dialect CI
+// configs actually use. Skips what it cannot read.
+
+function stripComment(line) {
+  let inS = false, inD = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === "'" && !inD) inS = !inS;
+    else if (c === '"' && !inS) inD = !inD;
+    else if (c === '#' && !inS && !inD && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
+  }
+  return line;
+}
+
+const unquote = (s) => {
+  const t = String(s).trim();
+  if (t.length >= 2 && ((t[0] === '"' && t.endsWith('"')) || (t[0] === "'" && t.endsWith("'")))) return t.slice(1, -1);
+  return t;
+};
+
+// node: { key, value, line, indent, children, item?, blockLines? }
+function parseYamlish(text) {
+  const root = { key: null, value: null, line: 0, indent: -1, children: [] };
+  const stack = [root];
+  let block = null; // active `|`/`>` scalar: { node, indent }
+  text.split(/\r?\n/).forEach((raw, idx) => {
+    const lineNo = idx + 1;
+    if (block) {
+      if (raw.trim() === '') { block.node.blockLines.push({ line: lineNo, text: '' }); return; }
+      const ind = raw.match(/^ */)[0].length;
+      if (ind > block.indent) { block.node.blockLines.push({ line: lineNo, text: raw.trim() }); return; }
+      block = null; // dedented — fall through to normal handling
+    }
+    const noComment = stripComment(raw);
+    if (noComment.trim() === '' || /^\s*---\s*$/.test(noComment)) return;
+    if (/^\t/.test(noComment)) return; // tabs are invalid YAML indentation — skip, stay tolerant
+    let indent = noComment.match(/^ */)[0].length;
+    let rest = noComment.slice(indent).trimEnd();
+    while (stack[stack.length - 1].indent >= indent) stack.pop();
+    // `- ` list items (possibly nested `- - x`); the item's children indent
+    // from the column after the dash
+    while (rest === '-' || rest.startsWith('- ')) {
+      const item = { key: null, value: null, line: lineNo, indent, children: [], item: true };
+      stack[stack.length - 1].children.push(item);
+      stack.push(item);
+      indent += 2;
+      rest = rest === '-' ? '' : rest.slice(2).trim();
+    }
+    if (rest === '') return;
+    const m = rest.match(/^("[^"]*"|'[^']*'|[^\s:][^:]*?)\s*:(?:\s+(.*))?$/);
+    if (!m) {
+      // a bare scalar: the value of the list item we just opened (e.g.
+      // `- npm publish` in a gitlab script array)
+      const top = stack[stack.length - 1];
+      if (top.item && top.value === null && top.children.length === 0) { top.value = rest; top.line = lineNo; }
+      return;
+    }
+    const node = { key: unquote(m[1]), value: m[2] === undefined || m[2] === '' ? null : m[2].trim(), line: lineNo, indent, children: [] };
+    if (node.value !== null && /^[|>][+-]?\d*$/.test(node.value)) {
+      node.value = null;
+      node.blockLines = [];
+      block = { node, indent: node.indent };
+    }
+    stack[stack.length - 1].children.push(node);
+    stack.push(node);
+  });
+  return root;
+}
+
+const child = (node, key) => (node ? node.children.find((c) => c.key === key) : undefined);
+
+// Every scalar line under a node that could hold shell commands: the node's
+// own value, its block-scalar lines, and bare list items (gitlab script:).
+function commandLines(node) {
+  if (!node) return [];
+  const out = [];
+  if (node.value !== null && node.value !== undefined) out.push({ line: node.line, text: node.value });
+  for (const b of node.blockLines || []) if (b.text) out.push({ line: b.line, text: b.text });
+  for (const c of node.children) {
+    if (c.item && c.value) out.push({ line: c.line, text: c.value });
+  }
+  return out;
+}
+
+// --- publish-step detection ------------------------------------------------
+// Order matters: `yarn npm publish` contains `npm publish`, and
+// `npm stage publish` must not read as a plain `npm publish`.
+const RUN_PUBLISHERS = [
+  { tool: 'npm stage publish', re: /\bnpm\s+stage\s+publish\b/, staged: true },
+  { tool: 'yarn npm publish', re: /\byarn\s+npm\s+publish\b/ },
+  { tool: 'pnpm publish', re: /\bpnpm\s+publish\b/ },
+  { tool: 'npm publish', re: /\bnpm\s+publish\b/ },
+  { tool: 'semantic-release', re: /\bsemantic-release\b/ },
+];
+
+// `np` is too short for a bare word-boundary regex (it appears inside npm,
+// pnpm, snap…) — it counts only as the command word of a shell segment,
+// optionally behind npx/yarn dlx/pnpm dlx.
+function isNpRelease(text) {
+  return text.split(/&&|\|\||;|\|/).some((seg) => {
+    const words = seg.trim().split(/\s+/);
+    let i = 0;
+    while (words[i] === 'npx' || (words[i] === 'yarn' && words[i + 1] === 'dlx') || (words[i] === 'pnpm' && words[i + 1] === 'dlx')) {
+      i += words[i] === 'npx' ? 1 : 2;
+    }
+    return words[i] === 'np' || (words[i] || '').match(/^np@[\w.^~-]+$/);
+  });
+}
+
+function detectRunPublisher(text) {
+  for (const p of RUN_PUBLISHERS) if (p.re.test(text)) return { tool: p.tool, staged: Boolean(p.staged) };
+  if (isNpRelease(text)) return { tool: 'np', staged: false };
+  return null;
+}
+
+// Marketplace actions that publish to npm for you.
+const USES_PUBLISHERS = ['JS-DevTools/npm-publish', 'changesets/action'];
+function detectUsesPublisher(uses) {
+  if (typeof uses !== 'string') return null;
+  const bare = unquote(uses).split('@')[0];
+  return USES_PUBLISHERS.find((u) => bare.toLowerCase() === u.toLowerCase()) || null;
+}
+
+const TOKEN_ENV_KEYS = ['NODE_AUTH_TOKEN', 'NPM_TOKEN'];
+
+// {key, value, line} for the first long-lived-token env entry under a node.
+function tokenEnvEntry(envNode) {
+  for (const c of (envNode && envNode.children) || []) {
+    if (TOKEN_ENV_KEYS.includes(c.key)) return { key: c.key, value: c.value, line: c.line };
+  }
+  return null;
+}
+
+// `permissions: write-all` or an explicit `id-token: write` — workflow or job.
+function idTokenGrant(permNode) {
+  if (!permNode) return null;
+  if (permNode.value !== null && unquote(permNode.value) === 'write-all') return { line: permNode.line, via: 'write-all' };
+  const it = child(permNode, 'id-token');
+  if (it && it.value !== null && unquote(it.value) === 'write') return { line: it.line, via: 'id-token: write' };
+  return null;
+}
+
+// --- runner eligibility ----------------------------------------------------
+// The trusted-publishing docs support only GitHub-hosted runners (plus
+// GitLab.com shared runners and CircleCI cloud): "Self-hosted runners are not
+// currently supported but are planned for future releases."
+const HOSTED_RE = /^(ubuntu|windows|macos)-/i;
+
+function classifyRunsOn(runsOnNode) {
+  if (!runsOnNode) return { label: null, kind: 'unknown' };
+  const labels = [];
+  if (runsOnNode.value !== null) {
+    const v = unquote(runsOnNode.value);
+    if (v.startsWith('[')) labels.push(...v.replace(/^\[|\]$/g, '').split(',').map((s) => unquote(s)));
+    else labels.push(v);
+  }
+  for (const c of runsOnNode.children) {
+    if (c.item && c.value) labels.push(unquote(c.value));
+    else if (c.key === 'group' && c.value) return { label: `group: ${unquote(c.value)}`, kind: 'self-hosted' };
+    else if (c.key === 'labels') labels.push(...commandLines(c).map((l) => unquote(l.text)));
+  }
+  const label = labels.join(', ') || null;
+  if (labels.some((l) => /self-hosted/i.test(l))) return { label, kind: 'self-hosted' };
+  if (labels.some((l) => l.includes('${{'))) return { label, kind: 'dynamic' };
+  if (labels.length > 0 && labels.every((l) => HOSTED_RE.test(l))) return { label, kind: 'github-hosted' };
+  if (labels.length > 0) return { label, kind: 'self-hosted' }; // a non-GitHub-hosted label
+  return { label, kind: 'unknown' };
+}
+
+// --- version floors --------------------------------------------------------
+// Is a setup-node `node-version` pin below `floor` ("22.14.0")? Only a
+// leading numeric pin can answer: '20' / '20.x' / '20.11.1' do, 'lts/*' and
+// '${{ matrix.node }}' return null (unknown). A bare major ('22') or '22.x'
+// floats to the newest 22.x, which satisfies a 22.x floor.
+function nodePinBelowFloor(spec, floor) {
+  if (typeof spec !== 'string') return null;
+  const m = unquote(spec).replace(/^v/, '').match(/^(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?$/);
+  if (!m) return null;
+  const [fMaj, fMin, fPatch] = floor.split('.').map(Number);
+  const major = Number(m[1]);
+  if (major !== fMaj) return major < fMaj;
+  if (m[2] === undefined || m[2] === 'x' || m[2] === '*') return false;
+  if (Number(m[2]) !== fMin) return Number(m[2]) < fMin;
+  if (m[3] === undefined || m[3] === 'x' || m[3] === '*') return false;
+  return Number(m[3]) < fPatch;
+}
+
+// The lower bound a package.json engines.node range admits ("">=18"" → 18.0.0)
+// — null when there is none or it cannot be read.
+function enginesMinimum(enginesNode) {
+  if (typeof enginesNode !== 'string') return null;
+  const m = enginesNode.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!m) return null;
+  return `${m[1]}.${m[2] || 0}.${m[3] || 0}`;
+}
+
+// --- classification --------------------------------------------------------
+// Exactly one of TRUSTED / STAGED / TOKEN / UNKNOWN per publish path:
+//   STAGED   — the command is `npm stage publish`
+//   TRUSTED  — an id-token grant (GH permissions / GitLab id_tokens with the
+//              npm audience / CircleCI NPM_ID_TOKEN) and NO auth token
+//   TOKEN    — NODE_AUTH_TOKEN / NPM_TOKEN in the effective env (or an
+//              .npmrc write containing _authToken), and NO id-token grant
+//   UNKNOWN  — a publish exists but neither (or both) — never a failure
+function classifyAuth({ staged = false, reusable = false, token = null, idToken = null } = {}) {
+  if (staged) return 'STAGED';
+  if (reusable) return 'UNKNOWN';
+  if (token && !idToken) return 'TOKEN';
+  if (idToken && !token) return 'TRUSTED';
+  return 'UNKNOWN';
+}
+
+// --- GitHub Actions --------------------------------------------------------
+
+function scanGithubWorkflow(file, rel, paths) {
+  let root;
+  try { root = parseYamlish(fs.readFileSync(file, 'utf8')); } catch { return; }
+  const workflowGrant = idTokenGrant(child(root, 'permissions'));
+  const workflowEnvToken = tokenEnvEntry(child(root, 'env'));
+  const jobs = child(root, 'jobs');
+  if (!jobs) return;
+  for (const job of jobs.children) {
+    if (!job.key) continue;
+    const steps = child(job, 'steps');
+    const jobUses = child(job, 'uses');
+    // a job-level permissions block REPLACES the workflow-level one (GitHub
+    // semantics) — only inherit the workflow grant when the job declares none
+    const jobPerm = child(job, 'permissions');
+    const jobGrant = jobPerm ? idTokenGrant(jobPerm) : workflowGrant;
+    const jobEnvToken = tokenEnvEntry(child(job, 'env')) || workflowEnvToken;
+    const runner = classifyRunsOn(child(job, 'runs-on'));
+    const envNode = child(job, 'environment');
+    const environment = envNode
+      ? (envNode.value !== null ? unquote(envNode.value) : (child(envNode, 'name') && unquote(child(envNode, 'name').value || '')) || null)
+      : null;
+
+    // reusable workflow: `uses:` with no run steps — we cannot see inside it
+    if (jobUses && !steps) {
+      paths.push({
+        provider: 'github', file: rel, line: jobUses.line, job: job.key,
+        tool: `reusable workflow (${unquote(jobUses.value || '?')})`,
+        classification: 'UNKNOWN', reusable: true,
+        reason: 'the job calls a reusable workflow — its publish step (if any) lives in the called file; run `npm-script-lens publish` in that repo',
+        runner, environment, workflowFile: path.basename(rel),
+      });
+      continue;
+    }
+    if (!steps) continue;
+
+    // setup-node pin and any .npmrc _authToken write anywhere in the job
+    let nodeVersion = null, nodeVersionLine = null, authTokenWrite = null;
+    for (const step of steps.children) {
+      const uses = child(step, 'uses');
+      if (uses && /(^|\/)setup-node(@|$)/.test(unquote(uses.value || ''))) {
+        const nv = child(child(step, 'with'), 'node-version');
+        if (nv && nv.value !== null) { nodeVersion = unquote(nv.value); nodeVersionLine = nv.line; }
+      }
+      for (const l of commandLines(child(step, 'run'))) {
+        if (!authTokenWrite && /_authToken/.test(l.text)) authTokenWrite = { line: l.line, text: l.text };
+      }
+    }
+
+    for (const step of steps.children) {
+      const stepEnvToken = tokenEnvEntry(child(step, 'env'));
+      const uses = child(step, 'uses');
+      const usesPub = uses && detectUsesPublisher(uses.value);
+      const found = [];
+      for (const l of commandLines(child(step, 'run'))) {
+        const hit = detectRunPublisher(l.text);
+        if (hit) found.push({ ...hit, line: l.line });
+      }
+      if (usesPub) {
+        // JS-DevTools/npm-publish takes the npm token as a `token:` input
+        const withToken = usesPub === 'JS-DevTools/npm-publish' && child(child(step, 'with'), 'token');
+        found.push({
+          tool: usesPub, staged: false, line: uses.line,
+          withToken: withToken ? { key: 'token', value: withToken.value, line: withToken.line } : null,
+        });
+      }
+      for (const hit of found) {
+        const token = stepEnvToken || hit.withToken || jobEnvToken || authTokenWrite;
+        const classification = classifyAuth({ staged: hit.staged, token, idToken: jobGrant });
+        paths.push({
+          provider: 'github', file: rel, line: hit.line, job: job.key, tool: hit.tool,
+          classification,
+          reason: describeAuth({ staged: hit.staged, token, idToken: jobGrant, stepEnvToken, authTokenWrite }),
+          runner, environment, workflowFile: path.basename(rel),
+          nodeVersion, nodeVersionLine,
+          token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
+          idToken: jobGrant || null,
+        });
+      }
+    }
+  }
+}
+
+function describeAuth({ staged, token, idToken, stepEnvToken, authTokenWrite }) {
+  if (staged) return 'stages a publish — a maintainer approves with 2FA (`npm stage approve <stage-id>`); unaffected by the January 2027 change';
+  if (token && idToken) return `ambiguous: both an id-token grant (line ${idToken.line}) and ${token.key || '_authToken'} (line ${token.line}) are present — remove the token to make this a trusted-publishing path`;
+  if (token) {
+    const where = stepEnvToken ? 'in the publish step env' : authTokenWrite === token ? 'written into .npmrc' : 'in the job/workflow env';
+    return `long-lived token: ${token.key || '_authToken'} ${where} (line ${token.line})`;
+  }
+  if (idToken) return `trusted publishing (OIDC): ${idToken.via} granted (line ${idToken.line}), no token in the env`;
+  return 'no id-token grant and no token visible in this file — auth may come from a checked-in .npmrc or the environment';
+}
+
+// --- GitLab CI -------------------------------------------------------------
+
+const GITLAB_RESERVED = new Set(['stages', 'variables', 'workflow', 'default', 'include', 'image', 'services', 'before_script', 'after_script', 'cache', 'pages']);
+
+// A job's id_tokens block counts only with the npm audience:
+//   id_tokens: { NPM_ID_TOKEN: { aud: npm:registry.npmjs.org } }
+function gitlabIdTokenGrant(node) {
+  const block = child(node, 'id_tokens');
+  if (!block) return null;
+  for (const v of block.children) {
+    const aud = child(v, 'aud');
+    if (!aud) continue;
+    const vals = aud.value !== null ? [aud.value] : commandLines(aud).map((l) => l.text);
+    if (vals.some((a) => unquote(a).includes(PUBLISH.trusted.gitlabAudience))) return { line: aud.line, via: `id_tokens ${v.key} (aud ${PUBLISH.trusted.gitlabAudience})` };
+  }
+  return null;
+}
+
+function scanGitlabCi(file, rel, paths) {
+  let root;
+  try { root = parseYamlish(fs.readFileSync(file, 'utf8')); } catch { return; }
+  const globalToken = tokenEnvEntry(child(root, 'variables'));
+  const defaultGrant = gitlabIdTokenGrant(child(root, 'default') || { children: [] });
+  for (const job of root.children) {
+    if (!job.key || GITLAB_RESERVED.has(job.key) || job.key.startsWith('.')) continue;
+    const scripts = ['before_script', 'script', 'after_script'].map((k) => child(job, k)).filter(Boolean);
+    if (!child(job, 'script')) continue; // not a job
+    const grant = gitlabIdTokenGrant(job) || defaultGrant;
+    const jobToken = tokenEnvEntry(child(job, 'variables')) || globalToken;
+    let authTokenWrite = null;
+    for (const s of scripts) {
+      for (const l of commandLines(s)) if (!authTokenWrite && /_authToken/.test(l.text)) authTokenWrite = { line: l.line, text: l.text };
+    }
+    const tags = child(job, 'tags');
+    const runner = tags
+      ? { label: `tags: ${commandLines(tags).map((l) => unquote(l.text)).join(', ')}`, kind: 'tagged' }
+      : { label: 'gitlab.com shared runners (no tags)', kind: 'gitlab-shared' };
+    for (const s of scripts) {
+      for (const l of commandLines(s)) {
+        const hit = detectRunPublisher(l.text);
+        if (!hit) continue;
+        const token = jobToken || authTokenWrite;
+        paths.push({
+          provider: 'gitlab', file: rel, line: l.line, job: job.key, tool: hit.tool,
+          classification: classifyAuth({ staged: hit.staged, token, idToken: grant }),
+          reason: describeAuth({ staged: hit.staged, token, idToken: grant, stepEnvToken: null, authTokenWrite }),
+          runner, environment: null, workflowFile: path.basename(rel),
+          token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
+          idToken: grant || null,
+        });
+      }
+    }
+  }
+}
+
+// --- CircleCI --------------------------------------------------------------
+
+function scanCircleCi(file, rel, paths) {
+  let root, text;
+  try { text = fs.readFileSync(file, 'utf8'); root = parseYamlish(text); } catch { return; }
+  // Trusted publishing on CircleCI arrives as the NPM_ID_TOKEN env var (set by
+  // the npmjs.com trusted-publisher config + a CircleCI context); its presence
+  // anywhere in the config is the grant signal we can see statically.
+  const idTokenLineIdx = text.split(/\r?\n/).findIndex((l) => l.includes(PUBLISH.trusted.circleciTokenVar));
+  const grant = idTokenLineIdx >= 0 ? { line: idTokenLineIdx + 1, via: PUBLISH.trusted.circleciTokenVar } : null;
+  const jobs = child(root, 'jobs');
+  if (!jobs) return;
+  for (const job of jobs.children) {
+    if (!job.key) continue;
+    const steps = child(job, 'steps');
+    if (!steps) continue;
+    const jobToken = tokenEnvEntry(child(job, 'environment'));
+    // a resource_class with a namespace slash selects a self-hosted runner
+    const rc = child(job, 'resource_class');
+    const runner = rc && rc.value && unquote(rc.value).includes('/')
+      ? { label: `resource_class: ${unquote(rc.value)}`, kind: 'self-hosted' }
+      : { label: 'circleci cloud', kind: 'circleci-cloud' };
+    let authTokenWrite = null;
+    const stepCommands = [];
+    for (const step of steps.children) {
+      const run = step.value === null ? child(step, 'run') : null;
+      const cmds = run
+        ? (run.value !== null || run.blockLines ? commandLines(run) : commandLines(child(run, 'command')))
+        : [];
+      const stepToken = run ? tokenEnvEntry(child(run, 'environment')) : null;
+      for (const l of cmds) {
+        stepCommands.push({ ...l, stepToken });
+        if (!authTokenWrite && /_authToken/.test(l.text)) authTokenWrite = { line: l.line, text: l.text };
+      }
+    }
+    for (const l of stepCommands) {
+      const hit = detectRunPublisher(l.text);
+      if (!hit) continue;
+      const token = l.stepToken || jobToken || authTokenWrite;
+      paths.push({
+        provider: 'circleci', file: rel, line: l.line, job: job.key, tool: hit.tool,
+        classification: classifyAuth({ staged: hit.staged, token, idToken: grant }),
+        reason: describeAuth({ staged: hit.staged, token, idToken: grant, stepEnvToken: l.stepToken, authTokenWrite }),
+        runner, environment: null, workflowFile: path.basename(rel),
+        token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
+        idToken: grant || null,
+      });
+    }
+  }
+}
+
+// --- repo identity (for the pre-filled npmjs.com checklist) ----------------
+
+function repoIdentity(projectDir) {
+  const fromUrl = (url) => {
+    const m = String(url).match(/(?:github\.com|gitlab\.com|bitbucket\.org)[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:[/#?].*)?$/i);
+    return m ? { owner: m[1], repo: m[2] } : null;
+  };
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf8'));
+    const url = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository && pkg.repository.url;
+    const id = url && fromUrl(url);
+    if (id) return id;
+  } catch { /* no package.json — try git */ }
+  try {
+    const cfg = fs.readFileSync(path.join(projectDir, '.git', 'config'), 'utf8');
+    const m = cfg.match(/\[remote "origin"\][^[]*?url\s*=\s*(\S+)/);
+    const id = m && fromUrl(m[1]);
+    if (id) return id;
+  } catch { /* not a git repo */ }
+  return null;
+}
+
+// --- analysis --------------------------------------------------------------
+
+const dirOf = (target) => {
+  const resolved = path.resolve(target);
+  return fs.existsSync(resolved) && fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
+};
+
+function analyzePublish(target) {
+  const projectDir = dirOf(target);
+  const paths = [];
+  const scanned = [];
+  for (const file of workflowFiles(projectDir)) {
+    const rel = path.relative(projectDir, file).replace(/\\/g, '/');
+    scanned.push(rel);
+    scanGithubWorkflow(file, rel, paths);
+  }
+  for (const [rel, scan] of [['.gitlab-ci.yml', scanGitlabCi], ['.circleci/config.yml', scanCircleCi]]) {
+    const file = path.join(projectDir, rel);
+    if (fs.existsSync(file)) { scanned.push(rel); scan(file, rel, paths); }
+  }
+  paths.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+
+  // version-floor verdicts per path (GitHub: the setup-node pin in the job)
+  const floors = { trusted: PUBLISH.trusted, staged: PUBLISH.staged };
+  for (const p of paths) {
+    if (p.nodeVersion !== undefined && p.nodeVersion !== null) {
+      const below = nodePinBelowFloor(p.nodeVersion, PUBLISH.trusted.minNode);
+      if (below) p.nodeBelowFloor = true;
+    }
+  }
+
+  // engines.node minimum vs the shared Node floor (a maintainer publishing
+  // locally on the minimum supported Node would be below both fixes' floor)
+  let enginesNode = null, enginesBelowFloor = false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf8'));
+    enginesNode = pkg.engines && pkg.engines.node ? String(pkg.engines.node) : null;
+    const min = enginesMinimum(enginesNode);
+    if (min && !versionGte(min, PUBLISH.trusted.minNode)) enginesBelowFloor = true;
+  } catch { /* no package.json */ }
+
+  const counts = { TRUSTED: 0, STAGED: 0, TOKEN: 0, UNKNOWN: 0 };
+  for (const p of paths) counts[p.classification]++;
+  return {
+    projectDir, scanned, paths, counts, floors,
+    cliff: PUBLISH.cliff, repo: repoIdentity(projectDir),
+    enginesNode, enginesBelowFloor,
+  };
+}
+
+// --- the --check verdict ---------------------------------------------------
+// Exit 1 ONLY on TOKEN paths. UNKNOWN never fails; a repo with no publish
+// step passes with a one-line reason, matching `allow --ci-check`.
+function checkPublish(analysis) {
+  const failures = analysis.paths.filter((p) => p.classification === 'TOKEN').map((p) => ({
+    path: p,
+    message: `${p.file}:${p.line} publishes with a long-lived token (\`${p.tool}\`, ${p.token ? p.token.key : 'token'})`
+      + ` — 2FA-bypass tokens lose direct publish around ${PUBLISH.cliff.date} (${PUBLISH.cliff.changelog}).`
+      + ` Migrate to ${p.runner && p.runner.kind === 'self-hosted' ? `staged publishing (\`${PUBLISH.staged.commands.publish}\` + \`${PUBLISH.staged.commands.approve}\`) — trusted publishing does not support this runner` : 'trusted publishing (OIDC) or staged publishing'}.`,
+  }));
+  if (failures.length > 0) return { ok: false, failures, reason: null };
+  const reason = analysis.paths.length === 0
+    ? 'no publish steps found in CI configs — nothing is exposed to the token cliff'
+    : analysis.counts.UNKNOWN === analysis.paths.length
+      ? `${analysis.counts.UNKNOWN} publish path(s) could not be classified (UNKNOWN never fails this check) — inspect them with \`npm-script-lens publish\``
+      : `every classified publish path already uses trusted or staged publishing (${analysis.counts.TRUSTED} trusted, ${analysis.counts.STAGED} staged${analysis.counts.UNKNOWN ? `, ${analysis.counts.UNKNOWN} unknown` : ''})`;
+  return { ok: true, failures: [], reason };
+}
+
+// --- rendering -------------------------------------------------------------
+
+// The npmjs.com side of trusted publishing, pre-filled from the repo. The
+// exact fields the settings form asks for, in its order.
+function checklistLines(analysis, p) {
+  const t = PUBLISH.trusted;
+  const repo = analysis.repo;
+  const lines = ['npmjs.com trusted-publisher settings (package Settings → Trusted publisher):'];
+  if (p.provider === 'github') {
+    lines.push(`  GitHub organization or user: ${repo ? repo.owner : '<your GitHub org or username>'}`);
+    lines.push(`  repository:                  ${repo ? repo.repo : '<repository name>'}`);
+    lines.push(`  workflow filename:           ${p.workflowFile}   (with its extension, exactly as on disk)`);
+    lines.push(`  environment:                 ${p.environment ? p.environment : '(the job declares none — leave blank)'}`);
+  } else if (p.provider === 'gitlab') {
+    lines.push(`  GitLab namespace:            ${repo ? repo.owner : '<your GitLab group or username>'}`);
+    lines.push(`  project:                     ${repo ? repo.repo : '<project name>'}`);
+    lines.push(`  CI file:                     ${p.workflowFile}   (and \`id_tokens\` audience \`${t.gitlabAudience}\` in the job)`);
+  } else {
+    lines.push(`  CircleCI organization:       ${repo ? repo.owner : '<your CircleCI org>'}`);
+    lines.push(`  project:                     ${repo ? repo.repo : '<project name>'}`);
+    lines.push(`  config file:                 ${p.workflowFile}   (the OIDC token arrives as \`${t.circleciTokenVar}\`)`);
+  }
+  lines.push(`  allowed actions:             npm publish${p.tool === PUBLISH.staged.commands.publish ? ' and npm stage publish' : '   (also allow "npm stage publish" if you plan to stage releases)'}`);
+  return lines;
+}
+
+function floorWarning(p) {
+  const t = PUBLISH.trusted, s = PUBLISH.staged;
+  if (!p.nodeBelowFloor) return null;
+  return `⚠️  node-version ${p.nodeVersion}${p.nodeVersionLine ? ` (${p.file}:${p.nodeVersionLine})` : ''} is below the Node ${t.minNode} floor — that blocks BOTH fixes: `
+    + `trusted publishing needs npm >= ${t.minNpm} and Node >= ${t.minNode}, staged publishing needs npm >= ${s.minNpm} and Node >= ${s.minNode}. `
+    + `Bump setup-node to >= ${t.minNode} before either migration can work.`;
+}
+
+// The YAML patch for a GitHub TOKEN path: grant id-token, drop the token env.
+function tokenFixLines(analysis, p) {
+  const t = PUBLISH.trusted, s = PUBLISH.staged;
+  const lines = [];
+  if (p.runner && p.runner.kind === 'self-hosted') {
+    lines.push(`fix for ${p.file}:${p.line} — trusted publishing is UNAVAILABLE for this job:`);
+    lines.push(`  \`runs-on: ${p.runner.label}\` is not a GitHub-hosted runner, and the npm docs support only`);
+    lines.push(`  ${t.providers.join(', ')} —`);
+    lines.push(`  "${t.selfHostedQuote}"`);
+    lines.push('  Staged publishing is the survivable path here:');
+    lines.push(`    replace \`${p.tool}\` with \`${s.commands.publish}\`   (needs npm >= ${s.minNpm} and Node >= ${s.minNode})`);
+    lines.push(`    a maintainer then approves with 2FA: \`${s.commands.approve}\`  (\`${s.commands.list}\` shows the stage-id)`);
+    if (p.token) lines.push(`    the ${p.token.key} secret can then be retired — staging needs no bypass-2FA token scope.`);
+    return lines;
+  }
+  lines.push(`fix for ${p.file}:${p.line} — switch to trusted publishing (OIDC):`);
+  if (p.provider === 'github') {
+    lines.push(`  add to the \`${p.job}\` job (or the workflow top level) in ${p.file}:`);
+    lines.push('    + permissions:');
+    lines.push('    +   id-token: write');
+    if (p.token && p.token.key !== '_authToken') {
+      lines.push(`  remove the token from the publish step (line ${p.token.line}):`);
+      lines.push('    - env:');
+      lines.push(`    -   ${p.token.key}: ${p.token.value || '${{ secrets.NPM_TOKEN }}'}`);
+    } else if (p.token) {
+      lines.push(`  remove the .npmrc write containing _authToken (line ${p.token.line}) — OIDC needs no token in .npmrc`);
+    }
+    lines.push(`  the job needs npm >= ${t.minNpm} and Node >= ${t.minNode} (Node's bundled npm may be older than ${t.minNpm} — add \`npm install -g npm@latest\` before publishing)`);
+  } else if (p.provider === 'gitlab') {
+    lines.push(`  add to the \`${p.job}\` job in ${p.file}:`);
+    lines.push('    + id_tokens:');
+    lines.push('    +   NPM_ID_TOKEN:');
+    lines.push(`    +     aud: ${t.gitlabAudience}`);
+    if (p.token) lines.push(`  remove the ${p.token.key} variable (line ${p.token.line})`);
+    lines.push(`  the job needs npm >= ${t.minNpm} and Node >= ${t.minNode}; trusted publishing supports GitLab.com shared runners only`);
+  } else {
+    lines.push(`  configure the trusted publisher on npmjs.com — the OIDC token then arrives as \`${t.circleciTokenVar}\` (CircleCI cloud only)`);
+    if (p.token) lines.push(`  remove the ${p.token.key} environment entry (line ${p.token.line})`);
+    lines.push(`  the job needs npm >= ${t.minNpm} and Node >= ${t.minNode}`);
+  }
+  return lines;
+}
+
+function renderPublish(analysis) {
+  const lines = [];
+  const { paths, counts } = analysis;
+  lines.push(`publish paths (${paths.length})`);
+  for (const p of paths) {
+    const where = `${p.file}:${p.line}`;
+    const ctx = [p.job ? `job ${p.job}` : null, p.runner && p.runner.label ? p.runner.label : null].filter(Boolean).join(' · ');
+    lines.push(`  ${p.classification.padEnd(8)}  ${where}  ${p.tool}${ctx ? `   [${ctx}]` : ''}`);
+    lines.push(`            ${p.reason}`);
+  }
+  if (paths.length === 0) {
+    lines.push('  (none — scanned .github/workflows, .gitlab-ci.yml and .circleci/config.yml)');
+    lines.push('');
+    lines.push(`nothing is exposed to npm's ${analysis.cliff.date} token cliff: no publish steps in CI.`);
+    return lines.join('\n');
+  }
+  lines.push('');
+  if (counts.TOKEN > 0) {
+    lines.push(`⛔ ${counts.TOKEN} TOKEN publish path${counts.TOKEN === 1 ? '' : 's'} — direct token publishing stops working around ${analysis.cliff.date}.`);
+    lines.push(`   github.blog (2026-07-31): "${analysis.cliff.quote}"`);
+    lines.push('');
+    for (const p of paths.filter((x) => x.classification === 'TOKEN')) {
+      lines.push(...tokenFixLines(analysis, p));
+      const floor = floorWarning(p);
+      if (floor) lines.push(`  ${floor}`);
+      lines.push('');
+      if (!(p.runner && p.runner.kind === 'self-hosted')) {
+        lines.push(...checklistLines(analysis, p));
+        lines.push('');
+      }
+    }
+  } else {
+    lines.push(`🟢 no TOKEN publish paths — nothing here relies on direct token publishing (which ends around ${analysis.cliff.date}).`);
+    for (const p of paths.filter((x) => x.nodeBelowFloor)) {
+      const floor = floorWarning(p);
+      if (floor) lines.push(`  ${floor}`);
+    }
+  }
+  if (analysis.enginesBelowFloor) {
+    lines.push(`note: package.json engines.node is \`${analysis.enginesNode}\` — a maintainer publishing locally on the minimum supported Node is below the ${PUBLISH.trusted.minNode} floor both trusted and staged publishing require.`);
+  }
+  return lines.join('\n').replace(/\n+$/, '');
+}
+
+// The exact shape `publish --json` emits.
+function publishJson(analysis) {
+  return {
+    cliff: { date: analysis.cliff.date, changelog: analysis.cliff.changelog },
+    floors: {
+      trusted: { npm: PUBLISH.trusted.minNpm, node: PUBLISH.trusted.minNode },
+      staged: { npm: PUBLISH.staged.minNpm, node: PUBLISH.staged.minNode },
+    },
+    counts: analysis.counts,
+    paths: analysis.paths.map((p) => ({
+      file: p.file, line: p.line, provider: p.provider, job: p.job, tool: p.tool,
+      classification: p.classification, reason: p.reason,
+      runner: p.runner ? { label: p.runner.label, kind: p.runner.kind } : null,
+      environment: p.environment || null,
+      nodeVersion: p.nodeVersion === undefined ? null : p.nodeVersion,
+      nodeBelowFloor: Boolean(p.nodeBelowFloor),
+    })),
+    repo: analysis.repo,
+    engines: { node: analysis.enginesNode, belowFloor: analysis.enginesBelowFloor },
+  };
+}
+
+// TOKEN paths as SARIF-ready findings (rule publish-token-cliff), anchored to
+// the workflow line — same shape reporter.buildSarif already consumes.
+function publishFindings(analysis) {
+  return analysis.paths.filter((p) => p.classification === 'TOKEN').map((p) => ({
+    id: 'publish-token-cliff',
+    severity: 'error',
+    level: 'error',
+    package: p.tool,
+    file: p.file,
+    line: p.line,
+    fix: `${checkPublish({ ...analysis, paths: [p], counts: { TOKEN: 1 } }).failures[0].message}`,
+    fingerprint: `publish-token-cliff:${p.file}:${p.line}`,
+  }));
+}
+
+module.exports = {
+  analyzePublish, checkPublish, renderPublish, publishJson, publishFindings,
+  classifyAuth, nodePinBelowFloor, enginesMinimum, parseYamlish, detectRunPublisher,
+  classifyRunsOn, idTokenGrant, repoIdentity,
+};

@@ -1,0 +1,17 @@
+version: 2.1
+jobs:
+  publish:
+    docker:
+      - image: cimg/node:20.11
+    steps:
+      - checkout
+      - run: npm ci
+      - run:
+          name: publish to npm
+          command: npm publish
+          environment:
+            NPM_TOKEN: provided-by-context
+workflows:
+  release:
+    jobs:
+      - publish

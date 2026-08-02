@@ -1,8 +1,18 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-07-27 after building v1.3.0._
+_Updated 2026-08-02 after building v1.5.0._
 
-## v1.3.0 — BUILT, GREEN, NOT YET RELEASED ⬅️ start here
+## v1.5.0 — BUILT, GREEN, NOT YET RELEASED ⬅️ start here
+
+245/245 tests (`node --test`, ~6 s). Working tree holds the whole 1.5.0 change; nothing pushed.
+
+**What it adds — the `publish` command**: will this repo's release workflow still work after npm's January-2027 change (bypass-2FA tokens lose direct publish — github.blog 2026-07-31: "We are targeting January 2027 for this update"), and is the recommended fix actually available here? Classifies every CI publish path (GH Actions / GitLab / CircleCI, tolerant reader, no YAML dep, no network) as TRUSTED / STAGED / TOKEN / UNKNOWN; `--check` exits 1 only on TOKEN; checks the doc-quoted version floors (trusted: npm 11.5.1 + Node 22.14.0; staged: npm 11.15.0 + Node 22.14.0) against setup-node pins and engines; marks trusted publishing UNAVAILABLE on self-hosted runners and routes to `npm stage publish` + `npm stage approve`; emits the YAML patch and the pre-filled npmjs.com trusted-publisher checklist. Plus `--json`, `--sarif` (rule `publish-token-cliff`), a doctor publish-readiness section, and the Action's opt-in `publish-check` input. Full detail in PROGRESS.md → v1.5.0.
+
+**Owner steps:** commit → push → **wait for CI green on ubuntu/windows × node 20/22** (the 1.0.0 lesson) → tag `v1.5.0`, move `v1` → GitHub Release → `npm publish` (npm login as **booyaka**; gh is **Booyaka101**).
+
+**Promo hook (owner-approved posts only, NOT posted):** community discussion 201329 ("Upcoming changes to npm 2FA-bypass granular access tokens") has unanswered migration-gap comments and recommends no detection tool — `publish --check` is the purpose-built answer, same as `sources` was for 198547.
+
+## v1.3.0 — released as part of the 1.3.0/1.4.0 arc
 201/201 tests (`node --test`, ~5 s). Working tree has the whole 1.3.0 change; nothing pushed.
 
 **Owner steps:** commit → push → **wait for CI green on ubuntu/windows × node 20/22** (the 1.0.0 lesson) → tag `v1.3.0`, move `v1` → GitHub Release → `npm publish` (needs `npm login`; account is **Booyaka101**).
@@ -61,8 +71,8 @@ _Updated 2026-07-27 after building v1.3.0._
 
 ## Sanity check
 ```
-node --test                # expect 129 pass
-node src/cli.js --version   # 1.0.1
-npm view npm-script-lens version   # 1.0.1
-git status --short         # clean
+node --test                # expect 245 pass
+node src/cli.js --version   # 1.5.0
+npm view npm-script-lens version   # 1.4.0 until the owner publishes 1.5.0
+git status --short         # the uncommitted v1.5.0 change
 ```

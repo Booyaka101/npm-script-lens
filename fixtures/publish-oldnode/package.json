@@ -1,0 +1,11 @@
+{
+  "name": "widget",
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acme/widget.git"
+  }
+}

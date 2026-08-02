@@ -1000,6 +1000,43 @@ async function sourcesAction(opts) {
   }
 }
 
+// --- publish: will the release workflow survive the January-2027 cliff? ----
+// Pure, network-free analysis of the repo's CI configs: finds every publish
+// step, classifies it TRUSTED / STAGED / TOKEN / UNKNOWN, checks the version
+// floors and runner eligibility the migration blogs skip, and pre-fills the
+// npmjs.com trusted-publisher checklist. --check exits 1 only on TOKEN paths.
+
+async function publishAction(opts) {
+  const { analyzePublish, checkPublish, renderPublish, publishJson, publishFindings } = require('./publish');
+  const analysis = analyzePublish(opts.path);
+  if (opts.json) process.stdout.write(`${JSON.stringify(publishJson(analysis), null, 2)}\n`);
+  else process.stdout.write(`${renderPublish(analysis)}\n`);
+  if (opts.sarif) {
+    // publish findings anchor to their workflow files, so no lockfile is
+    // required — fall back to package.json as the artifact when none exists
+    let lockPath = 'package.json', lockText = '';
+    try {
+      const { path: lp } = resolveLockfile(opts.path);
+      let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
+      if (rel.startsWith('..')) rel = path.basename(lp);
+      lockPath = rel;
+      lockText = fs.readFileSync(lp, 'utf8');
+    } catch { /* no lockfile — findings carry their own file anchors */ }
+    fs.writeFileSync(opts.sarif,
+      JSON.stringify(buildSarif([], { lockPath, lockText, findings: publishFindings(analysis) }), null, 2));
+    process.stderr.write(`SARIF written to ${opts.sarif}\n`);
+  }
+  if (opts.check) {
+    const { ok, reason, failures } = checkPublish(analysis);
+    if (ok) {
+      process.stderr.write(`publish check passed: ${reason}.\n`);
+      return;
+    }
+    for (const f of failures) process.stderr.write(`FAIL: ${f.message}\n`);
+    process.exitCode = 1;
+  }
+}
+
 // --- doctor: does this build still understand your npm? -------------------
 
 async function doctorAction(opts) {
@@ -1138,6 +1175,13 @@ if (require.main === module) {
     .option('--write', 'merge the minimal correct allow-git/allow-remote into .npmrc, preserving every other key and comment (npm lockfiles only)')
     .option('--check', 'exit 1 when the committed .npmrc is insufficient, over-permissive, or holds an invalid value for these keys (for CI)')
     .action(sourcesAction);
+  program.command('publish')
+    .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / UNKNOWN, checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist — no scan, no network')
+    .option('--path <path>', 'project dir (the repo root holding the CI configs)', '.')
+    .option('--json', 'emit { cliff, floors, counts, paths, repo, engines } JSON instead of text')
+    .option('--sarif <file>', 'also write SARIF 2.1.0 (rule publish-token-cliff, anchored to the workflow line)')
+    .option('--check', 'exit 1 when a publish path still authenticates with a long-lived token (TOKEN); UNKNOWN and no-publish repos pass (for CI)')
+    .action(publishAction);
   program.command('doctor')
     .description('check whether this build still understands your local npm (contract probe + parser self-test + live dry-run shape check) — exit 1 on drift')
     .option('--path <path>', 'project dir or lockfile to probe live', '.')

@@ -213,6 +213,95 @@ root-level git deps were wrongly rejected): prefer `all` there. The `.npmrc`
 emitter is npm-only; for yarn/pnpm/bun lockfiles the dependency report still
 works, the write is skipped with a note.
 
+## publish: will your release workflow survive January 2027?
+
+The other side of the same coin: npm-script-lens guards the *install* side of
+your workflows; `publish` guards the *publish* side. The [GitHub changelog of
+2026-07-31](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/)
+is explicit: *"2FA-bypass tokens will also lose direct publish. Their
+publishing surface will reduce to reading private packages and staging a
+publish, which a maintainer approves with 2FA. We are targeting January 2027
+for this update."* Phase 1 already shipped on 2026-07-31 — publishing is the
+last thing those tokens can still do. If your release workflow does
+`npm publish` with `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`, it has an
+expiry date.
+
+```bash
+npx npm-script-lens publish            # classify every CI publish path + the migration patch
+npx npm-script-lens publish --check    # CI: exit 1 only when a path still uses a long-lived token
+npx npm-script-lens publish --json     # { cliff, floors, counts, paths, repo, engines }
+npx npm-script-lens publish --sarif f  # rule publish-token-cliff, anchored to the workflow line
+```
+
+It reads `.github/workflows/*.yml`, `.gitlab-ci.yml` and
+`.circleci/config.yml` (no network, no YAML dependency), finds `npm publish`,
+`npm stage publish`, `pnpm publish`, `yarn npm publish`, `np`,
+`semantic-release`, `changesets/action` and `JS-DevTools/npm-publish`, and
+classifies each path as exactly one of:
+
+- **TRUSTED** — an id-token grant (`permissions: id-token: write` or
+  `write-all`; GitLab `id_tokens` with audience `npm:registry.npmjs.org`;
+  CircleCI `NPM_ID_TOKEN`) and no token: already on [trusted publishing
+  (OIDC)](https://docs.npmjs.com/trusted-publishers), survives the cliff;
+- **STAGED** — `npm stage publish`: a maintainer approves with 2FA
+  (`npm stage approve <stage-id>`), survives the cliff;
+- **TOKEN** — `NODE_AUTH_TOKEN`/`NPM_TOKEN` in the env, or an `.npmrc` write
+  containing `_authToken`: **stops working around January 2027** — this is the
+  only classification that fails `--check`;
+- **UNKNOWN** — a publish exists but the auth is ambiguous (reusable
+  workflows, both grant and token, neither visible): reported, never a
+  failure.
+
+Then it does the three checks no migration blog performs:
+
+1. **Version floors**, verbatim from docs.npmjs.com: trusted publishing
+   *"requires npm CLI version 11.5.1 or later and Node version 22.14.0 or
+   higher"*; staged publishing *"requires npm CLI version 11.15.0 or later and
+   Node version 22.14.0 or higher."* A `setup-node` pin (or an
+   `engines.node` minimum) below the floor is called out with exactly which
+   fix it blocks — migrating a workflow that's pinned to Node 20 fails at the
+   first publish, so the pin bump is part of the fix.
+2. **Runner eligibility.** Trusted publishing supports **only** GitHub-hosted
+   runners, GitLab.com shared runners and CircleCI cloud — *"Self-hosted
+   runners are not currently supported but are planned for future releases."*
+   A `runs-on: self-hosted` publish job gets trusted publishing marked
+   **UNAVAILABLE** and is routed to the one path that survives there:
+   `npm stage publish` + `npm stage approve <stage-id>`.
+3. **The npmjs.com side, pre-filled.** Trusted publishing also needs config on
+   npmjs.com; `publish` emits the settings checklist filled in from your repo
+   — org/user, repository, workflow filename *with its extension*, the
+   environment name if the job declares one, and the allowed actions.
+
+Real output for a workflow publishing with a token on Node 20:
+
+```
+publish paths (1)
+  TOKEN     .github/workflows/release.yml:15  npm publish   [job release · ubuntu-latest]
+            long-lived token: NODE_AUTH_TOKEN in the publish step env (line 17)
+
+⛔ 1 TOKEN publish path — direct token publishing stops working around January 2027.
+
+fix for .github/workflows/release.yml:15 — switch to trusted publishing (OIDC):
+  add to the `release` job (or the workflow top level) in .github/workflows/release.yml:
+    + permissions:
+    +   id-token: write
+  remove the token from the publish step (line 17):
+    - env:
+    -   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  ⚠️  node-version 20 (.github/workflows/release.yml:12) is below the Node 22.14.0 floor …
+
+npmjs.com trusted-publisher settings (package Settings → Trusted publisher):
+  GitHub organization or user: acme
+  repository:                  widget
+  workflow filename:           release.yml   (with its extension, exactly as on disk)
+  environment:                 (the job declares none — leave blank)
+  allowed actions:             npm publish   (also allow "npm stage publish" if you plan to stage releases)
+```
+
+`doctor` reports the same readiness mix, and the GitHub Action's
+[`publish-check` input](#github-action) fails the job with an `::error` and a
+`publish-token-cliff` SARIF result when a TOKEN path remains.
+
 ## review: see what you're approving, not just its name
 
 npm v12's own pending list stops at the script *command*:
@@ -424,7 +513,7 @@ jobs:
 
 The action writes the report to the job summary, comments on the PR (plain GitHub REST `issues/comments` call using `GITHUB_TOKEN` — same endpoint octokit uses), and fails the job when `fail-on-high` is true and a HIGH package exists.
 
-Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable — fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover — insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
+Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable — fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover — insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `publish-check` (`'true'` to enable — fails the job when a [CI publish path still authenticates with a long-lived npm token](#publish-will-your-release-workflow-survive-january-2027), which loses direct publish around January 2027; `::error` annotation, job-summary line, and a `publish-token-cliff` result merged into the audit's SARIF file), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
 
 ```yaml
       - uses: Booyaka101/npm-script-lens@v1
@@ -469,7 +558,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · `doctor` detected npm drift · `diff` found an added/modified install script |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN publish path (UNKNOWN never fails) · `doctor` detected npm drift · `diff` found an added/modified install script |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
@@ -481,6 +570,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | `review` | show pending approvals **with the actual script content** + verdict; `--output-allowscripts` writes decisions |
 | `diff` | compare a package's install scripts (+ implicit node-gyp) across two versions; exit 1 on any add/modify; `--json` |
 | `sources` | git + remote-URL deps vs npm v12's `allow-git`/`allow-remote`: ROOT/TRANSITIVE per dep, minimal correct `.npmrc`; `--check`, `--write`, `--json` |
+| [`publish`](#publish-will-your-release-workflow-survive-january-2027) | classify every CI publish path (TRUSTED/STAGED/TOKEN/UNKNOWN) vs npm's January-2027 token cliff, with the migration patch + npmjs.com checklist; `--check`, `--json`, `--sarif` |
 | `sync` | reconcile the native allowlist with the lockfile (drop stale, add new); `--check` for CI |
 | `doctor` | is this build still in sync with your npm? contract probe + drift alarm |
 | `init` | scaffold policy + CI workflow (`--auto-fix` bot, `--hook` git pre-commit) |
