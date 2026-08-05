@@ -42,6 +42,8 @@ jobs:
       # Version cooldown, run from source: npm worms are typically identified
       # within hours, so refuse to be among the first to install a new version.
       - name: Dependency cooldown
+        # report-only until 2026-08-12; then this line goes and it becomes a gate
+        continue-on-error: true
         run: node src/cli.js audit --path . --cooldown
 
       # Reports without gating, like the other guards — but a BREAKING finding
