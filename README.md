@@ -40,6 +40,8 @@ npx npm-script-lens audit --path ./my-project --fail-on-high
 # --no-trust    skip OSV/downloads/provenance enrichment
 # --no-cache    disable the on-disk result cache
 # --fail-on-high  exit 1 if any package scores HIGH or is known malicious
+# --cooldown [h]  exit 1 if any locked version is younger than N hours (default 72)
+# --cooldown-allow PKG...  exempt from --cooldown, by name or name@version
 ```
 
 Reviewing a PR? Audit only what changed — and see what **upgrades gained**:
@@ -212,6 +214,52 @@ in 11.10.0 / 11.15.0) and warns that `allow-git=root` is unreliable on npm 11
 root-level git deps were wrongly rejected): prefer `all` there. The `.npmrc`
 emitter is npm-only; for yarn/pnpm/bun lockfiles the dependency report still
 works, the write is skipped with a note.
+
+## cooldown: don't be the first to install a version
+
+Every other check here asks *what does this package do?*. Cooldown asks only
+*how old is this version?*
+
+On 2026-08-04 attackers compromised the `keyv` maintainer's GitHub account
+(~127M weekly downloads) and pushed the Mini Shai-Hulud worm into `keyv`,
+`cacheable`, `flat-cache` and `file-entry-cache`. It spread to nine unrelated
+organisations in about half an hour and 400+ packages that day — and, like
+every worm before it, was identified and unpublished within hours. The install
+that hurts you is the one that lands inside that window.
+
+So don't go first.
+
+```bash
+# fail the build if any locked version is younger than 72h (the default)
+npm-script-lens audit --cooldown
+
+# stricter, or looser
+npm-script-lens audit --cooldown 24
+
+# ship a genuine same-day fix anyway
+npm-script-lens audit --cooldown --cooldown-allow hotfix-pkg@2.0.1
+```
+
+```
+✗ cooldown 72h — 1 package version(s) published too recently:
+  keyv@5.5.5  6.0h old  (clears 2026-08-07 14:00Z)
+
+These may be perfectly fine. Cooldown does not inspect them — it declines to be
+among the first to install a version, because npm worms are typically caught
+within hours. Wait, pin to an older version, or exempt with --cooldown-allow.
+```
+
+Notes:
+
+- It is **opt-in**. Without the flag, nothing changes.
+- Age comes from the absolute publish timestamp at evaluation time, never from
+  a cached day-resolution age — a stale cache errs toward *older*, which would
+  fail open on precisely the young version this is meant to catch.
+- Packages with no publish date (`--offline`, private registries) are listed as
+  unchecked rather than blocked.
+- Because a poisoned version doesn't need a lifecycle hook to hurt you,
+  `--cooldown` fetches publish dates for **every** locked package, not just the
+  ones with install scripts. That is more registry traffic than a plain audit.
 
 ## publish: will your release workflow survive January 2027?
 

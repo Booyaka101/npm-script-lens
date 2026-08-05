@@ -13,6 +13,7 @@ const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
 const { buildReport, buildHtml, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport, BADGE } = require('./reporter');
 const { checkV12Gaps, workflowFiles } = require('./v12gaps');
+const { evaluateCooldown, cooldownReport, DEFAULT_HOURS: COOLDOWN_HOURS } = require('./cooldown');
 const { collectGypFindings, KIND_LABEL: GYP_KIND_LABEL } = require('./gyp');
 const { npmDryRunPending, npmMajorVersion, isCovered } = require('./review');
 const { runDoctor, renderDoctor } = require('./doctor');
@@ -112,7 +113,7 @@ async function auditOne(dep, ctx) {
 }
 
 async function runAudit(lockPath, {
-  concurrency = 8, log = () => {}, cache = true, diffBase = null, offline = false, trust = true, via = true, deep = false, trustAll = false,
+  concurrency = 8, log = () => {}, cache = true, diffBase = null, offline = false, trust = true, via = true, deep = false, trustAll = false, trustEvery = false,
 } = {}) {
   const { lockPath: p, deps: allDeps, edges } = loadDeps(lockPath);
   const projectDir = path.dirname(p);
@@ -158,7 +159,10 @@ async function runAudit(lockPath, {
     }
     // trustAll (policy needs age/provenance for every candidate) widens the
     // trust fetch from just-risky to every scripted package.
-    const wanted = results.filter((r) => r.malicious
+    // trustEvery (cooldown) widens it further still: cooldown judges the
+    // version's AGE, so a package with no install script at all still needs a
+    // publish date — the poisoned code may not be in a lifecycle hook.
+    const wanted = results.filter((r) => trustEvery || r.malicious
       || (trustAll ? r.rows.length > 0 : ['HIGH', 'MEDIUM'].includes(packageRisk(r))));
     let t = 0;
     await Promise.all(Array.from({ length: Math.min(6, wanted.length) }, async () => {
@@ -241,6 +245,7 @@ async function auditAction(opts) {
       offline: opts.offline,
       deep: opts.deep,
       diffBase,
+      trustEvery: opts.cooldown !== undefined && opts.trust,
     });
     const note = opts.since
       ? `_Diff mode: only packages added or upgraded relative to git ref \`${opts.since}\` were audited._`
@@ -267,6 +272,15 @@ async function auditAction(opts) {
     if (opts.failOnHigh && bad > 0) {
       process.stderr.write(`FAIL: ${bad} package(s) with HIGH risk or known-malicious install scripts\n`);
       process.exitCode = 1;
+    }
+    // Cooldown is orthogonal to every other check here: it judges the version's
+    // AGE, not its behaviour, so a package can be clean and still fail it.
+    if (opts.cooldown !== undefined) {
+      const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
+      if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
+      const cd = evaluateCooldown(results, { hours, allow: opts.cooldownAllow || [] });
+      process.stderr.write(`${cooldownReport(cd)}\n`);
+      if (cd.blocked.length > 0) process.exitCode = 1;
     }
   } finally {
     if (sinceDir) fs.rmSync(sinceDir, { recursive: true, force: true });
@@ -1128,6 +1142,8 @@ if (require.main === module) {
     .option('--diff <base-lockfile>', 'audit only packages added or upgraded relative to a base lockfile, and report capabilities gained across upgrades')
     .option('--since <git-ref>', 'like --diff, but extract the base lockfile from a git ref (branch, tag, or SHA) automatically — audit only what changed since then')
     .option('--fail-on-high', 'exit 1 if any package scores HIGH or is known malicious')
+    .option('--cooldown [hours]', `exit 1 if any dependency version was published less than N hours ago (default ${COOLDOWN_HOURS}) — npm worms are typically caught within hours, so declining to install first sits out the event`)
+    .option('--cooldown-allow <pkg...>', 'exempt packages from --cooldown, by name or name@version')
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .action(auditAction);
   common(program.command('sync'))

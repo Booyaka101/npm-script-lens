@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.6.0 (2026-08-05)
+
+**Cooldown: stop being first.** On 2026-08-04 attackers took over the `keyv`
+maintainer's GitHub account (~127M weekly npm downloads) and pushed Mini
+Shai-Hulud into `keyv`, `cacheable`, `flat-cache` (565M/mo) and
+`file-entry-cache` (557M/mo); the payload reached nine unrelated organisations
+within roughly half an hour and over 400 packages by the end of the day. Like
+every worm before it, it was identified and unpublished within hours. The
+install that hurts you is the one inside that window.
+
+Every other check in this tool asks *what does this package do?*. Cooldown
+asks only *how old is this version?* — and refuses to install versions too
+young to have been caught yet. It detects nothing; it declines to go first.
+
+- **New `--cooldown [hours]` flag on `audit`** (default 72): exits 1 if any
+  locked version was published less than N hours ago, listing each one with
+  its age and the exact time it clears. Opt-in — no behaviour change unless
+  you pass the flag.
+- **New `--cooldown-allow <pkg...>`**: exempt by name (`urgent-fix`) or by
+  exact version (`urgent-fix@2.0.1`), for the case where you genuinely need a
+  same-day release.
+- Age is computed from the absolute `publishedAt` timestamp at evaluation
+  time, never from the cached `ageDays`. `fetchTrust` caches its whole result
+  for 24h, so a cached `ageDays` can be a full day stale — and it errs toward
+  *older*, meaning it would fail open on exactly the young package the gate
+  exists to stop.
+- Packages with no publish date (`--offline`, private registries) are reported
+  separately as unchecked rather than blocked, so the gate stays usable in the
+  setups that most want it.
+- `--cooldown` widens trust enrichment to every locked package, not just the
+  scripted or risky ones: a poisoned version does not need a lifecycle hook to
+  hurt you, so age is needed for all of them.
+
 ## 1.5.0 (2026-08-02)
 
 **The publish-token cliff.** npm-script-lens already prevents the
