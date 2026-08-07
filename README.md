@@ -281,11 +281,11 @@ npx npm-script-lens publish --json     # { cliff, floors, counts, paths, repo, e
 npx npm-script-lens publish --sarif f  # rule publish-token-cliff, anchored to the workflow line
 ```
 
-It reads `.github/workflows/*.yml`, `.gitlab-ci.yml` and
-`.circleci/config.yml` (no network, no YAML dependency), finds `npm publish`,
-`npm stage publish`, `pnpm publish`, `yarn npm publish`, `np`,
-`semantic-release`, `changesets/action` and `JS-DevTools/npm-publish`, and
-classifies each path as exactly one of:
+It reads `.github/workflows/*.yml`, `.github/actions/**/action.yml`,
+`.gitlab-ci.yml` and `.circleci/config.yml` (no network, no YAML dependency),
+finds `npm publish`, `npm stage publish`, `pnpm publish`, `yarn npm publish`,
+`np`, `semantic-release`, `changesets/action` and `JS-DevTools/npm-publish`,
+and classifies each path as exactly one of:
 
 - **TRUSTED** — an id-token grant (`permissions: id-token: write` or
   `write-all`; GitLab `id_tokens` with audience `npm:registry.npmjs.org`;
@@ -296,9 +296,22 @@ classifies each path as exactly one of:
 - **TOKEN** — `NODE_AUTH_TOKEN`/`NPM_TOKEN` in the env, or an `.npmrc` write
   containing `_authToken`: **stops working around January 2027** — this is the
   only classification that fails `--check`;
-- **UNKNOWN** — a publish exists but the auth is ambiguous (reusable
-  workflows, both grant and token, neither visible): reported, never a
-  failure.
+- **UNKNOWN** — a publish exists but the auth is ambiguous (third-party
+  reusable workflows, both grant and token, neither visible): reported, never
+  a failure.
+
+A publish step hidden behind `uses: ./.github/actions/release` is followed
+into the composite action itself (and into local reusable workflows, nested up
+to 3 levels): the path anchors to the real `action.yml` line, an indented
+`via .github/workflows/release.yml:11 (job release, step "Release")` line
+shows the call chain, and the auth threads the way GitHub threads it —
+composite actions cannot declare `permissions`, so the id-token grant is
+always the calling job's, and a composite
+`env: NODE_AUTH_TOKEN: ${{ inputs.npm-token }}` is resolved through the
+calling step's `with:` map back to `secrets.NPM_TOKEN`. A publishing composite
+under `.github/actions/` that no workflow in the repo references is still
+reported (UNKNOWN — it may be called from another repo). Third-party actions
+(`actions/checkout@v4`) are never flagged.
 
 Then it does the three checks no migration blog performs:
 

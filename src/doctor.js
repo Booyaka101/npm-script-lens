@@ -138,7 +138,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     publish = { counts: c, paths: pub.paths.length };
     const mix = `${c.TRUSTED} trusted, ${c.STAGED} staged, ${c.TOKEN} token, ${c.UNKNOWN} unknown`;
     if (pub.paths.length === 0) {
-      add('publish readiness', 'info', 'no publish steps found in CI configs (.github/workflows, .gitlab-ci.yml, .circleci/config.yml) — nothing is exposed to the January 2027 token cliff');
+      add('publish readiness', 'info', 'no publish steps found in CI configs (.github/workflows, .github/actions/**/action.yml, .gitlab-ci.yml, .circleci/config.yml) — nothing is exposed to the January 2027 token cliff');
     } else if (c.TOKEN > 0) {
       add('publish readiness', 'warn', `${c.TOKEN} of ${pub.paths.length} publish path(s) still authenticate with a long-lived token (${mix}) — direct token publishing ends around ${PUBLISH.cliff.date}; run \`npm-script-lens publish\` for the migration patch and the npmjs.com checklist`);
     } else {
@@ -146,7 +146,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     }
     for (const p of pub.paths) {
       if (p.nodeBelowFloor) {
-        add('publish node floor', 'warn', `${p.file}:${p.nodeVersionLine || p.line} pins node-version ${p.nodeVersion}, below the Node ${PUBLISH.trusted.minNode} floor that both trusted publishing (npm >= ${PUBLISH.trusted.minNpm}) and staged publishing (npm >= ${PUBLISH.staged.minNpm}) require`);
+        add('publish node floor', 'warn', `${p.nodeVersionFile || p.file}:${p.nodeVersionLine || p.line} pins node-version ${p.nodeVersion}, below the Node ${PUBLISH.trusted.minNode} floor that both trusted publishing (npm >= ${PUBLISH.trusted.minNpm}) and staged publishing (npm >= ${PUBLISH.staged.minNpm}) require`);
       }
     }
   } catch {

@@ -1,0 +1,9 @@
+name: publish
+description: publishes to npm — referenced by no workflow in this repo
+runs:
+  using: composite
+  steps:
+    - run: npm publish
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}

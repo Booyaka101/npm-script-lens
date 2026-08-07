@@ -1,0 +1,7 @@
+name: inner
+description: the action that actually publishes
+runs:
+  using: composite
+  steps:
+    - run: npm publish
+      shell: bash

@@ -13,6 +13,7 @@ const { spawn } = require('node:child_process');
 const {
   analyzePublish, checkPublish, classifyAuth, nodePinBelowFloor, enginesMinimum,
   detectRunPublisher, classifyRunsOn, parseYamlish, idTokenGrant, publishFindings,
+  resolveLocalUses,
 } = require('../src/publish');
 const { PUBLISH } = require('../src/npm-contract');
 
@@ -340,6 +341,213 @@ test('publishFindings: only TOKEN paths become findings', () => {
   assert.strictEqual(token.length, 1);
   assert.strictEqual(token[0].id, 'publish-token-cliff');
   assert.strictEqual(token[0].fingerprint, 'publish-token-cliff:.github/workflows/release.yml:15');
+});
+
+// --- composite actions & local reusable workflows ---------------------------
+// The v1.6.0 false all-clear: a release job whose `uses: ./.github/actions/x`
+// held the real `npm publish` reported zero publish paths and passed --check.
+
+test('resolveLocalUses: ./dir → action.yml, ./file.yml direct, self-repo pin; third-party stays null', () => {
+  const dir = FIX('publish-composite-token');
+  const repo = { owner: 'acme', repo: 'widget-composite' };
+  assert.strictEqual(resolveLocalUses(dir, './.github/actions/release', repo),
+    path.join(dir, '.github', 'actions', 'release', 'action.yml'));
+  assert.strictEqual(resolveLocalUses(dir, './.github/workflows/release.yml', repo),
+    path.join(dir, '.github', 'workflows', 'release.yml'));
+  // a pinned self-reference (owner/repo matches repoIdentity) resolves too
+  assert.strictEqual(resolveLocalUses(dir, 'acme/widget-composite/.github/actions/release@v1', repo),
+    path.join(dir, '.github', 'actions', 'release', 'action.yml'));
+  // third-party actions, other repos and the repo-root action stay SILENT
+  assert.strictEqual(resolveLocalUses(dir, 'actions/checkout@v4', repo), null);
+  assert.strictEqual(resolveLocalUses(dir, 'other/repo/.github/actions/x@v1', repo), null);
+  assert.strictEqual(resolveLocalUses(dir, './', repo), null);
+  assert.strictEqual(resolveLocalUses(dir, 'acme/widget-composite/.github/actions/release@v1', null), null);
+  // a missing directory still RESOLVES — reported as unreadable, never lost
+  assert.strictEqual(resolveLocalUses(dir, './.github/actions/nope', repo),
+    path.join(dir, '.github', 'actions', 'nope', 'action.yml'));
+});
+
+test('publish-composite-token: with:→inputs.* threading reads TOKEN at the composite line, exit 1', async () => {
+  const { status, stdout, stderr } = await run(['publish', '--check', '--path', FIX('publish-composite-token')]);
+  assert.strictEqual(status, 1);
+  assert.match(stdout, /TOKEN\s+\.github\/actions\/release\/action\.yml:16\s+npm publish/);
+  assert.match(stdout, /NODE_AUTH_TOKEN in the composite step env, fed by the caller's `with: npm-token`/);
+  assert.match(stdout, /via \.github\/workflows\/release\.yml:11 \(job release, step "Release"\)/);
+  assert.match(stdout, /a composite action cannot declare `permissions` — the grant must live on the calling job/);
+  // the checklist still names the CALLING workflow — what npmjs.com asks for
+  assert.match(stdout, /workflow filename:\s+release\.yml/);
+  assert.match(stderr, /FAIL: \.github\/actions\/release\/action\.yml:16 publishes with a long-lived token/);
+});
+
+test('publish-composite-trusted: the calling job\'s id-token grant flows into the composite, exit 0', async () => {
+  const { status, stdout } = await run(['publish', '--check', '--path', FIX('publish-composite-trusted')]);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/actions\/release\/action\.yml:13\s+npm publish/);
+  assert.match(stdout, /id-token: write granted \(line 10\)/);
+  assert.match(stdout, /via \.github\/workflows\/release\.yml:13 \(job release\)/);
+});
+
+test('publish-composite-nested: one path, via chain length 2, outermost first', async () => {
+  const { status, stdout } = await run(['publish', '--json', '--path', FIX('publish-composite-nested')]);
+  assert.strictEqual(status, 0);
+  const out = JSON.parse(stdout);
+  assert.strictEqual(out.paths.length, 1);
+  assert.strictEqual(out.paths[0].file, '.github/actions/inner/action.yml');
+  assert.strictEqual(out.paths[0].line, 6);
+  assert.deepStrictEqual(out.paths[0].via, [
+    { file: '.github/workflows/release.yml', line: 11, job: 'release', step: 'Release' },
+    { file: '.github/actions/release/action.yml', line: 9, job: 'release', step: 'Publish' },
+  ]);
+});
+
+test('publish-composite-missing: an unreadable local action is one UNKNOWN, exit 0', async () => {
+  const { status, stdout } = await run(['publish', '--check', '--path', FIX('publish-composite-missing')]);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /publish paths \(1\)/);
+  assert.match(stdout, /UNKNOWN\s+\.github\/workflows\/release\.yml:11\s+local action \(\.\/\.github\/actions\/nope\)/);
+  assert.match(stdout, /cannot be read from the working tree/);
+});
+
+test('publish-reusable-local: caller grant reaches the called workflow — TRUSTED once, not twice', async () => {
+  const { status, stdout } = await run(['publish', '--check', '--path', FIX('publish-reusable-local')]);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /publish paths \(1\)/);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/reusable-release\.yml:14\s+npm publish/);
+  assert.match(stdout, /via \.github\/workflows\/release\.yml:10 \(job release\)/);
+  const analysis = analyzePublish(FIX('publish-reusable-local'));
+  assert.deepStrictEqual(analysis.counts, { TRUSTED: 1, STAGED: 0, TOKEN: 0, UNKNOWN: 0 });
+});
+
+test('publish-composite-orphan: an unreferenced publishing composite is one UNKNOWN, exit 0', async () => {
+  const { status, stdout } = await run(['publish', '--check', '--path', FIX('publish-composite-orphan')]);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /UNKNOWN\s+\.github\/actions\/publish\/action\.yml:6\s+npm publish/);
+  assert.match(stdout, /no scanned workflow in this repo references it — it may be called from another repo/);
+});
+
+test('--json: via is [] for direct paths, populated for composite paths', async () => {
+  const direct = JSON.parse((await run(['publish', '--json', '--path', FIX('publish-token')])).stdout);
+  assert.deepStrictEqual(direct.paths[0].via, []);
+  const composite = JSON.parse((await run(['publish', '--json', '--path', FIX('publish-composite-token')])).stdout);
+  assert.strictEqual(composite.paths[0].via.length, 1);
+  assert.strictEqual(composite.paths[0].via[0].file, '.github/workflows/release.yml');
+});
+
+test('--sarif anchors a composite TOKEN finding to the composite file — a real, resolvable path', async () => {
+  const file = path.join(tmp, 'composite.sarif');
+  const { status } = await run(['publish', '--sarif', file, '--path', FIX('publish-composite-token')]);
+  assert.strictEqual(status, 0);
+  const sarif = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const result = sarif.runs[0].results.find((r) => r.ruleId === 'publish-token-cliff');
+  assert.ok(result, 'expected a publish-token-cliff result');
+  const loc = result.locations[0].physicalLocation;
+  assert.strictEqual(loc.artifactLocation.uri, '.github/actions/release/action.yml');
+  assert.strictEqual(loc.region.startLine, 16);
+});
+
+test('a composite env token fed from an input the caller never passes is UNKNOWN', () => {
+  const dir = mkProj('unresolved-input', {
+    '.github/workflows/release.yml': [
+      'jobs:',
+      '  release:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - uses: ./.github/actions/rel',
+      '',
+    ].join('\n'),
+    '.github/actions/rel/action.yml': [
+      'runs:',
+      '  using: composite',
+      '  steps:',
+      '    - run: npm publish',
+      '      shell: bash',
+      '      env:',
+      '        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}',
+      '',
+    ].join('\n'),
+  });
+  const p = analyzePublish(dir).paths[0];
+  assert.strictEqual(p.classification, 'UNKNOWN');
+  assert.match(p.reason, /sets NODE_AUTH_TOKEN from inputs\.npm-token/);
+  assert.match(p.reason, /resolves no such input/);
+});
+
+test('a pinned self-referencing uses resolves from the working tree with a HEAD caveat', () => {
+  const dir = mkProj('selfpin', {
+    'package.json': JSON.stringify({ name: 'w', repository: { type: 'git', url: 'git+https://github.com/acme/widget.git' } }),
+    '.github/workflows/release.yml': [
+      'jobs:',
+      '  release:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - uses: acme/widget/.github/actions/rel@v2',
+      '        with:',
+      '          npm-token: ${{ secrets.NPM_TOKEN }}',
+      '',
+    ].join('\n'),
+    '.github/actions/rel/action.yml': [
+      'runs:',
+      '  using: composite',
+      '  steps:',
+      '    - run: npm publish',
+      '      shell: bash',
+      '      env:',
+      '        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}',
+      '',
+    ].join('\n'),
+  });
+  const p = analyzePublish(dir).paths[0];
+  assert.strictEqual(p.classification, 'TOKEN');
+  assert.match(p.reason, /the pinned ref @v2 may differ from HEAD/);
+});
+
+test('composite nesting caps at depth 3 with one UNKNOWN, never a crash', () => {
+  const composite = (nextUses) => [
+    'runs:',
+    '  using: composite',
+    '  steps:',
+    ...(nextUses ? [`    - uses: ${nextUses}`] : ['    - run: npm publish', '      shell: bash']),
+    '',
+  ].join('\n');
+  const dir = mkProj('deep', {
+    '.github/workflows/release.yml': 'jobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/a\n',
+    '.github/actions/a/action.yml': composite('./.github/actions/b'),
+    '.github/actions/b/action.yml': composite('./.github/actions/c'),
+    '.github/actions/c/action.yml': composite('./.github/actions/d'),
+    '.github/actions/d/action.yml': composite(null), // depth 4 — not followed
+  });
+  const analysis = analyzePublish(dir);
+  assert.strictEqual(analysis.paths.length, 1);
+  assert.strictEqual(analysis.paths[0].classification, 'UNKNOWN');
+  assert.match(analysis.paths[0].reason, /deeper than 3 levels/);
+  assert.strictEqual(checkPublish(analysis).ok, true);
+});
+
+test('a composite that uses itself terminates and reports its publish path once', () => {
+  const dir = mkProj('cycle', {
+    '.github/workflows/release.yml': 'jobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/self\n',
+    '.github/actions/self/action.yml': [
+      'runs:',
+      '  using: composite',
+      '  steps:',
+      '    - run: npm publish',
+      '      shell: bash',
+      '    - uses: ./.github/actions/self',
+      '',
+    ].join('\n'),
+  });
+  const analysis = analyzePublish(dir);
+  assert.strictEqual(analysis.paths.length, 1);
+  assert.strictEqual(analysis.paths[0].tool, 'npm publish');
+});
+
+test('analysis.scanned lists every composite/reusable file actually read, once', () => {
+  const composite = analyzePublish(FIX('publish-composite-token'));
+  assert.ok(composite.scanned.includes('.github/workflows/release.yml'));
+  assert.ok(composite.scanned.includes('.github/actions/release/action.yml'));
+  const reusable = analyzePublish(FIX('publish-reusable-local'));
+  const hits = reusable.scanned.filter((f) => f === '.github/workflows/reusable-release.yml');
+  assert.strictEqual(hits.length, 1);
 });
 
 // --- doctor + Action --------------------------------------------------------

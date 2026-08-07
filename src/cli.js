@@ -1192,7 +1192,7 @@ if (require.main === module) {
     .option('--check', 'exit 1 when the committed .npmrc is insufficient, over-permissive, or holds an invalid value for these keys (for CI)')
     .action(sourcesAction);
   program.command('publish')
-    .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / UNKNOWN, checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist — no scan, no network')
+    .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .github/actions/**/action.yml — local composite actions and reusable workflows followed — .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / UNKNOWN, checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist — no scan, no network')
     .option('--path <path>', 'project dir (the repo root holding the CI configs)', '.')
     .option('--json', 'emit { cliff, floors, counts, paths, repo, engines } JSON instead of text')
     .option('--sarif <file>', 'also write SARIF 2.1.0 (rule publish-token-cliff, anchored to the workflow line)')

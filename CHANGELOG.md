@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.7.0 (2026-08-07)
+
+**The false all-clear.** If your release job is
+`- uses: ./.github/actions/release` — with the real `npm publish` and
+`NODE_AUTH_TOKEN` inside `.github/actions/release/action.yml` — every
+npm-script-lens release before this one reported **zero** publish paths and
+`publish --check` exited 0 with *"no publish steps found in CI configs —
+nothing is exposed to the token cliff"*. A clean bill of health for exactly
+the workflow the GitHub changelog of 2026-07-31 is about to break: *"2FA-bypass
+tokens will also lose direct publish. Their publishing surface will reduce to
+reading private packages and staging a publish, which a maintainer approves
+with 2FA. We are targeting January 2027 for this update."* A tool whose job is
+catching the cliff must not wave through the repos that factored their release
+into a composite action.
+
+- **Local composite actions are followed.** A step's
+  `uses: ./.github/actions/release` (or a pinned self-reference
+  `owner/repo/path@ref` where owner/repo is this repo — with a caveat that the
+  pinned ref may differ from HEAD) resolves to its `action.yml` in the working
+  tree and is scanned like the job it runs in, nested local `uses:` included
+  (max depth 3, cycle-guarded, never a crash — an unreadable, unparseable or
+  non-composite target is one UNKNOWN, same discipline as the gyp lens).
+  Third-party actions (`actions/checkout@v4`) stay silent as before.
+- **Auth threads the way GitHub threads it.** Composite actions cannot declare
+  `permissions`, so the id-token grant is always the calling job's. Token
+  precedence, first match wins: composite step `env:` → an `_authToken` write
+  in a composite `run:` line → the caller step's token-carrying `with:` entry
+  → the caller's env. The common indirection is resolved end-to-end: a
+  composite `env: NODE_AUTH_TOKEN: ${{ inputs.npm-token }}` is looked up in
+  the calling step's `with:` map, so `with: npm-token: ${{ secrets.NPM_TOKEN }}`
+  reads TOKEN — and an input the caller never resolves reads UNKNOWN, never a
+  guess.
+- **Local reusable workflows are scanned, not shrugged at.** A job-level
+  `uses: ./.github/workflows/reusable-release.yml` used to yield UNKNOWN with
+  "run npm-script-lens publish in that repo" — in that repo *is this repo*.
+  The called file is now scanned with the caller's grant and `secrets: inherit`
+  context, and deduplicated against its standalone scan (the caller-informed
+  verdict wins).
+- **`via` chains.** Every resolved path anchors to the real composite file and
+  line (so `--sarif` findings resolve in code scanning) and carries the call
+  chain: text output prints an indented
+  `via .github/workflows/release.yml:11 (job release, step "Release")` line,
+  `--json` emits `via` (empty for direct paths), and the trusted-publisher
+  checklist still names the *calling* workflow's filename — what the
+  npmjs.com form asks for.
+- **Safety net for unreferenced composites.** A publishing
+  `.github/actions/**/action.yml` that no scanned workflow references is
+  reported once as UNKNOWN ("it may be called from another repo") instead of
+  not at all. UNKNOWN still never fails `--check`, and the repo-root
+  `action.yml` — the repo's own shipped Action product — is not scanned.
+- `analysis.scanned` (and doctor/CLI wording) now name the
+  `.github/actions/**/action.yml` surface; output for repos without local
+  `uses:` references is unchanged.
+
 ## 1.6.0 (2026-08-05)
 
 **Cooldown: stop being first.** On 2026-08-04 attackers took over the `keyv`

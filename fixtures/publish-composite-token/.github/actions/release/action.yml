@@ -1,0 +1,19 @@
+name: release
+description: install, build and publish to npm
+inputs:
+  npm-token:
+    description: npm automation token
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22.14.0
+        registry-url: https://registry.npmjs.org
+    - run: npm ci
+      shell: bash
+    - run: npm publish
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}

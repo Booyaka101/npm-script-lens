@@ -1,0 +1,8 @@
+{
+  "name": "widget-reusable",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acme/widget-reusable.git"
+  }
+}

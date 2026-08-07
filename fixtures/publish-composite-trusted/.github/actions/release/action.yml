@@ -1,0 +1,14 @@
+name: release
+description: install, build and publish to npm via trusted publishing
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22.14.0
+    - run: npm install -g npm@latest
+      shell: bash
+    - run: npm ci
+      shell: bash
+    - run: npm publish
+      shell: bash

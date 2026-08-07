@@ -236,13 +236,96 @@ function classifyAuth({ staged = false, reusable = false, token = null, idToken 
   return 'UNKNOWN';
 }
 
-// --- GitHub Actions --------------------------------------------------------
+// --- local `uses:` resolution ----------------------------------------------
+// A step's `uses: ./.github/actions/release` (or a pinned `owner/repo/path@ref`
+// where owner/repo is THIS repo) is code in this working tree — resolvable
+// without any network. Anything third-party returns null and stays silent: we
+// cannot see inside actions/checkout@v4, and flooding every repo with UNKNOWN
+// for it would drown the real signal. `uses: ./` (the repo-root action.yml) is
+// the repo's own shipped Action product, not a release helper — also null.
 
-function scanGithubWorkflow(file, rel, paths) {
+function resolveLocalUses(projectDir, usesValue, repo) {
+  if (typeof usesValue !== 'string') return null;
+  const bare = unquote(usesValue);
+  let relPath = null;
+  if (bare.startsWith('./')) {
+    relPath = bare.slice(2).replace(/^\/+/, '');
+  } else if (repo) {
+    const m = bare.match(/^([^/@]+)\/([^/@]+)\/([^@]+)@(.+)$/);
+    if (m && m[1].toLowerCase() === String(repo.owner).toLowerCase() && m[2].toLowerCase() === String(repo.repo).toLowerCase()) relPath = m[3];
+  }
+  if (!relPath) return null;
+  const abs = path.join(projectDir, relPath);
+  if (/\.ya?ml$/i.test(abs)) return abs;
+  for (const name of ['action.yml', 'action.yaml']) {
+    const candidate = path.join(abs, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  // a directory with neither file still RESOLVES — the scan reports it as one
+  // unreadable UNKNOWN instead of silently losing the reference
+  return path.join(abs, 'action.yml');
+}
+
+// A pinned self-reference resolves from the working tree, which is HEAD — the
+// ref the workflow actually runs may be older.
+const pinnedRefNote = (usesValue) => {
+  const bare = unquote(String(usesValue));
+  const m = bare.match(/@(.+)$/);
+  return m && !bare.startsWith('./') ? ` — resolved from the working tree; the pinned ref @${m[1]} may differ from HEAD` : '';
+};
+
+// {key → {value, line}} for a step's `with:` block.
+function readWithMap(withNode) {
+  const map = {};
+  for (const c of (withNode && withNode.children) || []) {
+    if (c.key) map[c.key] = { value: c.value, line: c.line };
+  }
+  return map;
+}
+
+// The caller-step `with:` entry that carries an npm token: a TOKEN_ENV_KEY key,
+// or a value naming secrets.NPM_TOKEN / secrets.NODE_AUTH_TOKEN.
+function withTokenEntry(withMap) {
+  for (const [key, v] of Object.entries(withMap || {})) {
+    if (TOKEN_ENV_KEYS.includes(key) || /\bsecrets\s*\.\s*(NPM_TOKEN|NODE_AUTH_TOKEN)\b/.test(String(v.value || ''))) {
+      return { key, value: v.value, line: v.line };
+    }
+  }
+  return null;
+}
+
+// A composite `env: NODE_AUTH_TOKEN: ${{ inputs.npm-token }}` resolves through
+// the CALLER step's `with:` map: a fed value referencing `secrets.` (or a
+// literal) is a TOKEN; an input the caller never resolves is UNKNOWN.
+function resolveCompositeEnvToken(envToken, withMap) {
+  if (!envToken) return { state: 'none' };
+  const m = String(envToken.value || '').match(/\binputs\s*\.\s*([\w-]+)/);
+  if (!m) return { state: 'token', token: envToken, where: 'in the composite step env' };
+  const fed = withMap && withMap[m[1]];
+  if (fed && !/\binputs\s*\./.test(String(fed.value || ''))) {
+    return {
+      state: 'token',
+      token: { key: envToken.key, value: fed.value, line: envToken.line },
+      where: `in the composite step env, fed by the caller's \`with: ${m[1]}\``,
+    };
+  }
+  return { state: 'unresolved', key: envToken.key, input: m[1] };
+}
+
+// --- GitHub Actions --------------------------------------------------------
+// ctx: { projectDir, repo, reached, pushScanned } — shared per analysis.
+// inherited: set when this file is a locally-called reusable workflow —
+// { grant, via, workflowFile, depth, seen }. The caller job's grant stands in
+// for a missing workflow-level one, and workflowFile stays the CALLING
+// workflow's basename (that is what npmjs.com's trusted-publisher form wants).
+
+function scanGithubWorkflow(file, rel, paths, ctx, inherited) {
   let root;
   try { root = parseYamlish(fs.readFileSync(file, 'utf8')); } catch { return; }
-  const workflowGrant = idTokenGrant(child(root, 'permissions'));
+  const workflowGrant = idTokenGrant(child(root, 'permissions')) || (inherited ? inherited.grant : null);
   const workflowEnvToken = tokenEnvEntry(child(root, 'env'));
+  const workflowFile = inherited ? inherited.workflowFile : path.basename(rel);
+  const via = inherited ? inherited.via : undefined;
   const jobs = child(root, 'jobs');
   if (!jobs) return;
   for (const job of jobs.children) {
@@ -260,14 +343,35 @@ function scanGithubWorkflow(file, rel, paths) {
       ? (envNode.value !== null ? unquote(envNode.value) : (child(envNode, 'name') && unquote(child(envNode, 'name').value || '')) || null)
       : null;
 
-    // reusable workflow: `uses:` with no run steps — we cannot see inside it
+    // reusable workflow: `uses:` with no run steps. A LOCAL one is code in
+    // this working tree — scan it with this job's grant instead of giving up.
     if (jobUses && !steps) {
+      const resolved = resolveLocalUses(ctx.projectDir, jobUses.value, ctx.repo);
+      const relTo = (p) => path.relative(ctx.projectDir, p).replace(/\\/g, '/');
+      if (resolved) ctx.reached.add(path.resolve(resolved));
+      const depth = (inherited ? inherited.depth : 0) + 1;
+      const seen = inherited ? inherited.seen : new Set([path.resolve(file)]);
+      let reason = 'the job calls a reusable workflow — its publish step (if any) lives in the called file; run `npm-script-lens publish` in that repo';
+      if (resolved && fs.existsSync(resolved)) {
+        if (depth <= 3 && !seen.has(path.resolve(resolved))) {
+          seen.add(path.resolve(resolved));
+          const rel2 = relTo(resolved);
+          ctx.pushScanned(rel2);
+          scanGithubWorkflow(resolved, rel2, paths, ctx, {
+            grant: jobGrant, depth, seen, workflowFile,
+            via: [...(via || []), { file: rel, line: jobUses.line, job: job.key, step: null }],
+          });
+          continue;
+        }
+        reason = `local reusable workflows nesting deeper than 3 levels (or calling themselves) are not followed — inspect ${relTo(resolved)} directly`;
+      } else if (resolved) {
+        reason = `the job calls a local reusable workflow, but ${relTo(resolved)} does not exist in the working tree${pinnedRefNote(jobUses.value)}`;
+      }
       paths.push({
         provider: 'github', file: rel, line: jobUses.line, job: job.key,
         tool: `reusable workflow (${unquote(jobUses.value || '?')})`,
-        classification: 'UNKNOWN', reusable: true,
-        reason: 'the job calls a reusable workflow — its publish step (if any) lives in the called file; run `npm-script-lens publish` in that repo',
-        runner, environment, workflowFile: path.basename(rel),
+        classification: 'UNKNOWN', reusable: true, reason,
+        runner, environment, workflowFile, via,
       });
       continue;
     }
@@ -310,21 +414,218 @@ function scanGithubWorkflow(file, rel, paths) {
           provider: 'github', file: rel, line: hit.line, job: job.key, tool: hit.tool,
           classification,
           reason: describeAuth({ staged: hit.staged, token, idToken: jobGrant, stepEnvToken, authTokenWrite }),
-          runner, environment, workflowFile: path.basename(rel),
+          runner, environment, workflowFile,
           nodeVersion, nodeVersionLine,
           token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
           idToken: jobGrant || null,
+          via,
         });
+      }
+      // a local composite action referenced by this step: scan it in place of
+      // the silence a non-marketplace `uses:` used to produce
+      if (uses && !usesPub && !/(^|\/)setup-node(@|$)/.test(unquote(uses.value || ''))) {
+        const resolved = resolveLocalUses(ctx.projectDir, uses.value, ctx.repo);
+        if (resolved) {
+          const nameNode = child(step, 'name');
+          const withMap = readWithMap(child(step, 'with'));
+          scanComposite(resolved, path.relative(ctx.projectDir, resolved).replace(/\\/g, '/'), {
+            projectDir: ctx.projectDir, repo: ctx.repo, reached: ctx.reached, pushScanned: ctx.pushScanned,
+            usesRaw: unquote(uses.value || ''), withMap,
+            jobGrant, callerWithToken: withTokenEntry(withMap), callerStepEnvToken: stepEnvToken, callerEnvToken: jobEnvToken,
+            runner, environment, workflowFile,
+            nodeVersion, nodeVersionLine, nodeVersionFile: nodeVersion === null ? null : rel,
+            pinnedNote: pinnedRefNote(uses.value),
+            via: [...(via || []), { file: rel, line: uses.line, job: job.key, step: nameNode ? unquote(nameNode.value || '') : null }],
+          }, paths, new Set(), 1);
+        }
       }
     }
   }
 }
 
-function describeAuth({ staged, token, idToken, stepEnvToken, authTokenWrite }) {
+// Scan a composite action referenced (possibly transitively) by a workflow
+// step. NEVER throws: unreadable, unparseable, non-composite and too-deep
+// targets each yield one UNKNOWN path (same discipline as src/gyp.js).
+// Composite actions cannot declare `permissions`, so the id-token grant is
+// always the CALLING job's — ctx.jobGrant, passed through unchanged.
+function scanComposite(file, rel, ctx, paths, seen, depth) {
+  const abs = path.resolve(file);
+  if (seen.has(abs)) return; // cycle — already on this resolution chain
+  seen.add(abs);
+  ctx.reached.add(abs);
+  const from = ctx.via[ctx.via.length - 1]; // the step that referenced this file
+  const base = {
+    provider: 'github', job: from.job, runner: ctx.runner, environment: ctx.environment,
+    workflowFile: ctx.workflowFile,
+  };
+  if (depth > 3) {
+    paths.push({
+      ...base, file: from.file, line: from.line, tool: `local action (${ctx.usesRaw})`,
+      classification: 'UNKNOWN',
+      reason: `local actions nesting deeper than 3 levels are not followed — inspect ${rel} directly`,
+      via: ctx.via.slice(0, -1),
+    });
+    return;
+  }
+  let root;
+  try { root = parseYamlish(fs.readFileSync(file, 'utf8')); } catch {
+    paths.push({
+      ...base, file: from.file, line: from.line, tool: `local action (${ctx.usesRaw})`,
+      classification: 'UNKNOWN',
+      reason: `the step uses ${ctx.usesRaw}, but ${rel} cannot be read from the working tree — its publish steps (if any) are invisible${ctx.pinnedNote}`,
+      via: ctx.via.slice(0, -1),
+    });
+    return;
+  }
+  ctx.pushScanned(rel);
+  const runs = child(root, 'runs');
+  const using = runs && child(runs, 'using');
+  if (!using || unquote(using.value || '') !== 'composite') {
+    paths.push({
+      ...base, file: rel, line: using ? using.line : 1, tool: `local action (${ctx.usesRaw})`,
+      classification: 'UNKNOWN',
+      reason: `the referenced local action is not a composite action (runs.using: ${using ? unquote(using.value || '?') : 'missing'}) — its bundled code may publish, but a static scan cannot see it${ctx.pinnedNote}`,
+      via: ctx.via,
+    });
+    return;
+  }
+  const steps = child(runs, 'steps');
+  if (!steps) return;
+
+  // the caller job's setup-node pin wins; else the first pin in this composite
+  // chain, attributed to the composite file that holds it
+  let nodeVersion = ctx.nodeVersion, nodeVersionLine = ctx.nodeVersionLine, nodeVersionFile = ctx.nodeVersionFile;
+  let authTokenWrite = null;
+  for (const step of steps.children) {
+    const uses = child(step, 'uses');
+    if (nodeVersion === null && uses && /(^|\/)setup-node(@|$)/.test(unquote(uses.value || ''))) {
+      const nv = child(child(step, 'with'), 'node-version');
+      if (nv && nv.value !== null) { nodeVersion = unquote(nv.value); nodeVersionLine = nv.line; nodeVersionFile = rel; }
+    }
+    for (const l of commandLines(child(step, 'run'))) {
+      if (!authTokenWrite && /_authToken/.test(l.text)) authTokenWrite = { line: l.line, text: l.text };
+    }
+  }
+
+  for (const step of steps.children) {
+    const stepEnvToken = tokenEnvEntry(child(step, 'env'));
+    const uses = child(step, 'uses');
+    const usesPub = uses && detectUsesPublisher(uses.value);
+    const found = [];
+    for (const l of commandLines(child(step, 'run'))) {
+      const hit = detectRunPublisher(l.text);
+      if (hit) found.push({ ...hit, line: l.line });
+    }
+    if (usesPub) {
+      const withToken = usesPub === 'JS-DevTools/npm-publish' && child(child(step, 'with'), 'token');
+      found.push({
+        tool: usesPub, staged: false, line: uses.line,
+        withToken: withToken ? { key: 'token', value: withToken.value, line: withToken.line } : null,
+      });
+    }
+    for (const hit of found) {
+      // token precedence, first match wins: composite step env (inputs.*
+      // resolved through the caller's `with:` map) → an _authToken write in a
+      // composite run line → the caller step's token-carrying `with:` entry →
+      // the caller's step/job/workflow env token
+      const resolvedEnv = resolveCompositeEnvToken(stepEnvToken, ctx.withMap);
+      let token = null, tokenWhere = null;
+      if (resolvedEnv.state === 'token') { token = resolvedEnv.token; tokenWhere = resolvedEnv.where; }
+      else if (resolvedEnv.state === 'none') {
+        if (hit.withToken) { token = hit.withToken; tokenWhere = 'passed as the action\'s `token` input'; }
+        else if (authTokenWrite) { token = authTokenWrite; tokenWhere = 'written into .npmrc by the composite action'; }
+        else if (ctx.callerWithToken) { token = ctx.callerWithToken; tokenWhere = `passed by the calling step's \`with: ${ctx.callerWithToken.key}\``; }
+        else if (ctx.callerStepEnvToken) { token = ctx.callerStepEnvToken; tokenWhere = 'in the calling step env'; }
+        else if (ctx.callerEnvToken) { token = ctx.callerEnvToken; tokenWhere = 'in the calling job/workflow env'; }
+      }
+      let classification, reason;
+      if (resolvedEnv.state === 'unresolved') {
+        classification = 'UNKNOWN';
+        reason = `the composite step sets ${resolvedEnv.key} from inputs.${resolvedEnv.input}, but the calling step resolves no such input — auth cannot be determined`;
+      } else {
+        classification = classifyAuth({ staged: hit.staged, token, idToken: ctx.jobGrant });
+        reason = describeAuth({ staged: hit.staged, token, idToken: ctx.jobGrant, stepEnvToken: null, authTokenWrite: null, tokenWhere });
+      }
+      paths.push({
+        ...base, file: rel, line: hit.line, tool: hit.tool,
+        classification, reason: `${reason}${ctx.pinnedNote}`,
+        nodeVersion, nodeVersionLine, nodeVersionFile,
+        token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
+        idToken: ctx.jobGrant || null,
+        via: ctx.via,
+      });
+    }
+    // recurse into a nested local action
+    if (uses && !usesPub && !/(^|\/)setup-node(@|$)/.test(unquote(uses.value || ''))) {
+      const nested = resolveLocalUses(ctx.projectDir, uses.value, ctx.repo);
+      if (nested) {
+        const nameNode = child(step, 'name');
+        const withMap = readWithMap(child(step, 'with'));
+        scanComposite(nested, path.relative(ctx.projectDir, nested).replace(/\\/g, '/'), {
+          ...ctx, usesRaw: unquote(uses.value || ''), withMap,
+          callerWithToken: withTokenEntry(withMap), callerStepEnvToken: stepEnvToken,
+          nodeVersion, nodeVersionLine, nodeVersionFile,
+          pinnedNote: pinnedRefNote(uses.value) || ctx.pinnedNote,
+          via: [...ctx.via, { file: rel, line: uses.line, job: from.job, step: nameNode ? unquote(nameNode.value || '') : null }],
+        }, paths, seen, depth + 1);
+      }
+    }
+  }
+}
+
+// Safety net: a composite action under .github/actions/ that publishes but is
+// referenced by no scanned workflow — e.g. called from another repo. One
+// UNKNOWN per file; UNKNOWN never fails --check. The repo-ROOT action.yml is
+// the repo's own shipped Action product, not a release helper — not scanned.
+function scanOrphanComposites(projectDir, reached, pushScanned, paths) {
+  const files = [];
+  const walk = (dir, depth) => {
+    if (depth > 4) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (/^action\.ya?ml$/i.test(e.name)) files.push(p);
+    }
+  };
+  walk(path.join(projectDir, '.github', 'actions'), 1);
+  for (const file of files.sort()) {
+    if (reached.has(path.resolve(file))) continue;
+    let root;
+    try { root = parseYamlish(fs.readFileSync(file, 'utf8')); } catch { continue; }
+    const rel = path.relative(projectDir, file).replace(/\\/g, '/');
+    pushScanned(rel);
+    const steps = child(child(root, 'runs'), 'steps');
+    let hit = null;
+    for (const step of (steps && steps.children) || []) {
+      for (const l of commandLines(child(step, 'run'))) {
+        const found = detectRunPublisher(l.text);
+        if (found) { hit = { ...found, line: l.line }; break; }
+      }
+      if (!hit) {
+        const uses = child(step, 'uses');
+        const usesPub = uses && detectUsesPublisher(uses.value);
+        if (usesPub) hit = { tool: usesPub, line: uses.line };
+      }
+      if (hit) break;
+    }
+    if (!hit) continue;
+    paths.push({
+      provider: 'github', file: rel, line: hit.line, job: null, tool: hit.tool,
+      classification: 'UNKNOWN',
+      reason: 'composite action defines a publish step but no scanned workflow in this repo references it — it may be called from another repo',
+      runner: { label: null, kind: 'unknown' }, environment: null,
+      workflowFile: path.basename(rel), via: [],
+    });
+  }
+}
+
+function describeAuth({ staged, token, idToken, stepEnvToken, authTokenWrite, tokenWhere }) {
   if (staged) return 'stages a publish — a maintainer approves with 2FA (`npm stage approve <stage-id>`); unaffected by the January 2027 change';
   if (token && idToken) return `ambiguous: both an id-token grant (line ${idToken.line}) and ${token.key || '_authToken'} (line ${token.line}) are present — remove the token to make this a trusted-publishing path`;
   if (token) {
-    const where = stepEnvToken ? 'in the publish step env' : authTokenWrite === token ? 'written into .npmrc' : 'in the job/workflow env';
+    const where = tokenWhere || (stepEnvToken ? 'in the publish step env' : authTokenWrite === token ? 'written into .npmrc' : 'in the job/workflow env');
     return `long-lived token: ${token.key || '_authToken'} ${where} (line ${token.line})`;
   }
   if (idToken) return `trusted publishing (OIDC): ${idToken.via} granted (line ${idToken.line}), no token in the env`;
@@ -468,17 +769,27 @@ const dirOf = (target) => {
 
 function analyzePublish(target) {
   const projectDir = dirOf(target);
-  const paths = [];
+  const repo = repoIdentity(projectDir);
+  let paths = [];
   const scanned = [];
+  const scannedSet = new Set();
+  const pushScanned = (rel) => { if (!scannedSet.has(rel)) { scannedSet.add(rel); scanned.push(rel); } };
+  const reached = new Set(); // composite/workflow files some scanned workflow resolved
+  const ctx = { projectDir, repo, reached, pushScanned };
   for (const file of workflowFiles(projectDir)) {
     const rel = path.relative(projectDir, file).replace(/\\/g, '/');
-    scanned.push(rel);
-    scanGithubWorkflow(file, rel, paths);
+    pushScanned(rel);
+    scanGithubWorkflow(file, rel, paths, ctx, null);
   }
   for (const [rel, scan] of [['.gitlab-ci.yml', scanGitlabCi], ['.circleci/config.yml', scanCircleCi]]) {
     const file = path.join(projectDir, rel);
-    if (fs.existsSync(file)) { scanned.push(rel); scan(file, rel, paths); }
+    if (fs.existsSync(file)) { pushScanned(rel); scan(file, rel, paths); }
   }
+  scanOrphanComposites(projectDir, reached, pushScanned, paths);
+  // a locally-called reusable workflow is ALSO scanned standalone by the
+  // workflowFiles() loop — keep the caller-informed (via-chained) entry
+  const viaKeys = new Set(paths.filter((p) => p.via && p.via.length).map((p) => `${p.file}:${p.line}`));
+  paths = paths.filter((p) => (p.via && p.via.length) || !viaKeys.has(`${p.file}:${p.line}`));
   paths.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
   // version-floor verdicts per path (GitHub: the setup-node pin in the job)
@@ -504,7 +815,7 @@ function analyzePublish(target) {
   for (const p of paths) counts[p.classification]++;
   return {
     projectDir, scanned, paths, counts, floors,
-    cliff: PUBLISH.cliff, repo: repoIdentity(projectDir),
+    cliff: PUBLISH.cliff, repo,
     enginesNode, enginesBelowFloor,
   };
 }
@@ -557,7 +868,7 @@ function checklistLines(analysis, p) {
 function floorWarning(p) {
   const t = PUBLISH.trusted, s = PUBLISH.staged;
   if (!p.nodeBelowFloor) return null;
-  return `⚠️  node-version ${p.nodeVersion}${p.nodeVersionLine ? ` (${p.file}:${p.nodeVersionLine})` : ''} is below the Node ${t.minNode} floor — that blocks BOTH fixes: `
+  return `⚠️  node-version ${p.nodeVersion}${p.nodeVersionLine ? ` (${p.nodeVersionFile || p.file}:${p.nodeVersionLine})` : ''} is below the Node ${t.minNode} floor — that blocks BOTH fixes: `
     + `trusted publishing needs npm >= ${t.minNpm} and Node >= ${t.minNode}, staged publishing needs npm >= ${s.minNpm} and Node >= ${s.minNode}. `
     + `Bump setup-node to >= ${t.minNode} before either migration can work.`;
 }
@@ -579,11 +890,13 @@ function tokenFixLines(analysis, p) {
   }
   lines.push(`fix for ${p.file}:${p.line} — switch to trusted publishing (OIDC):`);
   if (p.provider === 'github') {
-    lines.push(`  add to the \`${p.job}\` job (or the workflow top level) in ${p.file}:`);
+    const viaChain = p.via && p.via.length ? p.via : null;
+    lines.push(`  add to the \`${p.job}\` job (or the workflow top level) in ${viaChain ? viaChain[0].file : p.file}:`);
     lines.push('    + permissions:');
     lines.push('    +   id-token: write');
+    if (viaChain) lines.push('    (a composite action cannot declare `permissions` — the grant must live on the calling job)');
     if (p.token && p.token.key !== '_authToken') {
-      lines.push(`  remove the token from the publish step (line ${p.token.line}):`);
+      lines.push(`  remove the token from the publish step (${p.via && p.via.length ? `${p.file}:` : 'line '}${p.token.line}):`);
       lines.push('    - env:');
       lines.push(`    -   ${p.token.key}: ${p.token.value || '${{ secrets.NPM_TOKEN }}'}`);
     } else if (p.token) {
@@ -614,9 +927,13 @@ function renderPublish(analysis) {
     const ctx = [p.job ? `job ${p.job}` : null, p.runner && p.runner.label ? p.runner.label : null].filter(Boolean).join(' · ');
     lines.push(`  ${p.classification.padEnd(8)}  ${where}  ${p.tool}${ctx ? `   [${ctx}]` : ''}`);
     lines.push(`            ${p.reason}`);
+    for (const v of p.via || []) {
+      const vctx = [v.job ? `job ${v.job}` : null, v.step ? `step "${v.step}"` : null].filter(Boolean).join(', ');
+      lines.push(`            via ${v.file}:${v.line}${vctx ? ` (${vctx})` : ''}`);
+    }
   }
   if (paths.length === 0) {
-    lines.push('  (none — scanned .github/workflows, .gitlab-ci.yml and .circleci/config.yml)');
+    lines.push('  (none — scanned .github/workflows, .github/actions/**/action.yml, .gitlab-ci.yml and .circleci/config.yml)');
     lines.push('');
     lines.push(`nothing is exposed to npm's ${analysis.cliff.date} token cliff: no publish steps in CI.`);
     return lines.join('\n');
@@ -665,6 +982,7 @@ function publishJson(analysis) {
       environment: p.environment || null,
       nodeVersion: p.nodeVersion === undefined ? null : p.nodeVersion,
       nodeBelowFloor: Boolean(p.nodeBelowFloor),
+      via: p.via || [],
     })),
     repo: analysis.repo,
     engines: { node: analysis.enginesNode, belowFloor: analysis.enginesBelowFloor },
@@ -689,5 +1007,5 @@ function publishFindings(analysis) {
 module.exports = {
   analyzePublish, checkPublish, renderPublish, publishJson, publishFindings,
   classifyAuth, nodePinBelowFloor, enginesMinimum, parseYamlish, detectRunPublisher,
-  classifyRunsOn, idTokenGrant, repoIdentity,
+  classifyRunsOn, idTokenGrant, repoIdentity, resolveLocalUses,
 };
