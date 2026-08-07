@@ -1,8 +1,16 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-08-02 after building v1.5.0._
+_Updated 2026-08-07 after building and shipping v1.7.0._
 
-## v1.5.0 — RELEASED (2026-08-02), latest on npm + GitHub ⬅️ start here
+## v1.7.0 — RELEASED (2026-08-07), latest on npm + GitHub ⬅️ start here
+
+267/267 tests (`node --test`, ~6 s). Shipped end to end: rebased onto the Dependabot acorn bump that had landed mid-build (suite re-run green against it) → pushed `fb5d412` → **CI green on ubuntu/windows × node 20/22 + Guards BEFORE publishing** → tagged `v1.7.0`, moved `v1` → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.7.0) → `npm publish`. npm `latest` = **1.7.0**; clean-room registry install re-verified. Action Marketplace already shows v1.7.0.
+
+**What it fixes — a false all-clear in `publish`.** A release job whose `uses: ./.github/actions/release` held the real `npm publish` + `NODE_AUTH_TOKEN` reported **zero** publish paths and `publish --check` exited 0 — a clean bill of health for exactly the workflow shape npm's January-2027 cliff breaks. Local composite actions and local reusable workflows are now resolved from the working tree and scanned with the calling job's grant (composites cannot declare `permissions`), token indirection through `with:` → `inputs.*` is threaded end-to-end, findings anchor to the real `action.yml` line with a printed `via` chain, and a publishing composite no workflow references is surfaced as UNKNOWN. Third-party actions stay silent. Full detail in PROGRESS.md → v1.7.0.
+
+**Note:** v1.6.0 went to npm but was never tagged/released on GitHub — the tag series skips from `v1.5.0` to `v1.7.0`. The VS Code extension (1.4.0) needs no release for this fix; it invokes the CLI, so its users get 1.7.0 via `npx`. Publishing it still needs a `VSCE_PAT` (owner-gated).
+
+## v1.5.0 — RELEASED (2026-08-02)
 
 245/245 tests (`node --test`, ~6 s). Shipped end to end: pushed `6bab984` → **CI green on ubuntu/windows × node 20/22 + Guards BEFORE publishing** (the 1.0.0 lesson) → tagged `v1.5.0`, moved `v1` → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.5.0) → `npm publish`. npm `latest` = **1.5.0**; clean-room registry install re-verified (17 pkgs, `publish --check` reproduces the worked example on a fresh project and exits 1).
 

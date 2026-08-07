@@ -2,7 +2,7 @@
 
 > ▶️ **Read [`RESUME.md`](RESUME.md) first.**
 
-## v1.7.0 — `publish` follows local composite actions (2026-08-07, all tested; 253 → 267) — BUILT, NOT YET PUSHED/PUBLISHED
+## v1.7.0 — `publish` follows local composite actions (2026-08-07, all tested; 253 → 267) — **RELEASED**
 
 **Phase 0 re-verified live (2026-08-07)**: github.blog 2026-07-31 changelog (the "We are targeting January 2027 for this update." sentence verbatim) · docs.npmjs.com/trusted-publishers (the 11.5.1/22.14.0 floors + the self-hosted sentence, both verbatim) · baseline `node --test` = 253/253 · the composite-action `permissions` fact is an ABSENCE in GitHub's composite-action syntax (composite actions have no `permissions` key), not a quotable sentence. Zero paid resources; no LESSONS.md contradiction.
 
@@ -21,7 +21,13 @@
 - **ACCEPTANCE (all run this session)**: `node --test` 267/267 · `publish --check` on `fixtures/publish-composite-token` exits 1 naming `.github/actions/release/action.yml` (v1.6.0 logic on the same fixture exited 0 with "no publish steps found" — captured before the fix) · `publish --path fixtures/publish-trusted` byte-identical to v1.6.0 · `doctor --offline` on this repo exits 0 · clean-room `npm pack` → install in /tmp → `--version` 1.7.0 + composite fixture reproduces TOKEN/exit 1 from the installed tarball.
 - **Packaging**: 1.7.0, CHANGELOG 1.7.0 headlined as the false-all-clear fix (quotes the 2026-07-31 changelog line from PUBLISH.cliff), README publish section updated (surface + composite paragraph). NOTE: `script-lens.json` still says 1.5.0 (v1.6.0 also didn't regenerate it) — regenerate with `manifest --write` if desired, out of this fix's scope.
 
-**Next steps (owner, from the phone)**: commit is local-only — push `main`, wait for CI green (ubuntu/windows × node 20/22 + Guards), tag `v1.7.0`, move `v1`, GitHub Release, `npm publish` (needs `npm login`; account **booyaka** / gh **Booyaka101**). Promo hook: same discussion 201329 thread — "your release workflow can pass every scanner and still die in January if the publish lives in a composite action". Pre-existing dirty file `fixtures/demo-report.md` was left untouched/uncommitted.
+**SHIPPED 2026-08-07 (owner-directed "push and deploy everywhere")**: rebased onto `d57bea1` (a Dependabot acorn 8.18.0 bump had landed on the remote while this was building — re-ran the suite against the bumped lockfile, 267/267) → pushed `fb5d412` → **CI green on all 4 legs (ubuntu/windows × node 20/22) + Guards green BEFORE publishing** → tagged `v1.7.0`, moved `v1` → [GitHub Release v1.7.0](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.7.0) → `npm publish` → npm `latest` = **1.7.0** (clean-room registry install re-verified: `--version` 1.7.0, composite fixture → TOKEN + exit 1). **GitHub Action Marketplace** listing already tracking v1.7.0.
+
+**Two things found while shipping, both worth knowing:**
+- **v1.6.0 was published to npm but never tagged or released on GitHub** — there is no `v1.6.0` git tag and no Release between v1.5.0 and v1.7.0. The v1.6.0 cooldown work is in `main`'s history (`5b60223`) and in the CHANGELOG, just untagged. Backfill `git tag v1.6.0 5b60223` if a complete tag series matters.
+- **The VS Code extension (`editors/vscode`, 1.4.0) needs no release for this fix** — it shells out to the CLI via a configurable command (default `npx npm-script-lens`), so extension users pick up 1.7.0 automatically; nothing in `editors/vscode/src` touches the publish lens. Publishing it would need a `VSCE_PAT` (not set in this environment) — still owner-gated.
+
+**Remaining (optional)**: promo post on discussion 201329 — "your release workflow can pass every scanner and still die in January if the publish lives in a composite action" (owner-approved posts only). Pre-existing dirty file `fixtures/demo-report.md` was left untouched/uncommitted throughout.
 
 ## v1.5.0 — `publish`: the January-2027 token cliff (2026-08-02, all tested; 245/245)
 
