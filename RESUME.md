@@ -8,7 +8,7 @@ _Updated 2026-08-07 after building and shipping v1.7.0._
 
 **What it fixes — a false all-clear in `publish`.** A release job whose `uses: ./.github/actions/release` held the real `npm publish` + `NODE_AUTH_TOKEN` reported **zero** publish paths and `publish --check` exited 0 — a clean bill of health for exactly the workflow shape npm's January-2027 cliff breaks. Local composite actions and local reusable workflows are now resolved from the working tree and scanned with the calling job's grant (composites cannot declare `permissions`), token indirection through `with:` → `inputs.*` is threaded end-to-end, findings anchor to the real `action.yml` line with a printed `via` chain, and a publishing composite no workflow references is surfaced as UNKNOWN. Third-party actions stay silent. Full detail in PROGRESS.md → v1.7.0.
 
-**Note:** v1.6.0 went to npm but was never tagged/released on GitHub — the tag series skips from `v1.5.0` to `v1.7.0`. The VS Code extension (1.4.0) needs no release for this fix; it invokes the CLI, so its users get 1.7.0 via `npx`. Publishing it still needs a `VSCE_PAT` (owner-gated).
+**Note:** v1.6.0 went to npm but was never tagged/released on GitHub. The **tag was backfilled 2026-08-07** at `5b60223` (the commit npm's 1.6.0 tarball was built from — publish followed it by 30 seconds), so `v1.0.0 … v1.7.0` is now gap-free; there is still no GitHub *Release* for it, which is fine. The VS Code extension (1.4.0) needs no release for this fix; it invokes the CLI, so its users get 1.7.0 via `npx`. Publishing it still needs a `VSCE_PAT` (owner-gated).
 
 ## v1.5.0 — RELEASED (2026-08-02)
 
