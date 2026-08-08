@@ -163,6 +163,7 @@ function activate(context) {
     vscode.commands.registerCommand('npmScriptLens.doctor', cliCommand('doctor', () => ['doctor'])),
     vscode.commands.registerCommand('npmScriptLens.sync', cliCommand('sync allowlist', () => ['sync', '--write'], { writes: true })),
     vscode.commands.registerCommand('npmScriptLens.sources', cliCommand('sources', () => ['sources'])),
+    vscode.commands.registerCommand('npmScriptLens.publish', cliCommand('publish readiness', () => ['publish'])),
   );
 
   // audit any package.json already open at activation

@@ -1,8 +1,8 @@
 {
   "name": "npm-script-lens",
   "displayName": "npm-script-lens",
-  "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists.",
-  "version": "1.4.0",
+  "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists, plus npm 12 migration checks.",
+  "version": "1.7.0",
   "publisher": "booyaka101",
   "license": "MIT",
   "engines": {
@@ -22,7 +22,10 @@
     "security",
     "supply-chain",
     "allowScripts",
-    "postinstall"
+    "postinstall",
+    "npm 12",
+    "migration",
+    "allowlist"
   ],
   "repository": {
     "type": "git",
@@ -60,6 +63,10 @@
       {
         "command": "npmScriptLens.sources",
         "title": "npm-script-lens: Least-privilege .npmrc sources"
+      },
+      {
+        "command": "npmScriptLens.publish",
+        "title": "npm-script-lens: Publish readiness (npm token cliff)"
       }
     ],
     "configuration": {
@@ -114,6 +121,6 @@
   "scripts": {
     "test": "node --test",
     "preflight": "node scripts/preflight.mjs",
-    "vscode:publish": "node scripts/preflight.mjs && vsce publish --packagePath npm-script-lens-1.3.0.vsix"
+    "vscode:publish": "node scripts/preflight.mjs && vsce publish"
   }
 }

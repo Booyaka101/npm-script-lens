@@ -57,6 +57,7 @@ An allowlist entry is older than any advisory published after it, so approving a
   - **npm-script-lens: Review pending approvals**
   - **npm-script-lens: Least-privilege .npmrc sources** — the minimal `allow-git` / `allow-remote` your tree actually needs
   - **npm-script-lens: Doctor (npm compatibility)**
+  - **npm-script-lens: Publish readiness (npm token cliff)** — will this repo's release workflow survive npm's January-2027 token change, and is the fix available here (`publish`)
 
 ## It reads inside `binding.gyp`
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.7.0
+
+Version jumps 1.4.0 → 1.7.0 to line back up with the CLI it fronts. If you
+installed from the Marketplace you were on 1.3.0, so this release also delivers
+everything under 1.4.0 below — the decision-aware diagnostics are the headline.
+
+- **New command: *Publish readiness (npm token cliff)*.** Runs the CLI's
+  `publish` command: will this repo's release workflow still publish after
+  npm's January-2027 change (bypass-2FA tokens lose direct publish)? Classifies
+  every CI publish path as TRUSTED / STAGED / TOKEN / UNKNOWN and prints the
+  YAML patch and the npmjs.com trusted-publisher checklist when something needs
+  moving.
+- Because the extension shells out to `npx npm-script-lens`, CLI gains since
+  1.4.0 arrive with no extension change: `publish` now follows local composite
+  actions and reusable workflows instead of reporting a false all-clear
+  (CLI 1.7.0), and `audit --cooldown` can refuse versions published too
+  recently to have been caught (CLI 1.6.0 — a CI flag; the editor audit is
+  unaffected).
+
 ## 1.4.0
 
 **The diagnostic now knows what you already decided.** Through 1.3.0 the
