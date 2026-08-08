@@ -2,7 +2,7 @@
   "name": "npm-script-lens",
   "displayName": "npm-script-lens",
   "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists, plus npm 12 migration checks.",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "publisher": "booyaka101",
   "license": "MIT",
   "engines": {
@@ -25,7 +25,9 @@
     "postinstall",
     "npm 12",
     "migration",
-    "allowlist"
+    "allowlist",
+    "folderOpen",
+    "claude code hooks"
   ],
   "repository": {
     "type": "git",
@@ -36,7 +38,9 @@
   "bugs": "https://github.com/Booyaka101/npm-script-lens/issues",
   "main": "./src/extension.js",
   "activationEvents": [
-    "workspaceContains:**/package.json"
+    "workspaceContains:**/package.json",
+    "workspaceContains:.vscode/tasks.json",
+    "workspaceContains:.claude/settings.json"
   ],
   "contributes": {
     "commands": [
@@ -67,6 +71,14 @@
       {
         "command": "npmScriptLens.publish",
         "title": "npm-script-lens: Publish readiness (npm token cliff)"
+      },
+      {
+        "command": "npmScriptLens.hooks",
+        "title": "npm-script-lens: Open-time hooks (folderOpen tasks / Claude Code)"
+      },
+      {
+        "command": "npmScriptLens.hooksDeps",
+        "title": "npm-script-lens: Open-time hooks in dependency tarballs (--deps)"
       }
     ],
     "configuration": {

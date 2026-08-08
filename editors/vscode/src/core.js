@@ -23,7 +23,7 @@ const RISK_SEVERITY = {
   SAFE: 'hint',
   ERROR: 'information',
 };
-const RISK_ICON = { MALICIOUS: '⛔', HIGH: '🔴', MEDIUM: '🟠', LOW: '🟡', SAFE: '🟢', ERROR: '⚪' };
+const RISK_ICON = { MALICIOUS: '⛔', HIGH: '🔴', MEDIUM: '🟠', LOW: '🟡', SAFE: '🟢', ERROR: '⚪', INFO: 'ℹ️' };
 
 // 0-based line index where a dependency name is declared in package.json text
 // (`"name": "range"`), or -1. Matches the first occurrence across any
@@ -288,6 +288,73 @@ function summarize(results, { recommended, decisions } = {}) {
   return { counts, text, bad, scripted, undecided, overrides };
 }
 
+// --- open-time hooks (CLI `hooks --json`, since CLI 1.8.0) ------------------
+// The fourth surface: code that runs when the folder is OPENED, not installed.
+// The CLI anchors every finding to a real file:line in .vscode/tasks.json or
+// .claude/settings.json — which are exactly the files you'd have open when you
+// want to know, so the diagnostic lands on the offending task/hook itself.
+
+const HOOK_FILES = ['.vscode/tasks.json', '.claude/settings.json'];
+const isHookFile = (fsPath) => {
+  const p = String(fsPath).replace(/\\/g, '/');
+  return HOOK_FILES.some((f) => p === f || p.endsWith(`/${f}`));
+};
+
+// Parse `hooks --json` stdout, tolerant of leading log lines like parseAudit.
+function parseHooks(stdout) {
+  const i = stdout.indexOf('{');
+  if (i < 0) return null;
+  try {
+    const j = JSON.parse(stdout.slice(i));
+    if (!Array.isArray(j.findings)) return null;
+    return { findings: j.findings, partial: Array.isArray(j.partial) ? j.partial : [] };
+  } catch { return null; }
+}
+
+function hookMessage(f) {
+  const what = f.surface === 'vscode-task'
+    ? `folderOpen task ${f.label ? `"${f.label}"` : '(unnamed)'} runs when this folder is opened${f.silent ? ', silently (presentation.reveal: silent)' : ''}`
+    : f.kind === 'command'
+      ? f.auto
+        ? `${f.event} hook runs on your next Claude Code session in this folder`
+        : `${f.event} hook runs when the agent fires ${f.event} (agent-triggered, not open-time)`
+      : `${f.event} ${f.kind} hook (not shell command execution)`;
+  const target = f.command || f.target || '';
+  const signals = (f.signals || []).map(readableSignal).slice(0, 4).join(' · ');
+  return `${RISK_ICON[f.risk] || ''} ${f.risk} — ${what}: ${target}`
+    + `${signals ? ` · ${signals}` : ''}${f.fromDep ? ` · shipped in ${f.fromDep}` : ''}`;
+}
+
+// Diagnostics for one open hooks-surface document. HIGH is the actionable
+// state (warning, same bar as an undecided risky install script); everything
+// tiered lower — agent-triggered hooks, non-command hook types — is
+// information. A file the CLI reported `partial` gets one line-1 note: a
+// surface file that will not parse is itself worth a look (warning when the
+// raw bytes still mention folderOpen or an auto event).
+function diagnosticsForHooksFile(relFile, findings, partials = []) {
+  const rel = String(relFile).replace(/\\/g, '/');
+  const out = [];
+  for (const f of findings) {
+    if (f.file !== rel) continue;
+    out.push({
+      line: Math.max(0, (f.line || 1) - 1),
+      severity: f.risk === 'HIGH' ? 'warning' : 'information',
+      risk: f.risk,
+      message: hookMessage(f),
+    });
+  }
+  for (const p of partials) {
+    if (p.file !== rel) continue;
+    out.push({
+      line: 0,
+      severity: p.rawHit ? 'warning' : 'information',
+      risk: 'PARTIAL',
+      message: `⚠️ npm-script-lens could not fully read this file — ${p.note}`,
+    });
+  }
+  return out;
+}
+
 // Parse `audit --json` stdout into { results, recommended } (tolerant of leading
 // human log lines that landed on stdout). `recommended` is the CLI's own
 // name@version → boolean verdict, which is what makes an override detectable:
@@ -306,4 +373,5 @@ module.exports = {
   findDepLine, findYamlKeyLine, diagnosticsForPackageJson, diagnosticsForWorkspaceYaml,
   summarize, parseAudit, readDecisions, decisionFor, parseAllowBuilds, stateFor,
   riskOf, messageFor, condenseSignals, readableSignal, RISK_SEVERITY, RISK_ICON,
+  isHookFile, parseHooks, hookMessage, diagnosticsForHooksFile, HOOK_FILES,
 };

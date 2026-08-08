@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.8.0
+
+**Diagnostics on the open-time surface.** The 2026-08-04 keyv worm persisted
+via exactly two files this editor shows you every day — Wiz: *"Persistence is
+attempted via Claude Code hooks and VS Code `tasks.json`"*. The extension now
+scans them where you read them:
+
+- **Inline diagnostics on `.vscode/tasks.json` and `.claude/settings.json`.**
+  Open or save either file and the CLI's new `hooks` scan (CLI 1.8.0) paints
+  each finding on its real line: a `runOn: "folderOpen"` task or an
+  auto-firing `SessionStart`/`Setup`/`InstructionsLoaded` command hook at HIGH
+  is a **warning**; agent-triggered hooks and non-command hook types
+  (http/mcp_tool/prompt/agent) are **information**; a file the tolerant JSONC
+  reader could not parse gets one note (a warning when the raw bytes still
+  mention `folderOpen` or an auto event — broken syntax is a place to hide).
+- **Two new commands:** *Open-time hooks (folderOpen tasks / Claude Code)*
+  runs the workspace scan in the output channel; *Open-time hooks in
+  dependency tarballs (--deps)* additionally downloads every locked
+  dependency's tarball — a shipped folderOpen task is HIGH regardless of its
+  command (the hijacked `html-to-gutenberg`/`fetch-page-assets` releases hid
+  one named "eslint-check").
+- Activation now also triggers on workspaces carrying `.vscode/tasks.json` or
+  `.claude/settings.json`. On a CLI older than 1.8.0 the hooks scan degrades
+  to a one-line note in the output channel; nothing else changes.
+
 ## 1.7.0
 
 Version jumps 1.4.0 → 1.7.0 to line back up with the CLI it fronts. If you

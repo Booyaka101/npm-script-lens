@@ -118,6 +118,38 @@ async function refresh(doc) {
   status.show();
 }
 
+// Diagnostics on the open-time surfaces themselves. When a .vscode/tasks.json
+// or .claude/settings.json is opened or saved, run `hooks --json` (CLI 1.8.0)
+// and paint the findings on their real lines — every open hooks file in the
+// workspace repaints from the one scan, same discipline as refresh(). On a CLI
+// too old to know `hooks`, parseHooks returns null and nothing is painted.
+async function refreshHooks(doc) {
+  if (!doc || !core.isHookFile(doc.uri.fsPath)) return;
+  const cwd = workspaceDir(doc);
+  if (!cwd) return;
+  const { stdout, stderr, code } = await runCli(['hooks', '--json'], cwd);
+  const parsed = core.parseHooks(stdout);
+  if (!parsed) {
+    channel.appendLine(`hooks scan failed (exit ${code}): ${stderr.trim() || stdout.trim() || 'no output'} — CLI >= 1.8.0 required`);
+    return;
+  }
+  const open = new Map([[doc.uri.toString(), doc]]);
+  for (const d of vscode.workspace.textDocuments) {
+    if (core.isHookFile(d.uri.fsPath) && workspaceDir(d) === cwd) open.set(d.uri.toString(), d);
+  }
+  for (const d of open.values()) {
+    const rel = path.relative(cwd, d.uri.fsPath).replace(/\\/g, '/');
+    const found = core.diagnosticsForHooksFile(rel, parsed.findings, parsed.partial);
+    diagnostics.set(d.uri, found.map((f) => {
+      const line = Math.min(f.line, d.lineCount - 1);
+      const diag = new vscode.Diagnostic(d.lineAt(line).range, f.message,
+        SEVERITY[f.severity] || vscode.DiagnosticSeverity.Information);
+      diag.source = 'npm-script-lens';
+      return diag;
+    }));
+  }
+}
+
 // Re-audit after a command that writes an allowlist: the CLI edits the file on
 // disk, so onDidSaveTextDocument never fires and the diagnostics would still be
 // demanding a decision that was just made. One tracked document is enough —
@@ -149,7 +181,10 @@ function activate(context) {
   status.command = 'npmScriptLens.audit';
   context.subscriptions.push(channel, diagnostics, status);
 
-  const rerun = (doc) => { refresh(doc).catch((e) => channel.appendLine(`error: ${e.message}`)); };
+  const rerun = (doc) => {
+    refresh(doc).catch((e) => channel.appendLine(`error: ${e.message}`));
+    refreshHooks(doc).catch((e) => channel.appendLine(`error: ${e.message}`));
+  };
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(rerun),
     vscode.workspace.onDidSaveTextDocument(rerun),
@@ -164,6 +199,8 @@ function activate(context) {
     vscode.commands.registerCommand('npmScriptLens.sync', cliCommand('sync allowlist', () => ['sync', '--write'], { writes: true })),
     vscode.commands.registerCommand('npmScriptLens.sources', cliCommand('sources', () => ['sources'])),
     vscode.commands.registerCommand('npmScriptLens.publish', cliCommand('publish readiness', () => ['publish'])),
+    vscode.commands.registerCommand('npmScriptLens.hooks', cliCommand('open-time hooks', () => ['hooks'])),
+    vscode.commands.registerCommand('npmScriptLens.hooksDeps', cliCommand('open-time hooks (dependency tarballs)', () => ['hooks', '--deps'])),
   );
 
   // audit any package.json already open at activation

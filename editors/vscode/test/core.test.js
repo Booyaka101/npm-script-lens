@@ -327,3 +327,69 @@ test('parseAudit keeps the recommendation alongside the results', () => {
   assert.strictEqual(parseAudit('npm ERR broke'), null);
   assert.deepStrictEqual(parseAudit('{"results":[]}').recommended, {}, 'missing allowScripts is not a crash');
 });
+
+// --- open-time hooks (CLI 1.8.0 `hooks --json`) -----------------------------
+
+const { isHookFile, parseHooks, hookMessage, diagnosticsForHooksFile } = require('../src/core');
+
+const HOOK_FINDINGS = [
+  { file: '.vscode/tasks.json', line: 4, surface: 'vscode-task', kind: 'command', auto: true, label: 'eslint-check', command: 'node .vscode/setup.mjs', silent: true, signals: ['exec: node .vscode/setup.mjs (file not present)'], risk: 'HIGH' },
+  { file: '.claude/settings.json', line: 3, surface: 'claude-hook', event: 'SessionStart', kind: 'command', auto: true, command: 'node .claude/setup.mjs', signals: [], risk: 'HIGH' },
+  { file: '.claude/settings.json', line: 7, surface: 'claude-hook', event: 'PreToolUse', kind: 'command', auto: false, command: 'node check.js', signals: [], risk: 'MEDIUM' },
+  { file: '.claude/settings.json', line: 9, surface: 'claude-hook', event: 'SessionStart', kind: 'http', auto: true, target: 'https://collector.example', risk: 'INFO' },
+];
+
+test('isHookFile matches the two surfaces at any depth, with either separator', () => {
+  assert.ok(isHookFile('.vscode/tasks.json'));
+  assert.ok(isHookFile(String.raw`D:\repo\.claude\settings.json`));
+  assert.ok(isHookFile('/repo/packages/app/.vscode/tasks.json'));
+  assert.ok(!isHookFile('package.json'));
+  assert.ok(!isHookFile('.vscode/settings.json'), 'vscode settings.json is not a surface');
+  assert.ok(!isHookFile('.claude/settings.local.json'), 'machine-local file is out of scope');
+});
+
+test('parseHooks tolerates leading log noise, rejects non-hooks JSON', () => {
+  const parsed = parseHooks('scanning…\n{"findings":[{"file":"x","risk":"HIGH"}],"partial":[]}');
+  assert.strictEqual(parsed.findings.length, 1);
+  assert.deepStrictEqual(parsed.partial, []);
+  assert.strictEqual(parseHooks('npm ERR broke'), null);
+  assert.strictEqual(parseHooks('{"results":[]}'), null, 'audit JSON is not hooks JSON');
+});
+
+test('diagnosticsForHooksFile: HIGH is a warning on the 0-based line, only for its own file', () => {
+  const vs = diagnosticsForHooksFile('.vscode/tasks.json', HOOK_FINDINGS);
+  assert.strictEqual(vs.length, 1);
+  assert.strictEqual(vs[0].line, 3);
+  assert.strictEqual(vs[0].severity, 'warning');
+  assert.ok(vs[0].message.includes('folderOpen task "eslint-check"'));
+  assert.ok(vs[0].message.includes('silently'), 'reveal: silent is called out');
+
+  const cl = diagnosticsForHooksFile('.claude/settings.json', HOOK_FINDINGS);
+  assert.strictEqual(cl.length, 3);
+  assert.strictEqual(cl[0].severity, 'warning');
+  assert.ok(cl[0].message.includes('next Claude Code session'), cl[0].message);
+  const pre = cl.find((d) => d.message.includes('PreToolUse'));
+  assert.strictEqual(pre.severity, 'information', 'agent-triggered tiers below warning');
+  assert.ok(pre.message.includes('agent-triggered'));
+  const http = cl.find((d) => d.message.includes('http hook'));
+  assert.strictEqual(http.severity, 'information');
+  assert.ok(http.message.includes('not shell command execution'));
+});
+
+test('diagnosticsForHooksFile: a partial file gets one note, warning when rawHit', () => {
+  const partials = [
+    { file: '.vscode/tasks.json', note: 'did not parse — raw text mentions "folderOpen"', rawHit: true },
+    { file: '.claude/settings.json', note: 'did not parse as JSON/JSONC', rawHit: false },
+  ];
+  const vs = diagnosticsForHooksFile('.vscode/tasks.json', [], partials);
+  assert.strictEqual(vs.length, 1);
+  assert.strictEqual(vs[0].line, 0);
+  assert.strictEqual(vs[0].severity, 'warning');
+  const cl = diagnosticsForHooksFile('.claude/settings.json', [], partials);
+  assert.strictEqual(cl[0].severity, 'information');
+});
+
+test('hookMessage: shipped-in-dependency findings say so', () => {
+  const msg = hookMessage({ surface: 'vscode-task', label: 'eslint-check', command: 'echo hello', risk: 'HIGH', fromDep: 'evil-open@1.0.0', signals: [] });
+  assert.ok(msg.includes('shipped in evil-open@1.0.0'), msg);
+});

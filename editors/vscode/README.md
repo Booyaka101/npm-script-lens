@@ -49,6 +49,7 @@ An allowlist entry is older than any advisory published after it, so approving a
 ## What it does
 
 - **Inline diagnostics** on `package.json` (and on `pnpm-workspace.yaml`, the one place a decision lives outside `package.json`): every undecided dependency whose install script spawns processes, reaches the network, or is flagged malicious gets a squiggle on its line, with the evidence in the message. Decided and clean packages stay quiet.
+- **Inline diagnostics on the open-time surface** — `.vscode/tasks.json` and `.claude/settings.json`, the two files the 2026-08-04 keyv worm used for persistence (Wiz: *"Persistence is attempted via Claude Code hooks and VS Code `tasks.json`"*). A task with `"runOn": "folderOpen"` or an auto-firing `SessionStart`/`Setup`/`InstructionsLoaded` command hook gets a warning on its own line, classified through the same risk ladder as the audit; agent-triggered hooks and non-command hook types show as information. Needs CLI ≥ 1.8.0 (degrades to a note in the output channel on older CLIs).
 - **Status bar** summary, leading with how many packages still need a ruling.
 - **Commands** (Command Palette):
   - **npm-script-lens: Audit install scripts**
@@ -58,6 +59,8 @@ An allowlist entry is older than any advisory published after it, so approving a
   - **npm-script-lens: Least-privilege .npmrc sources** — the minimal `allow-git` / `allow-remote` your tree actually needs
   - **npm-script-lens: Doctor (npm compatibility)**
   - **npm-script-lens: Publish readiness (npm token cliff)** — will this repo's release workflow survive npm's January-2027 token change, and is the fix available here (`publish`)
+  - **npm-script-lens: Open-time hooks (folderOpen tasks / Claude Code)** — scan the working tree for code that runs when the folder is *opened*, not installed (`hooks`)
+  - **npm-script-lens: Open-time hooks in dependency tarballs (--deps)** — also download and scan every locked dependency's tarball; a shipped folderOpen task is HIGH regardless of its command (`hooks --deps`)
 
 ## It reads inside `binding.gyp`
 
