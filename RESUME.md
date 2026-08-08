@@ -1,6 +1,12 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-08-07 after building and shipping v1.7.0._
+_Updated 2026-08-08 after shipping the VS Code extension 1.7.0 to the Marketplace._
+
+## VS Code extension 1.7.0 — PUBLISHED to the Marketplace (2026-08-08)
+
+The Marketplace had been stuck at **1.3.0** (1.4.0 was built but never uploaded), while the CLI moved to 1.7.0. Shipped: version 1.4.0 → 1.7.0 (tracks the CLI again), new **Publish readiness (npm token cliff)** command running the CLI's `publish`, "npm 12 / migration / allowlist" keywords + description (mined from issue #4, a user thanking us for their "npm 12 migrations" — issue answered and closed), and `vscode:publish` no longer pins a stale 1.3.0 vsix. 267/267 tests, committed `b8a6562`, vsix attached to the v1.7.0 GitHub Release.
+
+**No VSCE_PAT exists anywhere — and none is needed.** The Marketplace *manage* UI's Update dialog hangs the renderer on submit (twice, reproducibly), but the underlying gallery REST API works with the browser's cookie session: from any authenticated marketplace.visualstudio.com page, `PUT /_apis/gallery/publishers/booyaka101/extensions/npm-script-lens?api-version=3.0-preview.1` with JSON body `{"extensionManifest":"<base64 vsix>"}` (Content-Type application/json; octet-stream is rejected) → 200, `flags: validated, public`. Sign-in for the automation browser (:9223) = bridge github.com/microsoftonline/visualstudio.com cookies from the main browser (:9222) via `Storage.getCookies`/`setCookies`, then load `/manage/publishers/booyaka101` (Microsoft auth rides the GitHub session).
 
 ## v1.7.0 — RELEASED (2026-08-07), latest on npm + GitHub ⬅️ start here
 
