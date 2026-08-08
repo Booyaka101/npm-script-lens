@@ -238,7 +238,62 @@ async function publishCheckMain() {
   process.exitCode = 1;
 }
 
-const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain, 'publish-check': publishCheckMain };
+// `node action.js hooks-check` — opt-in gate (the `hooks-check` input): fails
+// the job when the working tree carries a HIGH open-time execution entry — a
+// .vscode/tasks.json task with runOn: folderOpen or an auto-firing
+// .claude/settings.json command hook (SessionStart/Setup/InstructionsLoaded).
+// Code that runs when the folder is OPENED, before any install step the other
+// gates cover. ::error per finding and a hook-auto-run SARIF result merged
+// into the file the audit step wrote. No network.
+async function hooksCheckMain() {
+  const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
+  const target = input('PATH', '.');
+  const { scanProject, checkHooks, renderHooks, surfaceCaveats, hooksFindings } = require('./hooks');
+  let scan;
+  try {
+    scan = scanProject(target);
+  } catch (err) {
+    console.log(`open-time execution check skipped: ${err.message}`);
+    return;
+  }
+  const { ok, over } = checkHooks(scan.findings, 'high');
+  if (ok) {
+    const detail = scan.findings.length === 0 && scan.partials.length === 0
+      ? 'no folderOpen tasks or Claude Code hooks in the working tree'
+      : `${scan.findings.length} entr${scan.findings.length === 1 ? 'y' : 'ies'} found, none HIGH${scan.partials.length ? ` (${scan.partials.length} file(s) partial)` : ''}`;
+    console.log(`open-time execution check passed: ${detail}.`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ✅ open-time execution check\n\nPassed: ${detail}.\n`);
+    }
+    return;
+  }
+  for (const f of over) console.log(`::error::open-time execution: ${f.file}:${f.line || 1} — ${f.command || f.note || f.surface}${f.fromDep ? ` (shipped in ${f.fromDep})` : ''}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `\n## ❌ open-time execution check\n\n\`\`\`\n${renderHooks(scan.findings, scan.partials)}\n\`\`\`\n\n${surfaceCaveats(scan.findings).map((c) => `> ${c}`).join('\n')}\n\nInspect with \`npx npm-script-lens hooks\` (add \`--deps\` to also scan dependency tarballs).\n`);
+  }
+  const sarifFile = input('SARIF_FILE', '');
+  const findings = hooksFindings(scan.findings);
+  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
+    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
+    const run = sarif.runs && sarif.runs[0];
+    if (run) {
+      const fresh = buildSarif([], { lockPath: 'package.json', lockText: '', findings });
+      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
+      run.tool.driver.rules = run.tool.driver.rules || [];
+      for (const rule of fresh.runs[0].tool.driver.rules) {
+        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
+      }
+      run.results = run.results || [];
+      run.results.push(...fresh.runs[0].results);
+      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
+      console.log(`merged ${findings.length} hook-auto-run finding(s) into ${sarifFile}`);
+    }
+  }
+  process.exitCode = 1;
+}
+
+const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain, 'publish-check': publishCheckMain, 'hooks-check': hooksCheckMain };
 (MODE[process.argv[2]] || main)().catch((err) => {
   console.log(`::error::${err.message}`);
   process.exitCode = 2;

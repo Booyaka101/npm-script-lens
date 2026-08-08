@@ -146,6 +146,15 @@ const PUBLISH_RULE = {
   text: 'CI publish step authenticates with a long-lived npm token — 2FA-bypass tokens lose direct publish around January 2027; migrate to trusted publishing (OIDC) or staged publishing',
 };
 
+// An open-time execution entry (from src/hooks.js): a .vscode/tasks.json task
+// with runOn: folderOpen, or a .claude/settings.json hook — code that runs
+// when the folder is opened, before any install step. warning by default,
+// error when the entry scores HIGH (or ships inside a dependency tarball).
+const HOOK_RULE = {
+  id: 'hook-auto-run',
+  text: 'Editor or agent configuration runs a command automatically at open time (.vscode/tasks.json runOn: folderOpen, or a .claude/settings.json hook) — code executes when the folder is opened, with no install step involved',
+};
+
 // SARIF 2.1.0 for GitHub code scanning: one result per risky package, level
 // mapped from risk, anchored to the package's line in the lockfile so alerts
 // annotate the right place.
@@ -229,7 +238,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
           name: 'npm-script-lens',
           informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
-          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE].map((rule) => ({
+          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, HOOK_RULE].map((rule) => ({
             id: rule.id,
             shortDescription: { text: rule.text },
           })),

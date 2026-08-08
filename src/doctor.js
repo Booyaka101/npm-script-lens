@@ -153,6 +153,24 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     add('publish readiness', 'info', 'could not analyze the CI configs at this path');
   }
 
+  // Open-time execution surfaces — the keyv/ChainDrop worm's persistence
+  // layer (2026-08-04): folderOpen tasks and Claude Code hooks fire when the
+  // folder is opened, before any install step this tool's other checks gate.
+  try {
+    const { scanProject } = require('./hooks');
+    const scan = scanProject(projectDir);
+    const auto = scan.findings.filter((f) => f.auto && f.kind === 'command');
+    if (auto.length > 0) {
+      add('open-time hooks', 'warn', `${auto.length} auto-run entr${auto.length === 1 ? 'y' : 'ies'} in the working tree (.vscode/tasks.json folderOpen tasks / .claude/settings.json hooks) — inspect with \`npm-script-lens hooks\``);
+    } else if (scan.partials.length > 0) {
+      add('open-time hooks', 'warn', `${scan.partials.length} surface file(s) did not parse — inspect with \`npm-script-lens hooks\``);
+    } else {
+      add('open-time hooks', 'ok', 'no folderOpen tasks or auto-firing Claude Code command hooks in the working tree (`hooks --deps` also checks dependency tarballs)');
+    }
+  } catch {
+    add('open-time hooks', 'info', 'could not scan the working tree for open-time execution surfaces');
+  }
+
   // Contract summary + detector currency
   add('assumed contract', 'info',
     `field=${ALLOWSCRIPTS_FIELD} · dry-run=\`npm ${DRY_RUN_ARGS.join(' ')}\` · key=${UNREVIEWED_KEY} · min npm=v${MIN_ALLOWSCRIPTS_NPM}`);

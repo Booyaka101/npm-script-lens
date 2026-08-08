@@ -74,6 +74,14 @@ inputs:
       around January 2027; trusted (OIDC) and staged publishing survive.
       'true' to enable (opt-in).
     default: 'false'
+  hooks-check:
+    description: >-
+      Fail the job (exit 1) when the working tree carries a HIGH open-time
+      execution entry — a .vscode/tasks.json task with runOn folderOpen or an
+      auto-firing .claude/settings.json command hook (SessionStart / Setup /
+      InstructionsLoaded) — code that runs when the folder is opened, with no
+      install step involved. 'true' to enable (opt-in).
+    default: 'false'
   sync-check:
     description: >-
       Fail the job (exit 1) when the install-script allowlist has drifted from
@@ -143,6 +151,14 @@ runs:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
       run: node "$GITHUB_ACTION_PATH/src/action.js" publish-check
+    - name: Check for open-time execution entries
+      # opt-in gate: folderOpen tasks and auto-firing Claude Code hooks
+      if: ${{ always() && inputs.hooks-check == 'true' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: node "$GITHUB_ACTION_PATH/src/action.js" hooks-check
     - name: Check the install-script allowlist is in sync
       # opt-in cross-ecosystem drift gate (npm/pnpm/yarn/bun, auto-detected)
       if: ${{ always() && inputs.sync-check == 'true' }}

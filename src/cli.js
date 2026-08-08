@@ -1051,6 +1051,49 @@ async function publishAction(opts) {
   }
 }
 
+// --- hooks: the open-time execution surface --------------------------------
+// The fourth place code runs without the developer asking: not install time
+// (audit/allow), not resolution time (sources), not publish time (publish) —
+// OPEN time. .vscode/tasks.json folderOpen tasks and .claude/settings.json
+// hooks, in the working tree and (with --deps) inside every locked
+// dependency's tarball. The 2026-08-04 keyv/ChainDrop worm used both.
+
+async function hooksAction(dir, opts) {
+  const {
+    scanProject, scanDeps, checkHooks, renderHooks, surfaceCaveats, hooksJson, hooksFindings,
+  } = require('./hooks');
+  const scan = scanProject(dir);
+  let depErrors = [], depsScanned = null;
+  if (opts.deps) {
+    const d = await scanDeps(dir, { cache: opts.cache, log: (m) => process.stderr.write(`${m}\n`) });
+    scan.findings.push(...d.findings);
+    depErrors = d.errors;
+    depsScanned = d.total;
+  }
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(hooksJson(scan.findings, scan.partials, { errors: depErrors, depsScanned }), null, 2)}\n`);
+  } else {
+    process.stdout.write(`${renderHooks(scan.findings, scan.partials)}\n`);
+  }
+  // the two surfaces gate differently — each caveat prints only for its own
+  for (const c of surfaceCaveats(scan.findings)) process.stderr.write(`${c}\n`);
+  for (const e of depErrors) process.stderr.write(`--deps: could not fetch ${e}\n`);
+  if (opts.sarif) {
+    const file = opts.sarif === true ? 'hooks.sarif' : opts.sarif;
+    // findings anchor to their own file:line; no lockfile is required
+    fs.writeFileSync(file,
+      JSON.stringify(buildSarif([], { lockPath: 'package.json', lockText: '', findings: hooksFindings(scan.findings) }), null, 2));
+    process.stderr.write(`SARIF written to ${file}\n`);
+  }
+  if (opts.check) {
+    const { ok, over } = checkHooks(scan.findings, opts.failOn);
+    if (!ok) {
+      process.stderr.write(`FAIL: ${over.length} open-time execution entr${over.length === 1 ? 'y' : 'ies'} at or above the --fail-on ${opts.failOn} floor\n`);
+      process.exitCode = 1;
+    }
+  }
+}
+
 // --- doctor: does this build still understand your npm? -------------------
 
 async function doctorAction(opts) {
@@ -1198,6 +1241,16 @@ if (require.main === module) {
     .option('--sarif <file>', 'also write SARIF 2.1.0 (rule publish-token-cliff, anchored to the workflow line)')
     .option('--check', 'exit 1 when a publish path still authenticates with a long-lived token (TOKEN); UNKNOWN and no-publish repos pass (for CI)')
     .action(publishAction);
+  program.command('hooks')
+    .description('scan the open-time execution surface — the code that runs when a folder is OPENED, not installed: .vscode/tasks.json tasks with runOptions.runOn "folderOpen" and .claude/settings.json hooks (auto-firing SessionStart/Setup/InstructionsLoaded tiered above agent-triggered PreToolUse/PostToolUse) — classified through the same risk ladder as audit; --deps also scans every locked dependency\'s tarball, where any shipped auto-run entry is HIGH regardless of command')
+    .argument('[dir]', 'project directory to scan (monorepo subdirectories included; node_modules excluded — that is what --deps covers)', '.')
+    .option('--json', 'emit { findings, partial, caveats, deps } JSON instead of text')
+    .option('--sarif [file]', 'also write SARIF 2.1.0 (rule hook-auto-run: warning, error at HIGH), anchored to the real file:line', undefined)
+    .option('--check', 'exit 1 when any finding is at or above the --fail-on floor (for CI)')
+    .option('--fail-on <level>', 'floor for --check: none | medium | high', 'high')
+    .option('--deps', 'also scan every locked dependency\'s registry tarball for shipped .vscode/tasks.json / .claude/settings.json — a folderOpen task inside a package is a payload, not a team convention (tiered HIGH regardless of command)')
+    .option('--no-cache', 'disable the on-disk result cache for --deps')
+    .action(hooksAction);
   program.command('doctor')
     .description('check whether this build still understands your local npm (contract probe + parser self-test + live dry-run shape check) — exit 1 on drift')
     .option('--path <path>', 'project dir or lockfile to probe live', '.')

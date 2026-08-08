@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.8.0 (2026-08-08)
+
+**The open-time surface.** npm-script-lens already covered three moments where
+code runs without the developer asking: install time (`audit`/`allow`),
+resolution time (`sources`) and publish time (`publish`). The 2026-08-04 keyv
+compromise added a fourth this tool was blind to — **open time**. Wiz's
+teardown of that worm says it plainly: *"Persistence is attempted via Claude
+Code hooks and VS Code `tasks.json`"* — two separately-hashed `setup.mjs`
+payloads, one under `.claude`, one under `.vscode`. And the tarball half
+predates the worm: the hijacked `html-to-gutenberg` / `fetch-page-assets`
+releases (2026-05-25) shipped a hidden VS Code task named `eslint-check` with
+`"runOn": "folderOpen"` inside the published package — firing when the package
+directory itself is opened as a workspace. Code that runs when a folder is
+*opened* never crosses an install-time gate.
+
+- **New `hooks [dir]` command** (`--check` / `--fail-on <none|medium|high>` /
+  `--json` / `--sarif [file]` / `--deps`): scans two surfaces, table-driven in
+  `src/hooks.js` so adding an editor is a one-file patch —
+  `.vscode/tasks.json` tasks with `runOptions.runOn: "folderOpen"` (label,
+  command+args, type, and `presentation.reveal: "silent"` noted) and
+  `.claude/settings.json` hooks. Auto-firing Claude events (`SessionStart`,
+  `Setup`, `InstructionsLoaded`) tier at full strength; agent-triggered ones
+  (`PreToolUse`, `PostToolUse`, …) are collected, tiered one level lower and
+  labelled as such; the four non-command hook types (`http`, `mcp_tool`,
+  `prompt`, `agent` — with `command`, the complete documented set) are
+  reported but never as command execution.
+- **The risk model is not forked.** Every extracted command string feeds the
+  same shell-signal extraction and `score()` that `audit` applies to a
+  lifecycle script — `curl … | sh`, base64 payloads, `node -e` bodies and the
+  EXEC/NET binary sets are already understood, and a `node setup.mjs` whose
+  file exists on disk gets that file walked too.
+- **Tolerant JSONC reader** in the same spirit as the gyp lens: both files
+  permit comments and trailing commas, so the parser accepts them and anchors
+  every finding to a real `file:line`; a file that will not parse is reported
+  `partial` (with a raw-text hint when `folderOpen` or an auto event name
+  appears in the bytes), never passed silently, never a crash.
+- **`--deps` scans every locked dependency's tarball** via the existing
+  registry/cache path — a folderOpen task or auto-firing hook inside a
+  *package* is a shipped payload, not a team convention, so it is **HIGH
+  regardless of command** (an `echo` proves nothing there), and an
+  unparseable surface file inside a tarball is HIGH too. The working-tree
+  scan walks monorepo subdirectories and deliberately skips `node_modules` —
+  that is exactly what `--deps` covers.
+- **The two surfaces are gated differently, and the caveats say so** — one
+  next to each surface, never shared: a `.vscode/tasks.json` finding means
+  *"this runs once you trust this folder and allow automatic tasks"* (VS Code
+  1.117 defaults `task.allowAutomaticTasks` to `off` with a one-time prompt
+  that does **not** display the command — microsoft/vscode#309406 — and
+  automatic tasks never run in an untrusted workspace); a
+  `.claude/settings.json` `SessionStart` finding means *"this runs on your
+  next session in this trusted folder"* — there is no hook review gate
+  (*"Claude Code doesn't use the same hook review gate as Codex"* — Datadog
+  Security Labs, 2026-08).
+- **Integrations:** SARIF rule `hook-auto-run` (warning; error at HIGH),
+  anchored to the real file:line; opt-in `hooks-check` Action input shaped
+  like `publish-check` (`::error` annotations, job-summary section, findings
+  merged into the audit step's SARIF file); a `doctor` line for the open-time
+  surface; shell completion knows `hooks`, `--fail-on` and `--deps`.
+
 ## 1.7.0 (2026-08-07)
 
 **The false all-clear.** If your release job is

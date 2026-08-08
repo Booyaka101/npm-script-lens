@@ -1,6 +1,6 @@
 {
   "name": "npm-script-lens",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Audit npm lifecycle scripts for behavioral risks (exec/network/fs) before approving them under npm v12's allowScripts",
   "license": "MIT",
   "author": "cbosch101 <cbosch101@gmail.com>",
@@ -40,7 +40,10 @@
     "audit",
     "binding.gyp",
     "node-gyp",
-    "gyp"
+    "gyp",
+    "folderOpen",
+    "tasks.json",
+    "claude-code-hooks"
   ],
   "dependencies": {
     "acorn": "^8.12.0",

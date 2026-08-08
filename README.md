@@ -363,6 +363,84 @@ npmjs.com trusted-publisher settings (package Settings → Trusted publisher):
 [`publish-check` input](#github-action) fails the job with an `::error` and a
 `publish-token-cliff` SARIF result when a TOKEN path remains.
 
+## hooks: what runs when the folder is *opened*?
+
+npm-script-lens covers three moments where code runs without you asking:
+install time (`audit`/`allow`), resolution time (`sources`), publish time
+(`publish`). The 2026-08-04 keyv/ChainDrop worm used a fourth — **open
+time**. [Wiz's teardown](https://www.wiz.io/blog/keyv-and-cacheable-npm-supply-chain-attack)
+says it plainly: *"Persistence is attempted via Claude Code hooks and VS Code
+`tasks.json`"* — two separately-hashed `setup.mjs` payloads, one under
+`.claude`, one under `.vscode`. And the tarball half predates the worm:
+[hijacked npm packages](https://thehackernews.com/2026/06/hijacked-npm-and-go-packages-use-vs.html)
+`html-to-gutenberg` and `fetch-page-assets` (2026-05-25) shipped a hidden VS
+Code task named `eslint-check` with `"runOn": "folderOpen"` — firing when the
+package directory itself is opened as a workspace.
+
+```bash
+npx npm-script-lens hooks                  # scan the working tree (monorepo subdirs included)
+npx npm-script-lens hooks --check          # CI: exit 1 at or above the --fail-on floor (default high)
+npx npm-script-lens hooks --deps           # also scan every locked dependency's tarball
+npx npm-script-lens hooks --json           # { findings, partial, caveats, deps }
+npx npm-script-lens hooks --sarif hooks.sarif   # rule hook-auto-run, anchored to the real file:line
+```
+
+Two surfaces (one table row each in `src/hooks.js` — adding an editor is a
+one-file patch):
+
+- **`.vscode/tasks.json`** — any task whose `runOptions.runOn` is
+  `"folderOpen"`, with its label, command+args, type, and whether
+  `presentation.reveal: "silent"` hides the terminal.
+- **`.claude/settings.json`** — a [documented project-level, committable
+  hooks location](https://code.claude.com/docs/en/hooks). Auto-firing events
+  (`SessionStart`, `Setup`, `InstructionsLoaded`) tier at full strength;
+  agent-triggered ones (`PreToolUse`, `PostToolUse`, …) are collected, tiered
+  one level lower and labelled. The four non-command hook types (`http`,
+  `mcp_tool`, `prompt`, `agent` — with `command`, the complete documented
+  set) are reported, but never as command execution.
+
+Both files permit comments and trailing commas, so the reader is a tolerant
+JSONC parser in the same spirit as [the gyp lens](#the-gyp-lens-what-is-actually-inside-bindinggyp):
+a file that will not parse is reported `partial` (with a raw-text hint when
+`folderOpen` or an auto event name appears in the bytes), never passed
+silently, never a crash. Every command string feeds the **same** shell-signal
+extraction and `score()` that `audit` applies to a lifecycle script — the
+risk ladder is not forked. Real output for a repo carrying both worm
+artifacts:
+
+```
+.vscode/tasks.json:4  HIGH  folderOpen task "eslint-check" → node .vscode/setup.mjs (silent)
+.claude/settings.json:3  HIGH  SessionStart hook → node .claude/setup.mjs
+2 open-time execution entries found (2 HIGH).
+```
+
+`--deps` additionally downloads every locked dependency's tarball (cached,
+like audit results) and scans it for shipped `.vscode`/`.claude` surfaces — a
+folderOpen task inside a *package* is a payload, not a team convention, so it
+is **HIGH regardless of command**.
+
+The two surfaces gate very differently, and the tool prints each caveat next
+to its own surface rather than one softened blend:
+
+> **VS Code:** a `.vscode/tasks.json` finding means *"this runs once you
+> trust this folder and allow automatic tasks"*, not *"this has run"* —
+> [VS Code 1.117](https://code.visualstudio.com/docs/debugtest/tasks)
+> defaults `task.allowAutomaticTasks` to `off` with a one-time Allow/Disallow
+> prompt, workspace settings can no longer define that key, and automatic
+> tasks never run in an untrusted workspace. The residual gap
+> ([microsoft/vscode#309406](https://github.com/microsoft/vscode/issues/309406))
+> is that the prompt does **not** display the command it is about to allow.
+>
+> **Claude Code:** a `SessionStart` finding means *"this runs on your next
+> session in this trusted folder"* — there is **no hook review gate** before
+> a project `.claude/settings.json` command hook fires (*"Claude Code doesn't
+> use the same hook review gate as Codex"* — Datadog Security Labs, 2026-08).
+
+Interpolations (`${workspaceFolder}`, `${CLAUDE_PROJECT_DIR}`) are kept
+literal, never resolved. `.claude/settings.local.json` is out of scope — it
+is machine-local and gitignored, so it neither ships in a tarball nor arrives
+with a clone.
+
 ## review: see what you're approving, not just its name
 
 npm v12's own pending list stops at the script *command*:
@@ -574,7 +652,7 @@ jobs:
 
 The action writes the report to the job summary, comments on the PR (plain GitHub REST `issues/comments` call using `GITHUB_TOKEN` — same endpoint octokit uses), and fails the job when `fail-on-high` is true and a HIGH package exists.
 
-Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable — fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover — insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `publish-check` (`'true'` to enable — fails the job when a [CI publish path still authenticates with a long-lived npm token](#publish-will-your-release-workflow-survive-january-2027), which loses direct publish around January 2027; `::error` annotation, job-summary line, and a `publish-token-cliff` result merged into the audit's SARIF file), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
+Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false` — the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable — the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable — fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover — insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `publish-check` (`'true'` to enable — fails the job when a [CI publish path still authenticates with a long-lived npm token](#publish-will-your-release-workflow-survive-january-2027), which loses direct publish around January 2027; `::error` annotation, job-summary line, and a `publish-token-cliff` result merged into the audit's SARIF file), `hooks-check` (`'true'` to enable — fails the job when the working tree carries a HIGH [open-time execution entry](#hooks-what-runs-when-the-folder-is-opened): a `.vscode/tasks.json` folderOpen task or an auto-firing `.claude/settings.json` command hook, with an `::error` annotation, a job-summary section, and a `hook-auto-run` result merged into the audit's SARIF file), `sync-check` (`'true'` — fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
 
 ```yaml
       - uses: Booyaka101/npm-script-lens@v1
@@ -619,7 +697,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN publish path (UNKNOWN never fails) · `doctor` detected npm drift · `diff` found an added/modified install script |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
@@ -632,6 +710,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | `diff` | compare a package's install scripts (+ implicit node-gyp) across two versions; exit 1 on any add/modify; `--json` |
 | `sources` | git + remote-URL deps vs npm v12's `allow-git`/`allow-remote`: ROOT/TRANSITIVE per dep, minimal correct `.npmrc`; `--check`, `--write`, `--json` |
 | [`publish`](#publish-will-your-release-workflow-survive-january-2027) | classify every CI publish path (TRUSTED/STAGED/TOKEN/UNKNOWN) vs npm's January-2027 token cliff, with the migration patch + npmjs.com checklist; `--check`, `--json`, `--sarif` |
+| [`hooks`](#hooks-what-runs-when-the-folder-is-opened) | the open-time surface: `.vscode/tasks.json` folderOpen tasks + `.claude/settings.json` hooks, same risk ladder as `audit`; `--check`, `--fail-on`, `--deps` (dependency tarballs — shipped entries are HIGH regardless), `--json`, `--sarif` |
 | `sync` | reconcile the native allowlist with the lockfile (drop stale, add new); `--check` for CI |
 | `doctor` | is this build still in sync with your npm? contract probe + drift alarm |
 | `init` | scaffold policy + CI workflow (`--auto-fix` bot, `--hook` git pre-commit) |
