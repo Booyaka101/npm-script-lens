@@ -1,6 +1,12 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-08-08 after shipping the VS Code extension 1.7.0 to the Marketplace._
+_Updated 2026-08-08 after shipping v1.8.0 (CLI + Action + VS Code extension) everywhere._
+
+## v1.8.0 — RELEASED (2026-08-08): the open-time surface ⬅️ start here
+
+**CLI/Action**: new `hooks` command scanning `.vscode/tasks.json` folderOpen tasks + `.claude/settings.json` hooks (the 2026-08-04 keyv worm's persistence layer — Wiz: "Persistence is attempted via Claude Code hooks and VS Code `tasks.json`"), `--deps` tarball scan (shipped auto-run entries HIGH regardless of command), SARIF rule `hook-auto-run`, opt-in `hooks-check` Action input. 293/293 tests. Shipped `9b993ef` → CI green all 4 legs + Guards BEFORE publishing → `v1.8.0` tag + `v1` moved → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.8.0) → npm `latest` = **1.8.0** (clean-room registry re-verified) → **Action Marketplace auto-tracked to v1.8.0** (verified live; no sudo step needed — the listing follows releases once listed). Full detail in PROGRESS.md → v1.8.0.
+
+**VS Code extension 1.8.0 — PUBLISHED to the Marketplace (2026-08-08)**: inline diagnostics ON the two surface files themselves (warning at HIGH on the real line, information for agent-triggered/non-command, one note for `partial` files), two new commands (*Open-time hooks*, *… in dependency tarballs (--deps)*), activation on the surface files, 30/30 extension tests, committed `3d97a7c`, vsix attached to the v1.8.0 GitHub Release. Published via the same cookie-session gallery `PUT` as 1.7.0 (below) — the :9223 automation browser was **still signed in**, so no cookie bridging was needed this time; the PUT returned 200 `flags: validated, public` first try.
 
 ## VS Code extension 1.7.0 — PUBLISHED to the Marketplace (2026-08-08)
 
