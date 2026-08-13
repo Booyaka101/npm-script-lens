@@ -26,7 +26,7 @@ const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./di
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
-// Signals from walking another package's bin script or main entry — how
+// Signals from walking another package's bin script or main entry, how
 // `husky install` gets judged by husky's actual code instead of a
 // conservative "unresolved binary" flag. Cached; null = could not resolve
 // (caller keeps its conservative signal).
@@ -135,7 +135,7 @@ async function runAudit(lockPath, {
       const dep = deps[i++];
       const r = { name: dep.name, version: dep.version, rows: [], ...await auditOne(dep, ctx) };
       // upgrade: also audit the base version and report capabilities the new
-      // version gained — the fingerprint of a hijacked release
+      // version gained, the fingerprint of a hijacked release
       const baseVer = baseVersions.get(dep.name);
       if (baseVer && baseVer !== dep.version && !r.error) {
         const base = await auditOne({ name: dep.name, version: baseVer }, ctx);
@@ -161,7 +161,7 @@ async function runAudit(lockPath, {
     // trust fetch from just-risky to every scripted package.
     // trustEvery (cooldown) widens it further still: cooldown judges the
     // version's AGE, so a package with no install script at all still needs a
-    // publish date — the poisoned code may not be in a lifecycle hook.
+    // publish date, the poisoned code may not be in a lifecycle hook.
     const wanted = results.filter((r) => trustEvery || r.malicious
       || (trustAll ? r.rows.length > 0 : ['HIGH', 'MEDIUM'].includes(packageRisk(r))));
     let t = 0;
@@ -215,7 +215,7 @@ function baseLockfileFromGit(target, ref) {
   // Let git resolve the path via `<ref>:./<file>` from inside lockDir. Doing
   // the path math host-side (path.relative(toplevel, lp)) breaks on Windows
   // when git's toplevel and os.tmpdir() disagree on 8.3 short names
-  // (runneradmin vs RUNNER~1) — git rejects the escaped path as "outside
+  // (runneradmin vs RUNNER~1), git rejects the escaped path as "outside
   // repository". The `./` prefix makes git resolve relative to -C, not root.
   let content;
   try {
@@ -316,7 +316,7 @@ async function syncAction(opts) {
 }
 
 // npm's version-pinned reconcile: entries are name@version, so an upgrade
-// invalidates the pin — preserve the decision only if the new version gained
+// invalidates the pin, preserve the decision only if the new version gained
 // no capabilities, else default by risk.
 async function syncNpm(opts, policy) {
   const { pkgPath, raw, pkg } = projectPackageJson(opts.path);
@@ -389,7 +389,7 @@ async function syncNpm(opts, policy) {
 }
 
 // pnpm/yarn/bun key their allowlist by package NAME (no version), so an
-// upgrade never invalidates an entry — reconcile is simpler: keep decisions
+// upgrade never invalidates an entry, reconcile is simpler: keep decisions
 // for still-scripted packages, drop entries whose package is gone or no longer
 // scripted, add new scripted packages (SAFE/LOW default true). writeFull
 // replaces the whole allowlist so removals actually take effect.
@@ -516,7 +516,7 @@ async function auditSubset(list, { lockDeps, edges, depsByName }, ctx, trust) {
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// The actual bytes behind each script command — the thing npm's pending list
+// The actual bytes behind each script command, the thing npm's pending list
 // cannot show. First CONTENT_LINES lines of every file the command directly
 // runs (via the same `node <file>` resolution the analyzer uses); binding.gyp
 // for node-gyp builds; the command itself when it references no local file.
@@ -539,7 +539,7 @@ async function scriptContent(r, ctx, lockDep) {
       for (const file of entries) {
         const all = (pkg.files.get(file) || '').split(/\r?\n/);
         const entry = { script, command, file, totalLines: all.length, lines: all.slice(0, CONTENT_LINES) };
-        // binding.gyp is not inert data — gyp runs `<!(...)` expansions during
+        // binding.gyp is not inert data, gyp runs `<!(...)` expansions during
         // configure. Lead with what actually executes, then the raw lines.
         if (file === 'binding.gyp') {
           const { findings, partial, notes } = collectGypFindings(pkg.files);
@@ -590,7 +590,7 @@ async function reviewAction(opts) {
     viaNpm = await npmDryRunPending(projectDir);
   }
   // npm is v12+ but its --dry-run --json shape is not one we recognize: do NOT
-  // trust it as "nothing pending" — say so loudly and fall back to the
+  // trust it as "nothing pending", say so loudly and fall back to the
   // lockfile. This is the drift alarm; `npm-script-lens doctor` diagnoses it.
   if (viaNpm && viaNpm.unrecognized) {
     log(`⚠️  local npm v${viaNpm.npmMajor} answered but its --dry-run --json shape is not recognized — `
@@ -685,7 +685,7 @@ async function reviewAction(opts) {
 // --- allow: pre-approve the safe packages, hold the risky ones for review --
 // Splits every package with install-time scripts into an auto-approvable
 // allowScripts block (behavioral risk SAFE or LOW, and not known-malicious)
-// and a _review list (MEDIUM/HIGH, known-malicious, or un-fetchable — the ones
+// and a _review list (MEDIUM/HIGH, known-malicious, or un-fetchable, the ones
 // a human should look at before flipping to true). Emits the split as JSON on
 // stdout; --ci-check is a separate fast guard that runs no scan.
 
@@ -702,13 +702,13 @@ const policyNeedsTrust = (policy) => Boolean(policy && policy.autoApprove
   && (policy.autoApprove.minAgeDays > 0 || policy.autoApprove.requireProvenance));
 
 // Split the audited packages into an auto-approve set and a review set. This
-// is manager-agnostic — {name, version} pairs — so pm-contract can render each
+// is manager-agnostic ({name, version} pairs) so pm-contract can render each
 // manager's native allowlist format from the same decision.
 function classifyDecisions(results, policy) {
   const approved = [], review = [];
   for (const r of results) {
     // only packages that actually run install-time scripts (or that OSV/fetch
-    // flagged) need an approval decision at all — clean packages are skipped
+    // flagged) need an approval decision at all, clean packages are skipped
     if ((!r.rows || r.rows.length === 0) && !r.error && !r.malicious) continue;
     (isAutoApproved(r, policy) ? approved : review).push({ name: r.name, version: r.version });
   }
@@ -723,7 +723,7 @@ function classifyForAllow(results) {
 }
 
 // --ci-check: fail CI when npm v12 would silently skip install scripts. No
-// scan — just three cheap facts: a workflow runs `npm install`/`i`/`ci`, the
+// scan: just three cheap facts: a workflow runs `npm install`/`i`/`ci`, the
 // project has no allowScripts block, and the local npm is v12+. Any one of
 // those being false means the install is safe (or already covered), so pass.
 const CI_INSTALL_RE = /\bnpm\s+(?:install|i|ci)\b/;
@@ -758,7 +758,7 @@ async function ciCheckResult(projectDir) {
   const enforcing = npmMajor !== null && npmMajor >= 12;
   const scriptsBreak = installsInCi && !hasAllow && enforcing;
   // npm v12 also refuses to RESOLVE git/remote dependencies unless allow-git /
-  // allow-remote covers them — the same silent-CI-break shape as allowScripts.
+  // allow-remote covers them, the same silent-CI-break shape as allowScripts.
   // Over-permission doesn't break an install, so only insufficient/invalid
   // config counts here (`sources --check` is the strict gate).
   let sourcesFailures = [];
@@ -769,7 +769,7 @@ async function ciCheckResult(projectDir) {
         const { failures } = checkSourceConfig(analysis, readSourceConfig(analysis.projectDir));
         sourcesFailures = failures.filter((f) => f.kind !== 'over-permissive');
       }
-    } catch { /* no lockfile here — nothing for npm to resolve */ }
+    } catch { /* no lockfile here, nothing for npm to resolve */ }
   }
   const sourcesBreak = sourcesFailures.length > 0;
   const willBreak = scriptsBreak || sourcesBreak;
@@ -824,15 +824,15 @@ async function allowAction(opts) {
   const { approved, review } = classifyDecisions(results, policy);
   const _review = review.map((d) => `${d.name}@${d.version}`).sort();
   // stdout is the manager's NATIVE allowlist block, directly pasteable into its
-  // config file — allowScripts (npm) / allowBuilds (pnpm) / dependenciesMeta
-  // (yarn) / trustedDependencies (bun) — plus the _review list.
+  // config file, allowScripts (npm) / allowBuilds (pnpm) / dependenciesMeta
+  // (yarn) / trustedDependencies (bun), plus the _review list.
   process.stdout.write(`${JSON.stringify({ [mgr.nativeKey]: mgr.renderValue(approved), _review }, null, 2)}\n`);
   process.stderr.write(`${approved.length} package${approved.length === 1 ? '' : 's'} auto-approved, ${_review.length} need manual review. `
     + `(${mgr.label} — allowlist in ${mgr.allowlistFile})\n`);
   if (mgr.note) process.stderr.write(`note: ${mgr.note}\n`);
 
   // --write merges the auto-approved entries into the manager's native file,
-  // preserving existing entries. _review packages are deliberately left OUT —
+  // preserving existing entries. _review packages are deliberately left OUT
   // writing them would decide for the user; absent keeps them pending so the
   // manager (and a human) still has to act on them.
   if (opts.write && approved.length > 0) {
@@ -961,7 +961,7 @@ async function initAction(opts) {
 // --- sources: git/remote deps vs npm v12's allow-git / allow-remote --------
 // npm v12's third flipped default: git and remote-URL dependencies stop
 // resolving unless allow-git / allow-remote (enum all|none|root) is set.
-// Pure lockfile+package.json+.npmrc analysis — no scan, no network.
+// Pure lockfile+package.json+.npmrc analysis, no scan, no network.
 
 async function sourcesAction(opts) {
   const analysis = await analyzeSources(opts.path);
@@ -1020,14 +1020,14 @@ async function sourcesAction(opts) {
 // floors and runner eligibility the migration blogs skip, and pre-fills the
 // npmjs.com trusted-publisher checklist. --check exits 1 only on TOKEN paths.
 
-async function publishAction(opts) {
+async function publishAction(dir, opts) {
   const { analyzePublish, checkPublish, renderPublish, publishJson, publishFindings } = require('./publish');
-  const analysis = analyzePublish(opts.path);
+  const analysis = analyzePublish(dir || opts.path);
   if (opts.json) process.stdout.write(`${JSON.stringify(publishJson(analysis), null, 2)}\n`);
   else process.stdout.write(`${renderPublish(analysis)}\n`);
   if (opts.sarif) {
     // publish findings anchor to their workflow files, so no lockfile is
-    // required — fall back to package.json as the artifact when none exists
+    // required: fall back to package.json as the artifact when none exists
     let lockPath = 'package.json', lockText = '';
     try {
       const { path: lp } = resolveLockfile(opts.path);
@@ -1035,7 +1035,7 @@ async function publishAction(opts) {
       if (rel.startsWith('..')) rel = path.basename(lp);
       lockPath = rel;
       lockText = fs.readFileSync(lp, 'utf8');
-    } catch { /* no lockfile — findings carry their own file anchors */ }
+    } catch { /* no lockfile, findings carry their own file anchors */ }
     fs.writeFileSync(opts.sarif,
       JSON.stringify(buildSarif([], { lockPath, lockText, findings: publishFindings(analysis) }), null, 2));
     process.stderr.write(`SARIF written to ${opts.sarif}\n`);
@@ -1053,7 +1053,7 @@ async function publishAction(opts) {
 
 // --- hooks: the open-time execution surface --------------------------------
 // The fourth place code runs without the developer asking: not install time
-// (audit/allow), not resolution time (sources), not publish time (publish) —
+// (audit/allow), not resolution time (sources), not publish time (publish)
 // OPEN time. .vscode/tasks.json folderOpen tasks and .claude/settings.json
 // hooks, in the working tree and (with --deps) inside every locked
 // dependency's tarball. The 2026-08-04 keyv/ChainDrop worm used both.
@@ -1075,7 +1075,7 @@ async function hooksAction(dir, opts) {
   } else {
     process.stdout.write(`${renderHooks(scan.findings, scan.partials)}\n`);
   }
-  // the two surfaces gate differently — each caveat prints only for its own
+  // the two surfaces gate differently, each caveat prints only for its own
   for (const c of surfaceCaveats(scan.findings)) process.stderr.write(`${c}\n`);
   for (const e of depErrors) process.stderr.write(`--deps: could not fetch ${e}\n`);
   if (opts.sarif) {
@@ -1111,7 +1111,7 @@ async function manifestAction(opts) {
   const results = await runAudit(opts.path, {
     log: (m) => process.stderr.write(`${m}\n`),
     cache: opts.cache,
-    trust: false, // behavior receipt is deterministic — no OSV/downloads
+    trust: false, // behavior receipt is deterministic, no OSV/downloads
     offline: opts.offline,
     deep: opts.deep,
   });
@@ -1235,11 +1235,12 @@ if (require.main === module) {
     .option('--check', 'exit 1 when the committed .npmrc is insufficient, over-permissive, or holds an invalid value for these keys (for CI)')
     .action(sourcesAction);
   program.command('publish')
-    .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .github/actions/**/action.yml — local composite actions and reusable workflows followed — .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / UNKNOWN, checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist — no scan, no network')
+    .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .github/actions/**/action.yml, where local composite actions and reusable workflows are followed, .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / BROKEN / UNKNOWN (BROKEN = trusted publishing granted but setup-node < v7 with registry-url writes a dummy _authToken that blocks the OIDC exchange), checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist. No scan, no network')
+    .argument('[dir]', 'project dir (the repo root holding the CI configs)')
     .option('--path <path>', 'project dir (the repo root holding the CI configs)', '.')
     .option('--json', 'emit { cliff, floors, counts, paths, repo, engines } JSON instead of text')
-    .option('--sarif <file>', 'also write SARIF 2.1.0 (rule publish-token-cliff, anchored to the workflow line)')
-    .option('--check', 'exit 1 when a publish path still authenticates with a long-lived token (TOKEN); UNKNOWN and no-publish repos pass (for CI)')
+    .option('--sarif <file>', 'also write SARIF 2.1.0 (rules publish-token-cliff and publish-oidc-broken, anchored to the workflow line)')
+    .option('--check', 'exit 1 when a publish path still authenticates with a long-lived token (TOKEN) or is BROKEN by setup-node; UNKNOWN and no-publish repos pass (for CI)')
     .action(publishAction);
   program.command('hooks')
     .description('scan the open-time execution surface — the code that runs when a folder is OPENED, not installed: .vscode/tasks.json tasks with runOptions.runOn "folderOpen" and .claude/settings.json hooks (auto-firing SessionStart/Setup/InstructionsLoaded tiered above agent-triggered PreToolUse/PostToolUse) — classified through the same risk ladder as audit; --deps also scans every locked dependency\'s tarball, where any shipped auto-run entry is HIGH regardless of command')

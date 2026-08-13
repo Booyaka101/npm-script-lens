@@ -87,7 +87,7 @@ async function main() {
   }
 }
 
-// `node action.js v12-gaps` — the separate Action step that runs when the
+// `node action.js v12-gaps`, the separate Action step that runs when the
 // runner's npm is v12+: report the approve-scripts gap findings to the job
 // summary, annotate with ::warning (severity is warn, never fails the job),
 // and fold them into the SARIF file the audit step already wrote.
@@ -124,7 +124,7 @@ async function v12GapsMain() {
   }
 }
 
-// `node action.js ci-check` — the fail-fast gate step (opt-in via the
+// `node action.js ci-check`, the fail-fast gate step (opt-in via the
 // `ci-check` input). Fails the job when npm v12 would silently disable every
 // dependency's install scripts: a workflow runs npm install, package.json has
 // no allowScripts block, and the runner's npm is v12+. No scan.
@@ -150,10 +150,10 @@ async function ciCheckMain() {
   }
 }
 
-// `node action.js sources-check` — opt-in gate (the `sources-check` input):
+// `node action.js sources-check`, opt-in gate (the `sources-check` input):
 // fails the job when the committed .npmrc allow-git/allow-remote is
 // insufficient, over-permissive, or invalid for the git/remote dependencies
-// actually in the lockfile — npm v12 refuses to resolve uncovered ones.
+// actually in the lockfile: npm v12 refuses to resolve uncovered ones.
 async function sourcesCheckMain() {
   const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
   const target = input('PATH', '.');
@@ -187,7 +187,7 @@ async function sourcesCheckMain() {
   process.exitCode = 1;
 }
 
-// `node action.js publish-check` — opt-in gate (the `publish-check` input):
+// `node action.js publish-check`, opt-in gate (the `publish-check` input):
 // fails the job when a CI publish path still authenticates with a long-lived
 // npm token, which loses direct publish around January 2027. TOKEN paths get
 // an ::error each and a publish-token-cliff SARIF result merged into the file
@@ -214,8 +214,11 @@ async function publishCheckMain() {
   }
   for (const f of failures) console.log(`::error::${f.message}`);
   if (process.env.GITHUB_STEP_SUMMARY) {
+    const broken = failures.filter((f) => f.verdict === 'BROKEN').length;
+    const intro = `Direct token publishing ends around **${PUBLISH.cliff.date}** (${PUBLISH.cliff.changelog}).`
+      + (broken > 0 ? `\n\n${broken} path(s) are **BROKEN**: trusted publishing is granted but setup-node older than v${PUBLISH.oidc.setupNodeFixedIn} with \`registry-url\` writes a dummy \`_authToken\` that blocks the OIDC exchange (${PUBLISH.oidc.issues[0]}).` : '');
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-      `\n## ❌ npm token-cliff publish check\n\nDirect token publishing ends around **${PUBLISH.cliff.date}** (${PUBLISH.cliff.changelog}).\n\n${failures.map((f) => `- ${f.message}`).join('\n')}\n\nRun \`npx npm-script-lens publish\` for the migration patch and the pre-filled npmjs.com trusted-publisher checklist.\n`);
+      `\n## ❌ npm token-cliff publish check\n\n${intro}\n\n${failures.map((f) => `- **${f.verdict}**: ${f.message}`).join('\n')}\n\nRun \`npx npm-script-lens publish\` for the migration patch and the pre-filled npmjs.com trusted-publisher checklist.\n`);
   }
   const sarifFile = input('SARIF_FILE', '');
   const findings = publishFindings(analysis);
@@ -238,8 +241,8 @@ async function publishCheckMain() {
   process.exitCode = 1;
 }
 
-// `node action.js hooks-check` — opt-in gate (the `hooks-check` input): fails
-// the job when the working tree carries a HIGH open-time execution entry — a
+// `node action.js hooks-check`, opt-in gate (the `hooks-check` input): fails
+// the job when the working tree carries a HIGH open-time execution entry, a
 // .vscode/tasks.json task with runOn: folderOpen or an auto-firing
 // .claude/settings.json command hook (SessionStart/Setup/InstructionsLoaded).
 // Code that runs when the folder is OPENED, before any install step the other

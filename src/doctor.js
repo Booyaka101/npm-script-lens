@@ -3,7 +3,7 @@
 // feature (review, allow, the v12 gap checks) couples to npm's own behavior;
 // this command probes the local npm and reports, check by check, whether the
 // contract this build assumes still holds. It is the human-facing half of the
-// durability story — the npm-compat CI canary is the automated half, and both
+// durability story, the npm-compat CI canary is the automated half, and both
 // run exactly these checks.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,7 +22,7 @@ const dirOf = (target) => {
 };
 
 // status: 'ok' (contract holds) · 'warn' (couldn't verify) · 'info' (context)
-// · 'fail' (genuine drift — the contract this build assumes no longer matches
+// · 'fail' (genuine drift, the contract this build assumes no longer matches
 //   reality; only 'fail' sets a non-zero exit).
 async function runDoctor({ path: target = '.', offline = false, live = true } = {}) {
   const checks = [];
@@ -90,7 +90,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     hasAllow ? `package.json has ${count} ${ALLOWSCRIPTS_FIELD} entr${count === 1 ? 'y' : 'ies'}`
       : `no ${ALLOWSCRIPTS_FIELD} block in ${projectDir}/package.json — run \`npm-script-lens allow --write\` to generate one`);
 
-  // git/remote dependency sources — npm v12's allow-git / allow-remote flips.
+  // git/remote dependency sources: npm v12's allow-git / allow-remote flips.
   // Counts + minimal values from the lockfile, compared against the committed
   // .npmrc, plus whether the local npm even has the keys yet (they need minor
   // precision: introduced in 11.10.0 / 11.15.0) and whether it is new enough
@@ -126,7 +126,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     else add(`${key} support`, 'info', `npm v${fullVersion} predates ${key} (introduced in npm ${introduced}) — the setting takes effect after upgrading`);
   }
 
-  // Publish readiness — npm's January-2027 change: bypass-2FA tokens lose
+  // Publish readiness for npm's January-2027 change: bypass-2FA tokens lose
   // direct publish, keeping only private-package reads and staged publishes.
   // Static CI-config analysis (src/publish.js), so it can only warn, never
   // fail: a TOKEN path is a coming break, not tool drift.
@@ -136,13 +136,20 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     const pub = analyzePublish(target);
     const c = pub.counts;
     publish = { counts: c, paths: pub.paths.length };
-    const mix = `${c.TRUSTED} trusted, ${c.STAGED} staged, ${c.TOKEN} token, ${c.UNKNOWN} unknown`;
+    const mix = `${c.TRUSTED} trusted, ${c.STAGED} staged, ${c.TOKEN} token, ${c.BROKEN} broken, ${c.UNKNOWN} unknown`;
     if (pub.paths.length === 0) {
       add('publish readiness', 'info', 'no publish steps found in CI configs (.github/workflows, .github/actions/**/action.yml, .gitlab-ci.yml, .circleci/config.yml) — nothing is exposed to the January 2027 token cliff');
     } else if (c.TOKEN > 0) {
       add('publish readiness', 'warn', `${c.TOKEN} of ${pub.paths.length} publish path(s) still authenticate with a long-lived token (${mix}) — direct token publishing ends around ${PUBLISH.cliff.date}; run \`npm-script-lens publish\` for the migration patch and the npmjs.com checklist`);
+    } else if (c.BROKEN > 0) {
+      add('publish readiness', 'warn', `${c.BROKEN} of ${pub.paths.length} publish path(s) intend trusted publishing but are BROKEN by setup-node (${mix}) — run \`npm-script-lens publish\` for the fixes`);
     } else {
       add('publish readiness', 'ok', `${pub.paths.length} publish path(s): ${mix} — no long-lived token publishing, ready for the ${PUBLISH.cliff.date} change`);
+    }
+    for (const p of pub.paths) {
+      if (p.classification === 'BROKEN' && p.setupNode) {
+        add('publish oidc', 'warn', `${p.file}:${p.line} grants id-token: write, but actions/setup-node@${p.setupNode.ref} (${p.setupNode.file}:${p.setupNode.line}) with registry-url writes a dummy _authToken that breaks the OIDC exchange — fixed in setup-node v${PUBLISH.oidc.setupNodeFixedIn}`);
+      }
     }
     for (const p of pub.paths) {
       if (p.nodeBelowFloor) {
@@ -153,7 +160,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
     add('publish readiness', 'info', 'could not analyze the CI configs at this path');
   }
 
-  // Open-time execution surfaces — the keyv/ChainDrop worm's persistence
+  // Open-time execution surfaces, the keyv/ChainDrop worm's persistence
   // layer (2026-08-04): folderOpen tasks and Claude Code hooks fire when the
   // folder is opened, before any install step this tool's other checks gate.
   try {

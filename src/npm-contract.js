@@ -1,5 +1,5 @@
 'use strict';
-// The npm CONTRACT — every assumption this tool makes about npm's own
+// The npm CONTRACT, every assumption this tool makes about npm's own
 // behavior, in one place. npm-script-lens is only useful as long as it tracks
 // npm; when npm shifts, this is the file to patch, and `npm-script-lens
 // doctor` is the probe that tells you it shifted. Nothing outside this module
@@ -11,7 +11,7 @@
 
 // npm major at which install scripts became opt-in and the allowScripts
 // allowlist began to be enforced. Every "is this npm affected?" gate reads
-// this — do not inline the number 12 anywhere else.
+// this: do not inline the number 12 anywhere else.
 const MIN_ALLOWSCRIPTS_NPM = 12;
 
 // The package.json field that holds the allowlist, and the value semantics.
@@ -20,7 +20,7 @@ const MIN_ALLOWSCRIPTS_NPM = 12;
 const ALLOWSCRIPTS_FIELD = 'allowScripts';
 
 // The argv we hand npm to enumerate pending script approvals, and the JSON
-// keys we read back from it. These are the MOST fragile coupling — an
+// keys we read back from it. These are the MOST fragile coupling, an
 // undocumented internal shape. doctor self-tests the parser against the
 // canonical samples below so drift here surfaces loudly.
 const DRY_RUN_ARGS = ['install', '--dry-run', '--json'];
@@ -53,7 +53,7 @@ const SAMPLE_DRY_RUN = {
 };
 
 // npm v12's OTHER two flipped defaults: git and remote-URL dependency
-// resolution. Both keys are strict enums — `allow-git=true` / a bare
+// resolution. Both keys are strict enums, `allow-git=true` / a bare
 // `--allow-git` is INVALID, which several published migration guides get
 // wrong. `root` allows only deps declared in the project's root package.json;
 // any transitive git/remote dep forces `all`. Verified against
@@ -65,13 +65,13 @@ const SOURCES = {
   values: ['all', 'none', 'root'],
   default: 'none',
   // the npm major where 'none' becomes the enforced default (before that the
-  // keys exist behind warnings — 11.16.0+ warns, v12 blocks)
+  // keys exist behind warnings, 11.16.0+ warns, v12 blocks)
   enforcedInNpm: 12,
 };
 
 // The two npm-v12 approve-scripts tooling bugs we detect, with their live
 // upstream status. Findings and reports pull ref/status from here so they
-// self-document how current they are — the antidote to a detector quietly
+// self-document how current they are, the antidote to a detector quietly
 // outliving the bug it was written for. `fixedInNpm` stays null until a
 // maintainer confirms the exact npm version carrying the fix; doctor and the
 // gaps report surface that so nobody trusts a stale detector.
@@ -93,7 +93,7 @@ const DETECTORS = {
     fixedInNpm: null,
   },
   // allow-git=root wrongly rejected ROOT-level git deps in npm 11.12.1
-  // ("Fetching non-root packages of type git have been disabled") — so any
+  // ("Fetching non-root packages of type git have been disabled"), so any
   // `root` recommendation must be version-gated until the fixed npm version
   // is pinned here.
   allowGitRoot: {
@@ -111,7 +111,7 @@ const DETECTORS = {
 // surface will reduce to reading private packages and staging a publish, which
 // a maintainer approves with 2FA. We are targeting January 2027 for this
 // update." The two sanctioned replacements each carry version floors, quoted
-// verbatim from docs.npmjs.com — every message naming a date, floor, command
+// verbatim from docs.npmjs.com, every message naming a date, floor, command
 // or provider reads it from here.
 const PUBLISH = {
   cliff: {
@@ -147,6 +147,23 @@ const PUBLISH = {
       download: 'npm stage download <stage-id>',
       approve: 'npm stage approve <stage-id>',
     },
+  },
+  // setup-node up to v6 answers `registry-url:` by writing authLine into an
+  // .npmrc and exporting the dummy token, which makes npm skip the OIDC
+  // exchange. Fixed in v7.0.0; the trusted-publishers docs still show v6.
+  oidc: {
+    setupNodeFixedIn: '7.0.0',
+    dummyToken: 'XXXXX-XXXXX-XXXXX-XXXXX',
+    authLine: '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}',
+    hosts: ['registry.npmjs.org'],
+    issues: [
+      'https://github.com/npm/documentation/issues/1960',
+      'https://github.com/actions/setup-node/issues/1551',
+    ],
+    fixRelease: 'https://github.com/actions/setup-node/releases/tag/v7.0.0',
+    quote: "npm CLI sees the `_authToken=` line as 'auth is configured' and does NOT "
+      + 'initiate the OIDC token exchange, instead attempting a classic publish with '
+      + 'empty credentials',
   },
 };
 
