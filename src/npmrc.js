@@ -1,7 +1,7 @@
 'use strict';
 // Minimal .npmrc (ini) round-tripper for the allow-git / allow-remote keys.
 // npm's ini dialect: `key=value` pairs, `#`/`;` comments, and a bare `key`
-// line meaning `key=true` — which for these strict-enum keys is INVALID, so
+// line meaning `key=true`, which for these strict-enum keys is INVALID, so
 // the parser surfaces it rather than normalizing it away. mergeNpmrc mirrors
 // the comment-preserving pnpm-workspace.yaml merge in pm-contract.js: every
 // other key, comment, and line keeps its exact bytes and order.
@@ -11,7 +11,7 @@ const { SOURCES } = require('./npm-contract');
 
 // Line-preserving parse: [{type: 'blank'|'comment'|'pair', key?, value?,
 // bare?, raw}]. A pair's value keeps npm's semantics (bare key ⇒ 'true');
-// no unescaping — these keys only ever hold plain enum words.
+// no unescaping, these keys only ever hold plain enum words.
 function parseNpmrc(text) {
   return String(text).split(/\r?\n/).map((raw) => {
     const t = raw.trim();
@@ -24,7 +24,7 @@ function parseNpmrc(text) {
 }
 
 // The project's committed allow-git / allow-remote values from <dir>/.npmrc:
-// { file, exists, git, remote } — git/remote are the raw string values (which
+// { file, exists, git, remote }, git/remote are the raw string values (which
 // may be OUT of the enum, e.g. 'true'; the caller validates) or null when the
 // key (or the file) is absent. Last occurrence wins, like npm's ini.
 function readSourceConfig(dir) {
@@ -44,9 +44,9 @@ function readSourceConfig(dir) {
 
 // Set/replace keys in .npmrc text, preserving every other key, comment, blank
 // line, order, and each line's own EOL style. Every occurrence of a managed
-// key is rewritten (npm's ini is last-wins — leaving a stale duplicate behind
+// key is rewritten (npm's ini is last-wins, leaving a stale duplicate behind
 // would silently override the fix); missing keys are appended at the end.
-// updates: { 'allow-git': 'all', … } — null/undefined values are ignored.
+// updates: { 'allow-git': 'all', … }, null/undefined values are ignored.
 function mergeNpmrc(text, updates) {
   const sets = Object.entries(updates || {}).filter(([, v]) => v !== null && v !== undefined);
   if (sets.length === 0) return text;

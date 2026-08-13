@@ -23,7 +23,7 @@ function parseSpec(spec) {
 //
 // gypText, not a boolean: a version that REWRITES an existing binding.gyp
 // changes what runs at install time while `files.has('binding.gyp')` stays
-// true in both versions — the false negative that let the June 2026 Miasma
+// true in both versions, the false negative that let the June 2026 Miasma
 // wave-2 releases diff as "UNCHANGED: implicit node-gyp rebuild".
 async function fetchScripts(name, version) {
   const { allScripts, files } = await fetchPackage(name, version, { forceTarball: true });
@@ -60,7 +60,7 @@ function lineDiff(a, b) {
 }
 
 // Pure diff of two fetchScripts() results. Returns the four buckets, an
-// overall `changed` flag (any ADDED or MODIFIED — the exit-1 condition), and a
+// overall `changed` flag (any ADDED or MODIFIED, the exit-1 condition), and a
 // JSON-serializable view.
 function computeScriptDiff(oldPkg, newPkg) {
   const unchanged = [];
@@ -77,7 +77,7 @@ function computeScriptDiff(oldPkg, newPkg) {
     else modified.push({ key, old: o, new: n, diff: lineDiff(o, n) });
   }
   // npm runs an implicit `node-gyp rebuild` when a package ships a root
-  // binding.gyp without its own install script — treat gaining one as an
+  // binding.gyp without its own install script, treat gaining one as an
   // added install-time behavior. Keeping one but REWRITING it is equally an
   // install-time change: gyp executes `<!(...)` command expansions during
   // configure, so new bytes in binding.gyp are new commands. (`hasGyp` is

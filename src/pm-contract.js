@@ -2,18 +2,18 @@
 // The install-script allowlist is no longer an npm-only idea: every major
 // package manager now ships the same "scripts are opt-in, keep an allowlist"
 // model, each with its own native format. This module is the cross-ecosystem
-// contract — one adapter per manager describing where its allowlist lives, how
+// contract: one adapter per manager describing where its allowlist lives, how
 // a package is keyed, how to render the block, and how to merge decisions in.
 // The behavioral risk analysis upstream is identical for all four; only this
 // write/render surface differs.
 //
 // Formats verified against authoritative docs (2026-07-24):
-//   npm 12   — allowScripts   { "pkg@1.2.3": true }        in package.json
-//   pnpm 11  — allowBuilds     { pkg: true }                in pnpm-workspace.yaml
+//   npm 12, allowScripts   { "pkg@1.2.3": true }        in package.json
+//   pnpm 11, allowBuilds     { pkg: true }                in pnpm-workspace.yaml
 //              (pnpm 10.0–10.25 used the onlyBuiltDependencies array)
-//   yarn B.  — dependenciesMeta.<pkg>.built: true           in package.json
+//   yarn B., dependenciesMeta.<pkg>.built: true           in package.json
 //              (+ enableScripts: false in .yarnrc.yml to make it an allowlist)
-//   bun      — trustedDependencies: ["pkg"]                 in package.json
+//   bun: trustedDependencies: ["pkg"]                 in package.json
 //              (NB: defining it REPLACES bun's built-in trusted list)
 const fs = require('node:fs');
 const path = require('node:path');
@@ -56,7 +56,7 @@ function readAllowBuilds(dir) {
 }
 
 // entries: { name: boolean }. Merged into allowBuilds, or (replace:true) used
-// as the complete block — sync uses replace to drop stale entries.
+// as the complete block, sync uses replace to drop stale entries.
 function writeAllowBuilds(dir, entries, { replace = false } = {}) {
   const file = path.join(dir, 'pnpm-workspace.yaml');
   const existing = readAllowBuilds(dir);
@@ -70,7 +70,7 @@ function writeAllowBuilds(dir, entries, { replace = false } = {}) {
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
   const start = lines.findIndex((l) => /^allowBuilds:\s*$/.test(l));
   if (start === -1) {
-    // no block yet — append one (safe: no existing key touched)
+    // no block yet, append one (safe: no existing key touched)
     const sep = lines.length && lines[lines.length - 1] === '' ? '' : '\n';
     fs.appendFileSync(file, `${sep}${block.join('\n')}\n`);
     return { file, note: `appended an allowBuilds block to ${path.basename(file)}` };

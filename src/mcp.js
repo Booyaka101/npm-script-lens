@@ -1,5 +1,5 @@
 'use strict';
-// Minimal MCP (Model Context Protocol) stdio server — newline-delimited
+// Minimal MCP (Model Context Protocol) stdio server, newline-delimited
 // JSON-RPC 2.0, no SDK dependency. Lets AI coding agents audit a package's
 // install scripts BEFORE adding it as a dependency.
 const readline = require('node:readline');
@@ -124,7 +124,7 @@ async function classifyAllowScriptsTool({ path: target }) {
  * 2025-11-25 clients send an `initialize` request once. 2026-07-28 removes that
  * handshake entirely and carries protocolVersion / clientInfo / capabilities in
  * `params._meta` on *every* request instead. Until every client we care about has
- * moved, both have to work — the spec date is a rollout window, not a kill switch.
+ * moved, both have to work: the spec date is a rollout window, not a kill switch.
  */
 const peer = { protocolVersion: null, clientInfo: null, capabilities: null };
 
@@ -145,7 +145,7 @@ function serve() {
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
     absorbMeta(msg); // 2026-07-28: handshake rides along on every request
-    if (msg.id === undefined) return; // notification — nothing to answer
+    if (msg.id === undefined) return; // notification: nothing to answer
     try {
       // Deliberate dual-era support: 2026-07-28 drops this handshake, but removing
       // it would break every 2025-11-25 client still in the field. absorbMeta()

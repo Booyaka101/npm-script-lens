@@ -2,8 +2,8 @@
 // Version cooldown: refuse dependency versions that are too young to have been
 // caught yet.
 //
-// Every recent npm worm — Shai-Hulud, Mini Shai-Hulud (keyv/cacheable, Aug 4
-// 2026) — was identified and unpublished within hours of the poisoned versions
+// Every recent npm worm, Shai-Hulud, Mini Shai-Hulud (keyv/cacheable, Aug 4
+// 2026), was identified and unpublished within hours of the poisoned versions
 // going live. The install that hurts you is the one that happens inside that
 // window. A cooldown does not try to detect anything: it just declines to be
 // first, which sits out the whole event.
@@ -13,7 +13,7 @@
 
 const DEFAULT_HOURS = 72;
 
-// Age in hours from the absolute publish timestamp — never from trust.ageDays.
+// Age in hours from the absolute publish timestamp, never from trust.ageDays.
 // fetchTrust() computes ageDays once and caches the whole object for 24h, so a
 // row pulled from cache can claim an age that is up to a day stale. For a
 // 24-72h gate that error is the same size as the gate, and it fails OPEN
@@ -33,7 +33,7 @@ function fmtAge(hours) {
   return `${(hours / 24).toFixed(1)}d old`;
 }
 
-// rows: [{ name, version, trust }] — the audit rows, already trust-enriched.
+// rows: [{ name, version, trust }], the audit rows, already trust-enriched.
 // Returns blocked (too young), unknown (no publish date available) and the
 // threshold, so the caller decides how loud to be about each.
 function evaluateCooldown(rows, { hours = DEFAULT_HOURS, allow = [], now = Date.now() } = {}) {

@@ -1,7 +1,7 @@
 'use strict';
 // Open-time execution surfaces: the code that runs when a folder is OPENED,
 // not installed. The 2026-08-04 keyv/ChainDrop worm made this a first-class
-// supply-chain stage — Wiz: "Persistence is attempted via Claude Code hooks
+// supply-chain stage, Wiz: "Persistence is attempted via Claude Code hooks
 // and VS Code `tasks.json`" (two separately-hashed setup.mjs payloads, one
 // under .claude, one under .vscode). The tarball half predates it: the
 // hijacked html-to-gutenberg / fetch-page-assets releases (2026-05-25) hid a
@@ -9,15 +9,15 @@
 // package, firing when the package directory itself is opened as a workspace.
 //
 // Two surfaces, deliberately NOT symmetric in what a finding means:
-//  - .vscode/tasks.json `runOptions.runOn: "folderOpen"` — VS Code 1.117
+//  - .vscode/tasks.json `runOptions.runOn: "folderOpen"`, VS Code 1.117
 //    defaults `task.allowAutomaticTasks` to 'off' with a one-time
-//    Allow/Disallow prompt (which does not display the command —
+//    Allow/Disallow prompt (which does not display the command
 //    microsoft/vscode#309406), and automatic tasks never run in an untrusted
 //    workspace. A finding means "this runs once you trust this folder and
 //    allow automatic tasks", not "this has run".
-//  - .claude/settings.json hooks — a documented project-level, committable
+//  - .claude/settings.json hooks, a documented project-level, committable
 //    location. There is NO hook review gate before a project command hook
-//    fires ("Claude Code doesn't use the same hook review gate as Codex" —
+//    fires ("Claude Code doesn't use the same hook review gate as Codex"
 //    Datadog Security Labs, 2026-08). A SessionStart/Setup/InstructionsLoaded
 //    finding means "this runs on your next session in this trusted folder".
 //
@@ -26,7 +26,7 @@
 // file that will not parse is reported `partial` (with a raw-text hint when
 // the tell-tale keys appear), never passed silently. Command strings feed the
 // same shell-signal extraction and score() that audit applies to lifecycle
-// scripts — the risk ladder is not forked.
+// scripts: the risk ladder is not forked.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -41,7 +41,7 @@ const MAX_TREE_DEPTH = 8;
 
 // Claude Code hook events that fire without the agent doing anything: opening
 // a session in the folder is enough. Everything else (PreToolUse, PostToolUse,
-// Stop, …) is agent- or user-triggered mid-session — collected, tiered one
+// Stop, …) is agent- or user-triggered mid-session, collected, tiered one
 // level lower, and labelled as such.
 const AUTO_EVENTS = new Set(['SessionStart', 'Setup', 'InstructionsLoaded']);
 // The complete documented hook handler type set (code.claude.com/docs/hooks).
@@ -52,7 +52,7 @@ const HOOK_TYPES = new Set(['command', 'http', 'mcp_tool', 'prompt', 'agent']);
 // --- tolerant JSONC reader --------------------------------------------------
 // JSON plus // and /* */ comments and trailing commas (what VS Code and
 // Claude Code both accept). String values come back as String OBJECTS with a
-// .line property; dicts carry a hidden __keyLines__ map — same anchoring
+// .line property; dicts carry a hidden __keyLines__ map, same anchoring
 // trick as src/gyp.js, so every finding lands on a real file:line.
 
 function tokenizeJsonc(text) {
@@ -176,7 +176,7 @@ const isDict = (v) => v && typeof v === 'object' && !Array.isArray(v) && !(v ins
 // --- surface extractors -----------------------------------------------------
 // Raw entries: { surface, trigger, auto, kind, label, command, line, silent?,
 // event?, matcher?, note? }. Interpolations (${workspaceFolder},
-// ${CLAUDE_PROJECT_DIR}) are kept literal — resolving them would be guessing.
+// ${CLAUDE_PROJECT_DIR}) are kept literal, resolving them would be guessing.
 
 function extractVscodeTasks(parsed) {
   const entries = [];
@@ -213,7 +213,7 @@ function extractClaudeHooks(parsed) {
     if (!Array.isArray(groups)) continue;
     for (const group of groups) {
       if (!isDict(group)) continue;
-      // documented shape: { matcher?, hooks: [handler, …] } — but tolerate a
+      // documented shape: { matcher?, hooks: [handler, …] }, but tolerate a
       // handler written directly in the group position
       const handlers = Array.isArray(group.hooks) ? group.hooks
         : (strVal(group.type) || strVal(group.command)) ? [group] : [];
@@ -247,7 +247,7 @@ function extractClaudeHooks(parsed) {
   return entries;
 }
 
-// One entry per auto-run location — adding an editor (Cursor rules, JetBrains
+// One entry per auto-run location, adding an editor (Cursor rules, JetBrains
 // startup tasks, …) is a new row here, nothing else.
 const SURFACES = [
   {
@@ -279,7 +279,7 @@ const SURFACES = [
 // node -e bodies, EXEC_BINS/NET_BINS), score() maps signals to a tier. Two
 // adjustments, both labelled in the row: agent-triggered hooks tier one level
 // lower, and anything shipped inside a dependency tarball is HIGH regardless
-// of command — a folderOpen task in a published package is a payload, not a
+// of command: a folderOpen task in a published package is a payload, not a
 // team convention (html-to-gutenberg / fetch-page-assets, 2026-05-25).
 
 const DOWNGRADE = { HIGH: 'MEDIUM', MEDIUM: 'LOW', LOW: 'LOW', SAFE: 'SAFE' };
@@ -304,7 +304,7 @@ function classifyEntry(entry, files = new Map()) {
 }
 
 // Resolve `node setup.mjs`-style references against the directory being
-// scanned so the payload file itself gets walked — the report then shows what
+// scanned so the payload file itself gets walked, the report then shows what
 // the hook actually does, not just that it runs something.
 function localFilesMap(rootDir, command) {
   const files = new Map();
@@ -318,7 +318,7 @@ function localFilesMap(rootDir, command) {
       if (fs.existsSync(full) && fs.statSync(full).size <= MAX_FILE_BYTES) {
         files.set(rel, fs.readFileSync(full, 'utf8'));
       }
-    } catch { /* unreadable — the unresolved-file signal stands */ }
+    } catch { /* unreadable: the unresolved-file signal stands */ }
   }
   return files;
 }
@@ -398,7 +398,7 @@ function scanProject(target = '.') {
 // --- dependency scan (--deps) -----------------------------------------------
 // Every locked dependency's tarball, via the same registry/cache path audit
 // uses. Needs the tarball for every package (a shipped .vscode is invisible in
-// registry metadata), so it is heavier than a plain audit — results are
+// registry metadata), so it is heavier than a plain audit, results are
 // cached per name@version like analysis rows are.
 
 const DEP_SURFACE_RE = {
@@ -466,7 +466,7 @@ const RANK = { HIGH: 3, MEDIUM: 2, LOW: 1, SAFE: 0, INFO: 0 };
 const FLOORS = { none: Infinity, medium: 2, high: 3 };
 
 // --check verdict: entries at or above the floor (partial files never fail on
-// their own — except dep-shipped ones, which surface as HIGH findings above).
+// their own, except dep-shipped ones, which surface as HIGH findings above).
 function checkHooks(findings, failOn = 'high') {
   const floor = FLOORS[failOn];
   if (floor === undefined) throw new Error(`--fail-on expects none | medium | high, got: ${failOn}`);
@@ -507,7 +507,7 @@ function renderHooks(findings, partials = []) {
   return lines.join('\n');
 }
 
-// The honesty notes, per surface with findings — the two surfaces gate very
+// The honesty notes, per surface with findings, the two surfaces gate very
 // differently, so one shared caveat would overstate one or soften the other.
 function surfaceCaveats(findings) {
   const present = new Set(findings.map((f) => (f.surface === 'vscode-task' || f.surface === 'vscode-tasks' ? 'vscode-tasks' : 'claude-hooks')));
@@ -532,7 +532,7 @@ function hooksJson(findings, partials, { errors = [], depsScanned = null } = {})
   };
 }
 
-// SARIF-ready findings (rule hook-auto-run) — same generic shape
+// SARIF-ready findings (rule hook-auto-run), same generic shape
 // reporter.buildSarif consumes for the gap/publish rules: warning by default,
 // error at HIGH, anchored to the real file:line.
 function hooksFindings(findings) {

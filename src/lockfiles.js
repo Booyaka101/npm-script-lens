@@ -6,7 +6,7 @@ const path = require('node:path');
 const LOCKFILE_NAMES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock'];
 
 // Every parser returns { deps: [{name, version}], edges: Map<name, Set<depName>> }.
-// Edges are name-level (versions collapse) — enough for "via" chains, not for
+// Edges are name-level (versions collapse), enough for "via" chains, not for
 // exact resolution, which the audit itself doesn't need.
 const addEdge = (edges, from, to) => {
   if (!from || !to || from === to) return;
@@ -47,7 +47,7 @@ function collectNpmDeps(lock) {
   return { deps: [...deps.values()], edges };
 }
 
-// Selectors whose range points outside the registry — the tarball we would
+// Selectors whose range points outside the registry, the tarball we would
 // fetch is not the code that installs, so skip rather than mislead.
 const NON_REGISTRY = /^(file|link|portal|workspace|patch|git\+|github:)|:\/\//;
 
@@ -97,7 +97,7 @@ function parseYarnClassic(text) {
   return { deps: [...deps.values()], edges };
 }
 
-// Berry lockfiles carry an exact "resolution: name@npm:version" per entry —
+// Berry lockfiles carry an exact "resolution: name@npm:version" per entry
 // use it and accept only the npm: protocol (workspace:/patch:/portal: entries
 // are local code, not registry tarballs). Within an entry, resolution always
 // precedes dependencies, so edges attribute to the right package.
@@ -137,7 +137,7 @@ const parseYarnLock = (text) => (text.includes('__metadata:') ? parseYarnBerry(t
 //   v9  name@1.2.3   (quoted when scoped)
 function splitPnpmKey(rawKey) {
   let key = rawKey.replace(/\([^)]*\)/g, '');
-  // v5 peer suffix ("/name/1.2.3_peer@2.0.0") can itself contain @ — strip
+  // v5 peer suffix ("/name/1.2.3_peer@2.0.0") can itself contain @, strip
   // it before locating the name/version split
   key = key.replace(/(\/\d+\.\d+\.\d+[^_/]*)_[^/]*$/, '$1');
   if (NON_REGISTRY.test(key)) return null;
@@ -172,7 +172,7 @@ function parsePnpmLock(text) {
     if (top) { section = top[1]; entryName = null; inDeps = false; continue; }
     if (/^\S/.test(line)) { section = null; continue; }
     if (section !== 'packages' && section !== 'snapshots') continue;
-    // entry keys sit at exactly 2 spaces — [^\s'"] keeps deeper-indented
+    // entry keys sit at exactly 2 spaces, [^\s'"] keeps deeper-indented
     // property lines (resolution:, dependencies:) from matching
     const entry = line.match(/^  ['"]?([^\s'"][^'"]*?)['"]?:\s*(\{\})?\s*$/);
     if (entry) {
@@ -192,7 +192,7 @@ function parsePnpmLock(text) {
 
 // bun.lock is JSONC: strip comments and trailing commas, then JSON. Package
 // values are arrays whose first element is "name@version" and whose first
-// object element carries the dependency maps. (bun.lockb is binary — ask for
+// object element carries the dependency maps. (bun.lockb is binary, ask for
 // the text lockfile instead.)
 function stripJsonc(text) {
   let out = '';
@@ -310,7 +310,7 @@ function viaChain(edges, name, maxDepth = 8) {
 // --- non-registry (git / remote-URL) dependencies --------------------------
 // npm v12 also flips `allow-git` and `allow-remote` to 'none': git and
 // remote-tarball dependencies stop resolving unless opted in. This collector
-// finds them in every lockfile dialect we read. It is a SEPARATE pass — the
+// finds them in every lockfile dialect we read. It is a SEPARATE pass, the
 // NON_REGISTRY skip in the registry-deps parsers above stays exactly as-is,
 // so audit output does not change.
 //
@@ -323,7 +323,7 @@ function viaChain(edges, name, maxDepth = 8) {
 // git = git+ssh / git+https / git:// (any git+ protocol) and the
 // github:/gitlab:/bitbucket: shorthands; remote = http(s) tarball URLs.
 // pnpm records git resolutions as bare `github.com/owner/repo/sha` paths, and
-// yarn berry as `https://….git#commit=…` — both are still git deps.
+// yarn berry as `https://….git#commit=…`, both are still git deps.
 function classifySourceSpec(spec) {
   if (typeof spec !== 'string' || spec === '') return null;
   if (/^(git(\+[a-z]+)?:|github:|gitlab:|bitbucket:)/i.test(spec)) return 'git';
@@ -350,7 +350,7 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', '
 function nonRegistryFromNpm(lock) {
   const { get, has, list } = sourceRecs();
   if (lock.packages) {
-    // pass 1 — declaration sites: the root importer (""), workspace importers,
+    // pass 1, declaration sites: the root importer (""), workspace importers,
     // and every installed package's dependency maps carry the original specs
     for (const [key, entry] of Object.entries(lock.packages)) {
       const isRoot = key === '';
@@ -362,21 +362,21 @@ function nonRegistryFromNpm(lock) {
           if (!kind) continue;
           const rec = get(depName);
           rec.kind = rec.kind || kind;
-          if (isRoot) rec.spec = spec; // the root declaration is what the user wrote — prefer it for display
+          if (isRoot) rec.spec = spec; // the root declaration is what the user wrote, prefer it for display
           else {
             if (!rec.spec) rec.spec = spec;
             // a workspace-package declaration is conservatively NOT root (npm
             // resolves allow-*=root against the ROOT package.json only), but a
-            // workspace importer is not a lockfile package either — only real
+            // workspace importer is not a lockfile package either, only real
             // package parents contribute to via-chains
             if (key.includes('node_modules/') && parentName && parentName !== depName) rec.parents.add(parentName);
           }
         }
       }
     }
-    // pass 2 — resolved URLs: fill in resolution for known deps, and catch git
+    // pass 2, resolved URLs: fill in resolution for known deps, and catch git
     // deps whose declaring spec was not visible (git+… is unambiguous; https
-    // resolved URLs are NOT — every registry dep has one)
+    // resolved URLs are NOT, every registry dep has one)
     for (const [key, entry] of Object.entries(lock.packages)) {
       if (!key.includes('node_modules/') || !entry.resolved) continue;
       const name = entry.name || key.split('node_modules/').pop();
@@ -450,7 +450,7 @@ function nonRegistryFromYarn(text) {
     const res = raw.match(/^\s{2}(?:resolution|resolved):?\s+"?([^"]+?)"?\s*$/);
     if (res) {
       if (current && !current.resolved) {
-        // berry's resolution is "name@<locator>" — strip the name prefix
+        // berry's resolution is "name@<locator>", strip the name prefix
         current.resolved = res[1].startsWith(`${current.name}@`) ? res[1].slice(current.name.length + 1) : res[1];
       }
       continue;
@@ -471,7 +471,7 @@ function nonRegistryFromYarn(text) {
 }
 
 // pnpm: `importers:` blocks carry the declared specifier per dep (`.` is the
-// root importer, others are workspace packages — NOT root); `packages:` keys
+// root importer, others are workspace packages, NOT root); `packages:` keys
 // name git/remote resolutions ("name@git+…", "name@https://…", or a bare
 // URL/`github.com/…` key with a `name:` property); `snapshots:`/`packages:`
 // dependency sub-maps give parents.
@@ -570,7 +570,7 @@ function nonRegistryFromPnpm(text) {
 }
 
 // bun.lock: `workspaces` blocks carry declared specs ("" is the root
-// importer); `packages` values are ["name@<locator>", …, {deps}, …] — a
+// importer); `packages` values are ["name@<locator>", …, {deps}, …], a
 // non-semver locator after the name is the resolution, and each entry's
 // dependency maps give parents.
 function nonRegistryFromBun(lock) {
