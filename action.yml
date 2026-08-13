@@ -71,7 +71,9 @@ inputs:
       Fail the job (exit 1) when a CI publish step still authenticates with a
       long-lived npm token (NODE_AUTH_TOKEN/NPM_TOKEN or an .npmrc _authToken
       write, with no id-token grant) — bypass-2FA tokens lose direct publish
-      around January 2027; trusted (OIDC) and staged publishing survive.
+      around January 2027; trusted (OIDC) and staged publishing survive — or
+      when a trusted-publishing path is BROKEN by actions/setup-node older
+      than v7 writing a dummy _authToken via registry-url.
       'true' to enable (opt-in).
     default: 'false'
   hooks-check:

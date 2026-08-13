@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const {
-  analyzePublish, checkPublish, classifyAuth, nodePinBelowFloor, enginesMinimum,
+  analyzePublish, checkPublish, classifyAuth, oidcBreakage, nodePinBelowFloor, enginesMinimum,
   detectRunPublisher, classifyRunsOn, parseYamlish, idTokenGrant, publishFindings,
   resolveLocalUses,
 } = require('../src/publish');
@@ -207,7 +207,7 @@ test('a workflow with both a TOKEN and a TRUSTED path fails on the TOKEN one', (
     ].join('\n'),
   });
   const analysis = analyzePublish(dir);
-  assert.deepStrictEqual(analysis.counts, { TRUSTED: 1, STAGED: 0, TOKEN: 1, UNKNOWN: 0 });
+  assert.deepStrictEqual(analysis.counts, { TRUSTED: 1, STAGED: 0, TOKEN: 1, BROKEN: 0, UNKNOWN: 0 });
   const { ok, failures } = checkPublish(analysis);
   assert.strictEqual(ok, false);
   assert.strictEqual(failures.length, 1);
@@ -309,7 +309,7 @@ test('--json emits cliff + both floors + classified paths', async () => {
     trusted: { npm: '11.5.1', node: '22.14.0' },
     staged: { npm: '11.15.0', node: '22.14.0' },
   });
-  assert.deepStrictEqual(out.counts, { TRUSTED: 0, STAGED: 0, TOKEN: 1, UNKNOWN: 0 });
+  assert.deepStrictEqual(out.counts, { TRUSTED: 0, STAGED: 0, TOKEN: 1, BROKEN: 0, UNKNOWN: 0 });
   const p = out.paths[0];
   assert.strictEqual(p.classification, 'TOKEN');
   assert.strictEqual(p.file, '.github/workflows/release.yml');
@@ -373,7 +373,7 @@ test('publish-composite-token: with:→inputs.* threading reads TOKEN at the com
   assert.match(stdout, /TOKEN\s+\.github\/actions\/release\/action\.yml:16\s+npm publish/);
   assert.match(stdout, /NODE_AUTH_TOKEN in the composite step env, fed by the caller's `with: npm-token`/);
   assert.match(stdout, /via \.github\/workflows\/release\.yml:11 \(job release, step "Release"\)/);
-  assert.match(stdout, /a composite action cannot declare `permissions` — the grant must live on the calling job/);
+  assert.match(stdout, /a composite action cannot declare `permissions`, so the grant must live on the calling job/);
   // the checklist still names the CALLING workflow — what npmjs.com asks for
   assert.match(stdout, /workflow filename:\s+release\.yml/);
   assert.match(stderr, /FAIL: \.github\/actions\/release\/action\.yml:16 publishes with a long-lived token/);
@@ -415,14 +415,14 @@ test('publish-reusable-local: caller grant reaches the called workflow — TRUST
   assert.match(stdout, /TRUSTED\s+\.github\/workflows\/reusable-release\.yml:14\s+npm publish/);
   assert.match(stdout, /via \.github\/workflows\/release\.yml:10 \(job release\)/);
   const analysis = analyzePublish(FIX('publish-reusable-local'));
-  assert.deepStrictEqual(analysis.counts, { TRUSTED: 1, STAGED: 0, TOKEN: 0, UNKNOWN: 0 });
+  assert.deepStrictEqual(analysis.counts, { TRUSTED: 1, STAGED: 0, TOKEN: 0, BROKEN: 0, UNKNOWN: 0 });
 });
 
 test('publish-composite-orphan: an unreferenced publishing composite is one UNKNOWN, exit 0', async () => {
   const { status, stdout } = await run(['publish', '--check', '--path', FIX('publish-composite-orphan')]);
   assert.strictEqual(status, 0);
   assert.match(stdout, /UNKNOWN\s+\.github\/actions\/publish\/action\.yml:6\s+npm publish/);
-  assert.match(stdout, /no scanned workflow in this repo references it — it may be called from another repo/);
+  assert.match(stdout, /no scanned workflow in this repo references it, so it may be called from another repo/);
 });
 
 test('--json: via is [] for direct paths, populated for composite paths', async () => {
@@ -555,7 +555,7 @@ test('analysis.scanned lists every composite/reusable file actually read, once',
 test('doctor: publish-readiness section warns on TOKEN paths and reports the mix', async () => {
   const { stdout } = await run(['doctor', '--json', '--no-live', '--path', FIX('publish-token')]);
   const report = JSON.parse(stdout);
-  assert.deepStrictEqual(report.publish.counts, { TRUSTED: 0, STAGED: 0, TOKEN: 1, UNKNOWN: 0 });
+  assert.deepStrictEqual(report.publish.counts, { TRUSTED: 0, STAGED: 0, TOKEN: 1, BROKEN: 0, UNKNOWN: 0 });
   const check = report.checks.find((c) => c.name === 'publish readiness');
   assert.strictEqual(check.status, 'warn');
   assert.match(check.detail, /January 2027/);
@@ -592,4 +592,212 @@ test('action publish-check: passes with ✅ summary when the path is trusted', a
   assert.strictEqual(status, 0);
   assert.match(stdout, /npm token-cliff publish check passed/);
   assert.match(fs.readFileSync(summary, 'utf8'), /## ✅ npm token-cliff publish check/);
+});
+
+// --- NPMPUB002: the setup-node OIDC breakage (BROKEN) -----------------------
+// setup-node v6 and older write a dummy _authToken when given a
+// `registry-url:`, so a TRUSTED npmjs path on one of those refs fails at
+// `npm publish` (npm/documentation#1960; fixed in setup-node v7.0.0).
+
+const trustedPath = (setupNode, extra = {}) => ({
+  provider: 'github', classification: 'TRUSTED',
+  file: '.github/workflows/release.yml', line: 18,
+  idToken: { line: 10, via: 'id-token: write' },
+  setupNode, ...extra,
+});
+const setupNodeOn = (ref, major, registryUrl) => ({
+  ref, major, registryUrl, registryLine: 16,
+  uses: `actions/setup-node@${ref}`, file: '.github/workflows/release.yml', line: 13,
+});
+
+test('oidcBreakage: setup-node v4/v5/v6 + npmjs registry-url is broken, v7/v8 is not', () => {
+  for (const [ref, major] of [['v4', 4], ['v5', 5], ['v6', 6]]) {
+    const r = oidcBreakage(trustedPath(setupNodeOn(ref, major, 'https://registry.npmjs.org')));
+    assert.strictEqual(r.broken, true, `expected ${ref} broken`);
+    assert.strictEqual(r.note, null);
+  }
+  for (const [ref, major] of [['v7', 7], ['v8.0.1', 8]]) {
+    assert.deepStrictEqual(oidcBreakage(trustedPath(setupNodeOn(ref, major, 'https://registry.npmjs.org'))),
+      { broken: false, note: null }, `expected ${ref} clean`);
+  }
+});
+
+test('oidcBreakage: a non-npmjs registry (GitHub Packages) is never broken, no note', () => {
+  assert.deepStrictEqual(oidcBreakage(trustedPath(setupNodeOn('v6', 6, 'https://npm.pkg.github.com'))),
+    { broken: false, note: null });
+});
+
+test('oidcBreakage: SHA, branch and expression refs get a note, never a downgrade', () => {
+  for (const ref of ['8f152de45cc393bb48ce5d89d36b731f54556e65', 'main', '${{ inputs.setup-node-ref }}']) {
+    const r = oidcBreakage(trustedPath(setupNodeOn(ref, null, 'https://registry.npmjs.org')));
+    assert.strictEqual(r.broken, false, `expected ${ref} not broken`);
+    assert.match(r.note, /cannot be resolved to a version/);
+    assert.match(r.note, /npm\/documentation#1960/);
+  }
+});
+
+test('oidcBreakage: only TRUSTED github paths qualify — TOKEN never becomes BROKEN', () => {
+  const sn = setupNodeOn('v6', 6, 'https://registry.npmjs.org');
+  assert.deepStrictEqual(oidcBreakage(trustedPath(sn, { classification: 'TOKEN' })), { broken: false, note: null });
+  assert.deepStrictEqual(oidcBreakage(trustedPath(sn, { provider: 'gitlab' })), { broken: false, note: null });
+  assert.deepStrictEqual(oidcBreakage(trustedPath(null)), { broken: false, note: null });
+  assert.deepStrictEqual(oidcBreakage(trustedPath(setupNodeOn('v6', 6, null))), { broken: false, note: null });
+});
+
+test('oidcBreakage: a job that strips the dummy line already applied the workaround', () => {
+  const sn = setupNodeOn('v6', 6, 'https://registry.npmjs.org');
+  const strip = { line: 17, text: 'sed -i \'/_authToken/d\' "$NPM_CONFIG_USERCONFIG"' };
+  assert.deepStrictEqual(oidcBreakage(trustedPath(sn, { authTokenStrip: strip })), { broken: false, note: null });
+});
+
+test('publish-oidc-broken: BROKEN, all three fixes, the checklist, exit 1', async () => {
+  const { status, stdout, stderr } = await run(['publish', FIX('publish-oidc-broken'), '--check']);
+  assert.strictEqual(status, 1);
+  assert.match(stdout, /BROKEN\s+\.github\/workflows\/release\.yml:18\s+npm publish/);
+  assert.match(stdout, /⛔ 1 BROKEN publish path/);
+  assert.match(stdout, /npm\/documentation#1960: "npm CLI sees the `_authToken=` line/);
+  assert.match(stdout, /bump actions\/setup-node to @v7 or later \(\.github\/workflows\/release\.yml:13\)\. v7\.0\.0 removed the dummy NODE_AUTH_TOKEN export \(PR #1558\)/);
+  assert.match(stdout, /or drop `registry-url:` \(\.github\/workflows\/release\.yml:16\) and set the registry yourself: `- run: npm config set registry https:\/\/registry\.npmjs\.org\/`/);
+  assert.match(stdout, /or strip the line setup-node wrote, after the setup-node step: `- run: sed -i '\/_authToken\/d' "\$NPM_CONFIG_USERCONFIG"`/);
+  // a BROKEN path still intends OIDC — the npmjs.com checklist follows the fixes
+  assert.match(stdout, /GitHub organization or user: acme/);
+  assert.match(stdout, /repository:\s+widget-oidc/);
+  assert.match(stderr, /FAIL: \.github\/workflows\/release\.yml:18 intends trusted publishing \(OIDC\) but actions\/setup-node@v6/);
+});
+
+test('publish-oidc-fixed: setup-node@v7 with the same registry-url is TRUSTED, exit 0', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-oidc-fixed'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:18\s+npm publish/);
+  assert.doesNotMatch(stdout, /BROKEN/);
+});
+
+test('publish-oidc-ghpackages: v6 + GitHub Packages registry is TRUSTED, exit 0, no note', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-oidc-ghpackages'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:18\s+npm publish/);
+  assert.doesNotMatch(stdout, /BROKEN/);
+  assert.doesNotMatch(stdout, /⚠️ {2}actions\/setup-node is pinned/);
+});
+
+test('publish-oidc-sha: an unresolvable ref stays TRUSTED with the oidcNote, exit 0', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-oidc-sha'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:18\s+npm publish/);
+  assert.match(stdout, /⚠️ {2}actions\/setup-node is pinned to 8f152de45cc393bb48ce5d89d36b731f54556e65/);
+  assert.match(stdout, /if it predates v7\.0\.0 it writes a dummy _authToken/);
+});
+
+test('publish-oidc-composite: the breakage is found inside the composite, via chain intact, exit 1', async () => {
+  const { status, stdout, stderr } = await run(['publish', FIX('publish-oidc-composite'), '--check']);
+  assert.strictEqual(status, 1);
+  assert.match(stdout, /BROKEN\s+\.github\/actions\/release\/action\.yml:10\s+npm publish/);
+  assert.match(stdout, /via \.github\/workflows\/release\.yml:13 \(job release, step "Release"\)/);
+  assert.match(stdout, /bump actions\/setup-node to @v7 or later \(\.github\/actions\/release\/action\.yml:6\)/);
+  assert.match(stderr, /FAIL: \.github\/actions\/release\/action\.yml:10 intends trusted publishing/);
+});
+
+test('publish-oidc-stripped: the sed workaround is not a finding — TRUSTED, exit 0', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-oidc-stripped'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:19\s+npm publish/);
+  assert.doesNotMatch(stdout, /^ {2}TOKEN\s/m);
+  assert.doesNotMatch(stdout, /BROKEN/);
+});
+
+test('the _authToken deletion line alone never reads as a token write', () => {
+  const dir = mkProj('sedstrip', {
+    '.github/workflows/release.yml': [
+      'jobs:',
+      '  release:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: |',
+      '          sed -i \'/_authToken/d\' "$NPM_CONFIG_USERCONFIG"',
+      '          npm publish',
+      '',
+    ].join('\n'),
+  });
+  const p = analyzePublish(dir).paths[0];
+  assert.notStrictEqual(p.classification, 'TOKEN');
+  assert.strictEqual(p.token, null);
+});
+
+test('--json: BROKEN in counts, setupNode and oidcNote on every path', async () => {
+  const broken = JSON.parse((await run(['publish', FIX('publish-oidc-broken'), '--json'])).stdout);
+  assert.deepStrictEqual(broken.counts, { TRUSTED: 0, STAGED: 0, TOKEN: 0, BROKEN: 1, UNKNOWN: 0 });
+  const p = broken.paths[0];
+  assert.strictEqual(p.classification, 'BROKEN');
+  assert.deepStrictEqual(p.setupNode, {
+    ref: 'v6', major: 6, registryUrl: 'https://registry.npmjs.org', registryLine: 16,
+    uses: 'actions/setup-node@v6', file: '.github/workflows/release.yml', line: 13,
+  });
+  assert.strictEqual(p.oidcNote, null);
+  const sha = JSON.parse((await run(['publish', FIX('publish-oidc-sha'), '--json'])).stdout);
+  assert.strictEqual(sha.paths[0].classification, 'TRUSTED');
+  assert.strictEqual(sha.paths[0].setupNode.major, null);
+  assert.match(sha.paths[0].oidcNote, /cannot be resolved to a version/);
+  const fixed = JSON.parse((await run(['publish', FIX('publish-oidc-fixed'), '--json'])).stdout);
+  assert.strictEqual(fixed.paths[0].setupNode.major, 7);
+  assert.strictEqual(fixed.paths[0].oidcNote, null);
+});
+
+test('--sarif: rule publish-oidc-broken, level error, fingerprint on the publish line', async () => {
+  const file = path.join(tmp, 'oidc.sarif');
+  const { status } = await run(['publish', FIX('publish-oidc-broken'), '--sarif', file]);
+  assert.strictEqual(status, 0);
+  const sarif = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const run0 = sarif.runs[0];
+  assert.ok(run0.tool.driver.rules.some((r) => r.id === 'publish-oidc-broken'));
+  const result = run0.results.find((r) => r.ruleId === 'publish-oidc-broken');
+  assert.ok(result, 'expected a publish-oidc-broken result');
+  assert.strictEqual(result.level, 'error');
+  const loc = result.locations[0].physicalLocation;
+  assert.strictEqual(loc.artifactLocation.uri, '.github/workflows/release.yml');
+  assert.strictEqual(loc.region.startLine, 18);
+  const finding = publishFindings(analyzePublish(FIX('publish-oidc-broken')))[0];
+  assert.strictEqual(finding.fingerprint, 'publish-oidc-broken:.github/workflows/release.yml:18');
+});
+
+test('publish-trusted (setup-node@v4, NO registry-url) still reads TRUSTED, exit 0', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-trusted'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:19\s+npm publish/);
+  assert.doesNotMatch(stdout, /BROKEN/);
+  const analysis = analyzePublish(FIX('publish-trusted'));
+  assert.strictEqual(analysis.paths[0].setupNode.registryUrl, null);
+  assert.strictEqual(analysis.paths[0].oidcNote, undefined);
+});
+
+test('doctor: names the setup-node ref on a BROKEN path', async () => {
+  const { stdout } = await run(['doctor', '--json', '--no-live', '--path', FIX('publish-oidc-broken')]);
+  const report = JSON.parse(stdout);
+  assert.deepStrictEqual(report.publish.counts, { TRUSTED: 0, STAGED: 0, TOKEN: 0, BROKEN: 1, UNKNOWN: 0 });
+  const readiness = report.checks.find((c) => c.name === 'publish readiness');
+  assert.strictEqual(readiness.status, 'warn');
+  assert.match(readiness.detail, /1 of 1 publish path\(s\) intend trusted publishing but are BROKEN/);
+  const oidc = report.checks.find((c) => c.name === 'publish oidc');
+  assert.strictEqual(oidc.status, 'warn');
+  assert.match(oidc.detail, /actions\/setup-node@v6/);
+  assert.match(oidc.detail, /fixed in setup-node v7\.0\.0/);
+});
+
+test('action publish-check: ::error + BROKEN-named summary + SARIF merge + exit 1 on BROKEN', async () => {
+  const summary = path.join(tmp, 'summary-broken.md');
+  fs.writeFileSync(summary, '');
+  const sarifFile = path.join(tmp, 'merged-broken.sarif');
+  const { buildSarif } = require('../src/reporter');
+  fs.writeFileSync(sarifFile, JSON.stringify(buildSarif([], { lockPath: 'package-lock.json', lockText: '' }), null, 2));
+  const { status, stdout } = await run(['publish-check'], {
+    INPUT_PATH: FIX('publish-oidc-broken'),
+    INPUT_SARIF_FILE: sarifFile,
+    GITHUB_STEP_SUMMARY: summary,
+  }, ACTION);
+  assert.strictEqual(status, 1);
+  assert.match(stdout, /::error::\.github\/workflows\/release\.yml:18 intends trusted publishing \(OIDC\) but actions\/setup-node@v6/);
+  const md = fs.readFileSync(summary, 'utf8');
+  assert.match(md, /## ❌ npm token-cliff publish check/);
+  assert.match(md, /- \*\*BROKEN\*\*: /);
+  const merged = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
+  assert.ok(merged.runs[0].results.some((r) => r.ruleId === 'publish-oidc-broken'));
 });

@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.9.0 (2026-08-13)
+
+**The false all-clear on trusted publishing.** A GitHub release job with
+`permissions: id-token: write` and no token in the env read TRUSTED, and
+`publish --check` exited 0. For a large class of real workflows that verdict is
+wrong. Every `actions/setup-node` release up to and including v6 answers
+`registry-url:` by writing `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`
+into an .npmrc and exporting a dummy `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX`.
+[npm/documentation#1960](https://github.com/npm/documentation/issues/1960),
+open since May 2026, describes the result: *"npm CLI sees the `_authToken=`
+line as 'auth is configured' and does NOT initiate the OIDC token exchange,
+instead attempting a classic publish with empty credentials"*. The publish dies
+with ENEEDAUTH or E404 even though the trusted publisher is configured
+correctly. setup-node
+[v7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0) fixed it on
+2026-07-14: *"Remove dummy NODE_AUTH_TOKEN export by @gowridurgad in
+https://github.com/actions/setup-node/pull/1558"*. The trusted-publishers docs
+still ship the `setup-node@v6` example with `registry-url`, so the documented
+recipe is the broken one.
+
+- **New fifth verdict `BROKEN`** (rule NPMPUB002): a TRUSTED GitHub path whose
+  setup-node step resolves to v6 or older and passes a `registry-url:` for
+  registry.npmjs.org. The report gives all three ways out, anchored to real
+  lines: bump setup-node to v7 or later, drop `registry-url:` and run
+  `npm config set registry` yourself, or
+  `sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"` after the setup-node step.
+  The npmjs.com checklist still follows, since a BROKEN path still intends
+  OIDC. A ref that cannot be resolved to a version (SHA pin, branch,
+  expression) gets a ⚠️ note rather than a downgrade, and the note never
+  affects the exit code. GitHub Packages registries are left alone.
+- ⚠️ **`publish --check` and the Action's `publish-check` input now exit 1 on
+  BROKEN as well as TOKEN.** A repo that passed 1.8.0 can newly fail, which is
+  the point: the old exit 0 was a clean bill of health on a publish that dies
+  at the registry.
+- **A pre-existing false positive, fixed first.** The `_authToken` run-line
+  scanner treated any line mentioning `_authToken` as a token write, including
+  the deletion line `sed -i '/_authToken/d'` recommended above. Only real
+  writes count now (a redirect, `npm config set`, echo/printf/tee, an
+  `_authToken=` assignment), and a job that strips the dummy line reads
+  TRUSTED rather than TOKEN or BROKEN.
+- **Surfaces**: `publish [dir]` also takes the directory positionally.
+  `--json` gains `BROKEN` in `counts` plus per-path `setupNode` (`ref`,
+  `major`, `registryUrl`, `registryLine`, `uses`, `file`, `line`) and
+  `oidcNote`. `--sarif` gains rule `publish-oidc-broken` at level error.
+  `doctor` reports the BROKEN count and names the setup-node ref. The
+  fixed-in version, dummy token, auth line, hosts, issue links and quote all
+  live in `PUBLISH.oidc` in `src/npm-contract.js` and nowhere else.
+- Tests 298 to 315. `classifyAuth` is unchanged: BROKEN is a post-pass that
+  only ever downgrades TRUSTED.
+
 ## 1.8.0 (2026-08-08)
 
 **The open-time surface.** npm-script-lens already covered three moments where

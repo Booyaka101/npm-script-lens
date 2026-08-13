@@ -1,0 +1,19 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - run: sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"
+      - run: npm ci
+      - run: npm publish

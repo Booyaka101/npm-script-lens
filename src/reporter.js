@@ -146,8 +146,15 @@ const PUBLISH_RULE = {
   text: 'CI publish step authenticates with a long-lived npm token — 2FA-bypass tokens lose direct publish around January 2027; migrate to trusted publishing (OIDC) or staged publishing',
 };
 
+// A trusted-publishing path broken by setup-node older than v7 writing a
+// dummy _authToken: the workflow looks migrated, but the publish fails.
+const PUBLISH_OIDC_RULE = {
+  id: 'publish-oidc-broken',
+  text: 'Trusted publishing (OIDC) is granted but actions/setup-node older than v7 with registry-url writes a dummy _authToken into .npmrc — npm skips the OIDC token exchange and the publish fails; bump setup-node to v7 or later, drop registry-url, or strip the _authToken line',
+};
+
 // An open-time execution entry (from src/hooks.js): a .vscode/tasks.json task
-// with runOn: folderOpen, or a .claude/settings.json hook — code that runs
+// with runOn: folderOpen, or a .claude/settings.json hook, code that runs
 // when the folder is opened, before any install step. warning by default,
 // error when the entry scores HIGH (or ships inside a dependency tarball).
 const HOOK_RULE = {
@@ -238,7 +245,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
           name: 'npm-script-lens',
           informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
-          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, HOOK_RULE].map((rule) => ({
+          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, PUBLISH_OIDC_RULE, HOOK_RULE].map((rule) => ({
             id: rule.id,
             shortDescription: { text: rule.text },
           })),
@@ -253,7 +260,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
 // package keys -> { risk, capabilities } where capabilities are the signal
 // KINDS (exec/net/fs/env/obf/bin), not the volatile human-readable strings.
 // Deliberately excludes trust data (downloads, age, OSV) so the file changes
-// only when a package's *behavior* changes — the git diff of this file IS the
+// only when a package's *behavior* changes, the git diff of this file IS the
 // approval-surface change. Deterministic per tool version, so it round-trips
 // through `manifest --check`.
 function packageCapabilities(r) {
@@ -274,7 +281,7 @@ function buildManifest(results, { deep = false } = {}) {
     const key = `${r.name}@${r.version}`;
     if (r.error) { errors.push(key); continue; }
     const capabilities = packageCapabilities(r);
-    if (capabilities.length === 0) continue; // no install-time behavior — omit
+    if (capabilities.length === 0) continue; // no install-time behavior, omit
     packages[key] = { risk: packageRisk(r), capabilities };
   }
   const sorted = {};
@@ -308,7 +315,7 @@ function diffManifests(oldM, newM) {
   return changes;
 }
 
-// A self-contained, shareable HTML dashboard — no external assets, works
+// A self-contained, shareable HTML dashboard, no external assets, works
 // offline, one file you can email or attach to a security review.
 const htmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const HTML_BADGE = {
