@@ -4,7 +4,7 @@
 //    optional dependencies, but `npm ci --strict-allow-scripts` rejects any
 //    optional dep with install scripts that is missing from allowScripts.
 //  - npm/cli#9463: `npm approve-scripts` errors with EGLOBAL in global-install
-//    contexts, so CI lines like `npm install -g pkg` have no approval path —
+//    contexts, so CI lines like `npm install -g pkg` have no approval path
 //    the working form is `npm install -g --allow-scripts=pkg pkg`.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,7 +13,7 @@ const { REGISTRY, LIFECYCLE } = require('./registry');
 const { npmFullVersion } = require('./review');
 const { DETECTORS, INERT_SKIP_FROM, skipsInertOptional } = require('./npm-contract');
 
-// Best-effort version metadata: null on any failure — these checks warn on
+// Best-effort version metadata: null on any failure, these checks warn on
 // what they can confirm and stay quiet (or fall back to lockfile facts)
 // otherwise.
 async function versionMeta(name, version) {
@@ -93,7 +93,7 @@ function platformAllows(list, value) {
 // "allowlist fsevents on Linux" false positive) is wrong on a modern npm.
 const isInertHere = (osList, cpuList) => !platformAllows(osList, process.platform) || !platformAllows(cpuList, process.arch);
 
-// Check 1 — optional deps with install scripts missing from allowScripts.
+// Check 1, optional deps with install scripts missing from allowScripts.
 // npm-lockfile-only: the bug lives in npm's own approve-scripts/ci pair.
 // Version-gated: on an npm carrying PR #9597 the inert candidates are dropped.
 async function checkOptionalGap(target, { concurrency = 6, npmVersion } = {}) {
@@ -104,7 +104,7 @@ async function checkOptionalGap(target, { concurrency = 6, npmVersion } = {}) {
   let allow = {};
   try {
     allow = JSON.parse(fs.readFileSync(path.join(path.dirname(lockPath), 'package.json'), 'utf8')).allowScripts || {};
-  } catch { /* no package.json — nothing is approved */ }
+  } catch { /* no package.json, nothing is approved */ }
   const localNpm = npmVersion === undefined ? await npmFullVersion(path.dirname(lockPath)) : npmVersion;
   const skipInert = skipsInertOptional(localNpm);
   const candidates = collectOptionalDeps(lock)
@@ -113,7 +113,7 @@ async function checkOptionalGap(target, { concurrency = 6, npmVersion } = {}) {
     // covered under either allowScripts key form: bare name or name@version
     .filter((d) => !(d.name in allow) && !(`${d.name}@${d.version}` in allow))
     // on a fixed npm, a dep the lockfile already marks platform-inert never
-    // reaches the strict check — drop it before spending a registry request
+    // reaches the strict check, drop it before spending a registry request
     .filter((d) => !(skipInert && (d.os || d.cpu) && isInertHere(d.os, d.cpu)));
   const findings = [];
   let i = 0;
@@ -130,7 +130,7 @@ async function checkOptionalGap(target, { concurrency = 6, npmVersion } = {}) {
       else if (meta && meta.hasInstallScript) script = 'install (implicit node-gyp rebuild)';
       else if (meta) continue; // registry says no install scripts after all
       else if (d.hasInstallScript === true) script = 'unknown (hasInstallScript in lockfile; registry metadata unavailable)';
-      else continue; // v1 lockfile, registry unreachable — cannot confirm
+      else continue; // v1 lockfile, registry unreachable, cannot confirm
       findings.push({
         id: DETECTORS.optionalGap.id,
         severity: 'warn',
@@ -153,7 +153,7 @@ async function checkOptionalGap(target, { concurrency = 6, npmVersion } = {}) {
 const VALUE_FLAGS = new Set(['--registry', '--location', '--prefix', '--loglevel', '--cache', '--userconfig', '--omit', '--include', '--allow-scripts']);
 
 // `npm install|i|add …` occurrences in one line of a workflow run: block.
-// Returns [{ specs, global, allowed }] — allowed when the command already
+// Returns [{ specs, global, allowed }], allowed when the command already
 // carries --allow-scripts / --ignore-scripts.
 function globalNpmInstalls(line) {
   const out = [];
@@ -200,7 +200,7 @@ function workflowFiles(projectDir) {
 
 const eglobalFix = (name) => `Replace \`npm install -g ${name}\` with \`npm install -g --allow-scripts=${name} ${name}\` — npm approve-scripts fails with EGLOBAL in global install contexts (npm/cli#9463)`;
 
-// Check 2 — `npm install -g <pkg>` in .github/workflows/*.yml where <pkg> has
+// Check 2, `npm install -g <pkg>` in .github/workflows/*.yml where <pkg> has
 // install scripts (per registry metadata) and the command carries no
 // --allow-scripts: there is no post-install approval path (EGLOBAL), the
 // scripts silently stay blocked.
@@ -232,7 +232,7 @@ async function checkEglobal(target, { concurrency = 6 } = {}) {
       const s = sites[i++];
       const exact = s.version && /^\d+\.\d+\.\d+/.test(s.version) ? s.version : 'latest';
       const meta = await versionMeta(s.name, exact);
-      if (!meta) continue; // not on the registry (or unreachable) — cannot confirm
+      if (!meta) continue; // not on the registry (or unreachable), cannot confirm
       const names = lifecycleNames(meta);
       if (names.length === 0 && !meta.hasInstallScript) continue;
       findings.push({

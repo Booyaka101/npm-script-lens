@@ -18,7 +18,7 @@ const DEFAULT_POLICY = {
     minAgeDays: 0, // require the version to be at least this old (needs trust data)
     requireProvenance: false, // require sigstore provenance to auto-approve (needs trust data)
   },
-  // name -> { allow, reason, expires? } — an explicit human decision that
+  // name -> { allow, reason, expires? }, an explicit human decision that
   // overrides the heuristic until it expires
   waivers: {},
 };

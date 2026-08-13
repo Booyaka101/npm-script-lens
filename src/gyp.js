@@ -1,13 +1,13 @@
 'use strict';
 // binding.gyp / .gypi content scanner. Until now the tool only checked that a
 // binding.gyp EXISTS (the implicit `node-gyp rebuild`); this module reads what
-// is inside it. GYP files are Python-literal dicts, NOT JSON — single-quoted
-// strings, `#` line comments, trailing commas — so JSON.parse cannot read the
+// is inside it. GYP files are Python-literal dicts, NOT JSON, single-quoted
+// strings, `#` line comments, trailing commas, so JSON.parse cannot read the
 // real ones (better-sqlite3's opens with a `#` banner and single-quoted keys).
 //
 // The expansion signature set is taken from gyp-next pylib/gyp/input.py
 // (early_variable_re / late_variable_re / latelate_variable_re): prefixes `<`
-// (early), `>` (late), `^` (latelate); modifiers `!` (command expansion —
+// (early), `>` (late), `^` (latelate); modifiers `!` (command expansion
 // gyp runs the inner text via subprocess.run(..., shell=use_shell)), `!@`
 // (command expansion split into a list), `|` (listfile). `<!pymod_do_main(mod
 // args)` imports `mod` as a Python module and calls its DoMain(). Plain
@@ -150,12 +150,12 @@ function parseGyp(text) {
 
 // Mirror of gyp's variable regexes: prefix, optional modifier, optional
 // command_string, opening paren. `@` alone (array variable, e.g. `<@(deps)`)
-// and no modifier at all are plain interpolation — skipped below.
+// and no modifier at all are plain interpolation, skipped below.
 const EXPANSION_RE = /([<>^])(!@?|\||@)?([-a-zA-Z0-9_.]+)?\(/g;
 
 // Balance-count from `start` (index just past the opening paren): nested
-// parens inside the command — bufferutil's `<!(perl -e 'print <(clang_version)
-// cmp 12.0.0')` — must not stop at the first `)`.
+// parens inside the command, bufferutil's `<!(perl -e 'print <(clang_version)
+// cmp 12.0.0')`, must not stop at the first `)`.
 function readBalanced(s, start) {
   let depth = 1;
   for (let i = start; i < s.length; i++) {
@@ -297,7 +297,7 @@ function resolveInclude(from, spec) {
   return base.join('/');
 }
 
-// Scan a package's binding.gyp plus the .gyp/.gypi files it pulls in — one
+// Scan a package's binding.gyp plus the .gyp/.gypi files it pulls in, one
 // include level, resolved against the tarball/node_modules file index, at most
 // MAX_GYP_FILES files, cycle-guarded (better-sqlite3 keeps its real payload in
 // deps/common.gypi behind `'includes': ['deps/common.gypi']`).

@@ -5,7 +5,7 @@ const path = require('node:path');
 const TOOL_VERSION = require('../package.json').version;
 
 // Published tarballs are immutable, so analysis rows for name@version are
-// deterministic per analyzer version — cache entries never expire, they are
+// deterministic per analyzer version: cache entries never expire, they are
 // invalidated wholesale by a tool version bump.
 function cacheDir() {
   if (process.env.NPM_SCRIPT_LENS_CACHE_DIR) return process.env.NPM_SCRIPT_LENS_CACHE_DIR;
@@ -34,7 +34,7 @@ function cacheSet(name, version, rows) {
   } catch { /* cache is best-effort */ }
 }
 
-// Trust data (downloads, advisories, provenance) drifts over time — same disk
+// Trust data (downloads, advisories, provenance) drifts over time, same disk
 // cache, but with a TTL instead of tool-version pinning.
 const TRUST_TTL_MS = 24 * 60 * 60 * 1000;
 const trustFile = (name, version) => path.join(cacheDir(), `trust-${name.replace('/', '+')}@${version}.json`);

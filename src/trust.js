@@ -15,7 +15,7 @@ async function getJson(url, init) {
 // One OSV querybatch call per 500 packages -> Map "name@version" -> [advisory
 // ids]. MAL-* ids are confirmed-malicious packages; GHSA vulns are ordinary
 // CVEs and deliberately ignored here (this tool judges install scripts, not
-// runtime vulnerabilities). Returns an empty map on any failure — the audit
+// runtime vulnerabilities). Returns an empty map on any failure, the audit
 // must not break because an enrichment API is down.
 async function osvMalicious(deps) {
   const out = new Map();

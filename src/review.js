@@ -12,12 +12,12 @@ const { DRY_RUN_ARGS, UNREVIEWED_KEY, SUMMARY_KEYS, MIN_ALLOWSCRIPTS_NPM } = req
 // unreviewedScripts: [{name, version, path, scripts}], and OMITS the key
 // entirely when nothing is pending (verified against npm 12.0.1). Human "add
 // pkg 1.2.3" lines precede the JSON on stdout, and the first run in a dir can
-// exit non-zero — so scan forward to the JSON and ignore the exit code.
+// exit non-zero, so scan forward to the JSON and ignore the exit code.
 // Returns one of:
-//   { kind: 'pending',      pending: [...] }  — packages awaiting a decision
-//   { kind: 'empty',        pending: [] }     — successful summary, none pending
-//   { kind: 'error',        pending: null }   — npm errored / no JSON / garbage
-//   { kind: 'unrecognized', pending: null }   — got JSON, but not a shape we
+//   { kind: 'pending',      pending: [...] }, packages awaiting a decision
+//   { kind: 'empty',        pending: [] }, successful summary, none pending
+//   { kind: 'error',        pending: null }: npm errored / no JSON / garbage
+//   { kind: 'unrecognized', pending: null }, got JSON, but not a shape we
 //                                               know: the loud drift signal
 function classifyDryRun(text) {
   let i = text.indexOf('{');
@@ -84,12 +84,12 @@ async function npmMajorVersion(cwd) {
 
 // Ask the project's npm what is pending. Resolves:
 //   { pending }             when npm is v12+ and the shape was recognized
-//                           (pending may be empty — a definitive "nothing
+//                           (pending may be empty, a definitive "nothing
 //                           pending")
 //   { unrecognized, npmMajor } when npm is v12+ but its output shape drifted
-//                           from what we parse — the caller warns and falls
+//                           from what we parse, the caller warns and falls
 //                           back instead of silently trusting an empty answer
-//   null                    when npm < 12 (dry-run skipped — its output would
+//   null                    when npm < 12 (dry-run skipped, its output would
 //                           be meaningless) or spawn failure/timeout/error
 async function npmDryRunPending(cwd, { timeoutMs = 180000 } = {}) {
   const major = await npmMajorVersion(cwd);
@@ -103,7 +103,7 @@ async function npmDryRunPending(cwd, { timeoutMs = 180000 } = {}) {
   return null;
 }
 
-// npm v12 counts either allowScripts key form as a decision — bare name or
+// npm v12 counts either allowScripts key form as a decision, bare name or
 // name@version, true or false (verified against npm 12.0.1).
 const isCovered = (allow, name, version) => name in allow || `${name}@${version}` in allow;
 

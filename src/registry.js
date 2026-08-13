@@ -85,7 +85,7 @@ async function fetchPackage(name, version, { forceTarball = false } = {}) {
     } catch { /* keep registry copy */ }
   }
   // npm runs an implicit `node-gyp rebuild` for packages shipping a root
-  // binding.gyp without their own install/preinstall script — npm v12 blocks
+  // binding.gyp without their own install/preinstall script: npm v12 blocks
   // these too, so surface them as a synthetic install script.
   const implicitGyp = files.has('binding.gyp') && !scripts.install && !scripts.preinstall;
   if (implicitGyp) scripts.install = 'node-gyp rebuild';

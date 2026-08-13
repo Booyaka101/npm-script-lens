@@ -16,7 +16,7 @@ const EXEC_PKGS = new Set(['child_process', 'execa', 'cross-spawn', 'shelljs', '
 const NET_PKGS = new Set(['http', 'https', 'http2', 'net', 'tls', 'dgram', 'dns', 'node-fetch', 'axios', 'got',
   'undici', 'needle', 'superagent', 'request', 'bent', 'phin', 'simple-get', 'download', '@prisma/fetch-engine']);
 const NET_RECV = new Set(['http', 'https', 'http2']);
-// vm executes arbitrary constructed strings — an eval by another name.
+// vm executes arbitrary constructed strings, an eval by another name.
 const OBF_PKGS = new Set(['vm']);
 const DYNAMIC = Symbol('dynamic-require');
 const NET_FNS = new Set(['request', 'get']);
@@ -56,7 +56,7 @@ function classifySpec(spec, kw, signals, follow) {
 }
 
 // The literal specifier of a require() call, DYNAMIC when the specifier is
-// built from strings at runtime (concatenation, template interpolation — the
+// built from strings at runtime (concatenation, template interpolation, the
 // classic way to hide what gets loaded), or null. Plain identifier arguments
 // are NOT flagged: bundler interop and binding-path loaders use them
 // constantly, and the path.join(__dirname, …) case is already followed.
@@ -90,7 +90,7 @@ function resolveFile(files, from, spec) {
 }
 
 // A decoded literal that parses as real JS (strict, not loose) is a hidden
-// payload — analyze it like any other source file instead of only flagging
+// payload: analyze it like any other source file instead of only flagging
 // the decode call.
 function looksLikeJs(text) {
   if (!text || text.length < 6 || /[^\x09\x0a\x0d\x20-\x7e -￿]/.test(text)) return false;
@@ -189,7 +189,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
   });
 }
 
-// Split a shell line on top-level && || ; | — but not inside quotes, so
+// Split a shell line on top-level && || ; |, but not inside quotes, so
 // `node -e "a;b"` stays whole.
 function splitShell(cmd) {
   const parts = [];
@@ -258,7 +258,7 @@ function analyzeCommand(cmd, files, signals, scripts = {}, visited = new Set()) 
   walkFiles(files, queue.map((q) => q.path), signals);
 }
 
-// The local files a shell line directly executes via `node <file>` — the
+// The local files a shell line directly executes via `node <file>`, the
 // "what does node install.js actually contain" surface the review command
 // displays. Mirrors analyzeCommand's resolution without collecting signals.
 function commandEntryFiles(cmd, files) {
@@ -310,7 +310,7 @@ function score(signals) {
   return 'SAFE';
 }
 
-// A script that hands control to node-gyp — explicitly (`node-gyp rebuild`,
+// A script that hands control to node-gyp, explicitly (`node-gyp rebuild`,
 // `prebuild-install || node-gyp rebuild`) or via the implicit rebuild npm runs
 // for a package shipping a root binding.gyp with no install script.
 const RUNS_NODE_GYP = /(^|\s)node-gyp(\s|$)/;

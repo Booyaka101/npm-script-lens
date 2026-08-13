@@ -4,7 +4,7 @@
 // both the strict enum all|none|root defaulting to 'none' (see SOURCES in
 // npm-contract.js). 'root' allows only deps declared in the ROOT
 // package.json; any transitive git/remote dep forces 'all'. Pure lockfile +
-// package.json + .npmrc analysis — no registry calls.
+// package.json + .npmrc analysis, no registry calls.
 const fs = require('node:fs');
 const path = require('node:path');
 const { resolveLockfile, loadDeps, collectNonRegistryDeps, viaChain } = require('./lockfiles');
@@ -25,7 +25,7 @@ function versionGte(a, b) {
   return true;
 }
 
-// Names declared in the ROOT package.json — the only declarations
+// Names declared in the ROOT package.json, the only declarations
 // allow-*=root honors. A dep declared only in a workspace package's
 // package.json is deliberately NOT here (npm resolves root against the
 // project root; we classify workspace-declared deps conservatively as
@@ -37,7 +37,7 @@ function rootDeclaredNames(projectDir) {
     for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
       for (const n of Object.keys(pkg[field] || {})) names.add(n);
     }
-  } catch { /* no package.json — nothing is root-declared */ }
+  } catch { /* no package.json, nothing is root-declared */ }
   return names;
 }
 
@@ -103,7 +103,7 @@ function sourcesJson(analysis) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? 'y' : 'ies'}`;
 
-// Human report. Deterministic — everything here derives from the lockfile
+// Human report. Deterministic, everything here derives from the lockfile
 // and package.json only (npm-version caveats go to stderr via rootWarnings,
 // so this stays byte-stable for CI diffing).
 function renderSources(analysis) {
@@ -147,7 +147,7 @@ function renderSources(analysis) {
 
 // npm-version caveats for the report (stderr, so stdout stays deterministic):
 //  - npm 11 wrongly rejected ROOT git deps under allow-git=root (npm/cli#9189,
-//    closed via PR #9206; fixed version not pinned) — recommending `root` on
+//    closed via PR #9206; fixed version not pinned), recommending `root` on
 //    npm 11 must come with a warning to prefer `all`.
 //  - npm < 11.10/11.15 predates the keys entirely.
 function rootWarnings(analysis) {
@@ -169,10 +169,10 @@ function rootWarnings(analysis) {
 
 // Compare the committed .npmrc against the minimal correct values. config is
 // readSourceConfig(dir) output. Fails in three distinct ways:
-//   invalid          — a value outside the all|none|root enum (e.g. the
+//   invalid: a value outside the all|none|root enum (e.g. the
 //                      `allow-git=true` some migration guides recommend)
-//   insufficient     — installs will BREAK on npm v12 (committed < minimal)
-//   over-permissive  — installs work but more is allowed than the tree needs
+//   insufficient: installs will BREAK on npm v12 (committed < minimal)
+//   over-permissive, installs work but more is allowed than the tree needs
 function checkSourceConfig(analysis, config) {
   const failures = [];
   for (const kind of KINDS) {
