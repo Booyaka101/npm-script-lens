@@ -1,0 +1,44 @@
+name: Bug report
+description: Something didn't work the way it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, and what came back.
+      placeholder: |
+        $ npx npm-script-lens audit --path ./my-project --fail-on-high
+        Error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: npm-script-lens version
+      description: Output of `npx npm-script-lens --version`
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Node version, package manager and OS
+      description: Output of `node --version`, which of npm/pnpm/yarn/bun you use, plus your OS.
+      placeholder: v22.18.0, pnpm 10.4.1, on Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: package
+    attributes:
+      label: Which package was scored wrong
+      description: The `name@version`, and the score you expected. Public packages let us add a regression test for it.

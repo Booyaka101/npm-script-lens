@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: npm install-script approval RFC
+    url: https://github.com/npm/rfcs
+    about: The upstream direction for install-script consent in npm itself.
+  - name: Report a malicious package to npm
+    url: https://docs.npmjs.com/reporting-malware-in-an-npm-package
+    about: If you have found real malware, tell the registry. That gets it removed; an issue here does not.
+  - name: Security issue
+    url: https://github.com/Booyaka101/npm-script-lens/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.
