@@ -13,7 +13,7 @@ Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-inst
 3. statically analyzes each `preinstall`/`install`/`postinstall` script with `acorn`, including the JS the script actually runs: `node <file>` targets, `node -e` eval bodies, relative `require()`/`import` chains, `path.join(__dirname, …)` indirections, and `npm run <target>` recursion into the package's own scripts (3 levels deep, cycle-safe). Packages that ship a root `binding.gyp` with no install script get their **implicit `node-gyp rebuild`** surfaced too, since npm v12 blocks those builds as well. (`prepare` is deliberately excluded: npm never runs it for registry-installed deps, and flagging leftover `"prepare": "husky install"` lines would be noise.)
 4. **reads inside `binding.gyp`** (and the `.gypi`/`.gyp` files it includes) for native packages, see [the gyp lens](#the-gyp-lens-what-is-actually-inside-bindinggyp), because gyp *runs* the commands in that file at configure time,
 5. scores the behavior and emits a Markdown report plus a **ready-to-paste, version-pinned `allowScripts` block**,
-6. adds context to every risky package: **how it entered your tree** (`via prisma → @prisma/engines`), **whether OSV lists it as malicious** (⛔ hard flag, always denied), and **publisher trust signals** (publish age, weekly downloads, maintainer count, sigstore provenance), so "🔴 HIGH, 74M dl/wk, 10 years old" reads differently from "🔴 HIGH, published 4 days ago, 12 dl/wk".
+6. adds context to every risky package: **how it entered your tree** (`via prisma → @prisma/engines`), **whether OSV lists it as malicious** (⛔ hard flag, always denied), and **publisher trust signals** (publish age, weekly downloads, maintainer count, and the [resolved provenance identity](#provenance-an-identity-not-a-checkbox): which repository, workflow, ref and commit the attestation claims built it), so "🔴 HIGH, 74M dl/wk, 10 years old" reads differently from "🔴 HIGH, published 4 days ago, 12 dl/wk".
 
 | Risk | Meaning |
 |---|---|
@@ -135,6 +135,15 @@ MODIFIED: install
 - **ADDED** (red): a new script, or a gained `binding.gyp` → `ADDED: implicit node-gyp rebuild (binding.gyp)`
 - **REMOVED** (yellow): a script that went away
 - **MODIFIED** (red): same key, changed content, with a line-level diff
+- **PROVENANCE IDENTITY CHANGED** (red): the attested build identity moved, see below
+
+`diff` also resolves each version's [provenance identity](#provenance-an-identity-not-a-checkbox) and compares it. A version built from `acme/widget .github/workflows/release.yml@refs/tags/v1.2.0` upgrading to one built from `.github/workflows/hotfix.yml@refs/heads/main` prints:
+
+```
+PROVENANCE IDENTITY CHANGED  workflow .github/workflows/release.yml → .github/workflows/hotfix.yml, ref refs/tags/v1.2.0 → refs/heads/main
+```
+
+and exits 1, the same gate as an added or modified install script: the workflow that produced the artifact is not the one that produced the version you already trust. Provenance appearing or disappearing across the upgrade gates too. A new commit alone never does (every release has one), and an identity that cannot be resolved on either side is never compared, so registry hiccups cannot fail your CI. When the identity is present and unchanged, a green `UNCHANGED: provenance identity …` line says so.
 
 `binding.gyp` is compared **by content, not by existence** (fixed in 1.3.0). A
 version that keeps its build file but *rewrites* it changes what runs at
@@ -158,9 +167,11 @@ $ echo $?
 
 `--json` carries `{ gyp: { changed, gainedChannels } }`; `gainedChannels` lists
 gyp execution channels present in the new version and absent from the old (here
-it is empty, a benign build-file edit, no new way to run a command).
+it is empty, a benign build-file edit, no new way to run a command). It also
+carries `{ provenance: { changed, changes, old, new } }` with the resolved
+identity of both sides.
 
-Exit `0` when everything is unchanged; exit `1` the moment any script is **added or modified**, so a Renovate/Dependabot CI step can fail the moment an upgrade grows its install-time surface. (A pure removal stays exit `0`.)
+Exit `0` when everything is unchanged; exit `1` the moment any script is **added or modified** or the **provenance identity changed**, so a Renovate/Dependabot CI step can fail the moment an upgrade grows its install-time surface. (A pure removal stays exit `0`.)
 
 ## git and remote dependencies: the other two npm v12 flips
 
@@ -260,6 +271,94 @@ Notes:
 - Because a poisoned version doesn't need a lifecycle hook to hurt you,
   `--cooldown` fetches publish dates for **every** locked package, not just the
   ones with install scripts. That is more registry traffic than a plain audit.
+
+## Provenance: an identity, not a checkbox
+
+The malicious `keyv@6.0.0` of 2026-08-04 carried a **valid** npm attestation
+naming GitHub Actions as its trusted publisher.
+[Snyk's teardown](https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/)
+draws the boundary in one sentence: *"Provenance can faithfully attest a build
+whose source or workflow context has already been compromised."* A green
+`provenance ✓` on its own is therefore close to worthless as a trust signal,
+and this tool no longer stops there. When a version carries an attestation,
+the audit resolves what it actually **claims**, from the registry's
+attestation endpoint (the SLSA v1 predicate): the source repository, workflow
+path, ref, commit and builder. The trust line in every report reads:
+
+```
+2.1y old · 127M dl/wk · 1 maintainer · provenance ✓ github.com/jaredwray/keyv .github/workflows/release.yml@refs/heads/main 4a91c0e
+```
+
+and `provenance ✓ (identity unavailable)` when the registry's answer is not a
+shape this build can resolve. The identity rides the same 24h trust cache, and
+`--offline` / `--no-trust` make zero attestation requests.
+
+**What we read, and what we do not verify.** This tool reads the claims the
+registry serves over TLS and does **not** verify Sigstore signatures or
+transparency-log inclusion. That is the same trust boundary as the tarball
+itself: if you trust the registry to hand you the package bytes, these are the
+claims it hands you alongside them. Nothing here should be described as
+cryptographic verification, because it is not.
+
+**Honesty about what this catches.** ChainDrop's attacker published through
+each project's own repository and own release workflow, so the attested
+identity matched perfectly and **this feature would not have caught it**.
+Neither would it have caught the TanStack compromise three months earlier
+(2026-05-11, 84 malicious versions across 42 `@tanstack/*` packages, the first
+worm to ship validly-attested malicious packages). There, a
+`pull_request_target` workflow that publishes nothing poisoned a shared pnpm
+cache; `release.yml` restored it on main; the payload read the OIDC token out
+of the runner's memory and posted straight to the registry. The
+[postmortem](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem)
+is explicit about what an identity check would have seen: *"The token's
+attested identity still matched `TanStack/router release.yml@refs/heads/main`."*
+Worth noting that this tool's own [DANGEROUS gate](#release-gates-who-can-publish-today)
+would have missed it too, since it flags a publish path reachable from
+`pull_request_target` and that publish path was not reachable from one. The
+link was a shared cache scope, not the trigger graph.
+
+The defence in this tool for both events is [`--cooldown`](#cooldown-dont-be-the-first-to-install-a-version),
+and the window is narrow enough for it to work: TanStack's malicious versions
+were publicly identified within 20 to 26 minutes.
+What identity resolution does catch: an attested repository that disagrees
+with the package's declared repository, and a build identity that **moves**
+between the version you trust and the version you are installing, the
+[`diff` gate above](#diff-what-did-an-upgrade-change-in-the-install-scripts)
+and the `expectProvenance` [policy pin](#governance-policy). Honesty about prior art, because there is real prior art here. npmjs.com's
+package page already shows Build Environment, Build Summary, Source Commit and
+Build File for a provenance-carrying version. `npm audit signatures` checks
+registry signatures and attestations. And
+[cosign](https://blog.sigstore.dev/cosign-verify-bundles/) already pins an
+expected identity, cryptographically, which this tool does not do:
+
+```bash
+cosign verify-blob-attestation --bundle npm-provenance.sigstore.json --new-bundle-format \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --certificate-identity-regexp="^https://github.com/npm/node-semver/.github/workflows/release-integration.yml.?" \
+  semver-7.6.3.tgz
+```
+
+If you need cryptographic assurance for one package, use that, not this. What
+those tools do not do is work at **tree scale**: cosign verifies one artifact
+against one bundle you already fetched, and the npmjs.com page covers one
+package you are already looking at. This tool resolves the identity for
+**every dependency in one CI run**, **diffs it across an upgrade**, and
+expresses the expectation as **checked-in policy** rather than a regex in a
+shell command. That is the gap it fills, and it is narrower than "we surface
+provenance identity."
+
+Two more surfaces carry it: `audit --diff`/`--since` reports
+`provenance identity changed vs <base>` per upgraded package next to the
+capabilities-gained note (informational there, it never changes the audit exit
+code), and SARIF gains `provenance-identity-changed` (warning) plus
+`provenance-repo-drift` (note). The repo-drift note fires when the attestation
+names a different owner/repo than the packument declares, with both values
+spelled out. It is deliberately informational and never gates anything: npm
+requires your `package.json` repository to match where you publish from with
+provenance and re-checks the linked source when provenance is viewed, so a
+live mismatch is almost always a repo rename or transfer since publish, not an
+attack. Monorepo subpaths never count as drift. `doctor` reports whether the
+attestation endpoint answered.
 
 ## publish: will your release workflow survive January 2027?
 
@@ -618,7 +717,10 @@ By default `allow`/`review`/`sync` auto-approve SAFE/LOW behavioral risk. A `scr
     "maxRisk": "LOW",            // approve up to this risk (SAFE|LOW|MEDIUM|HIGH)
     "denyCapabilities": ["net"], // never auto-approve a script that reaches the network…
     "minAgeDays": 30,            // …or a version published < 30 days ago (needs trust data)
-    "requireProvenance": false   // …or one without sigstore provenance
+    "requireProvenance": false,  // …or one without a provenance attestation
+    "expectProvenance": {        // pin the attested build identity per package
+      "keyv": "jaredwray/keyv:.github/workflows/release.yml"
+    }
   },
   "waivers": {
     "sharp": { "allow": true, "reason": "vetted native build", "expires": "2027-01-01" }
@@ -627,6 +729,16 @@ By default `allow`/`review`/`sync` auto-approve SAFE/LOW behavioral risk. A `scr
 ```
 
 Waivers are explicit human decisions that override the heuristic until they expire, an auditable record of *why* a risky package was trusted. With no policy file present, behavior is exactly the built-in default.
+
+Be clear about what `requireProvenance` buys you: **presence alone is not a
+trust signal**. The malicious `keyv@6.0.0` had valid provenance, and requiring
+it would have approved that release; [`--cooldown`](#cooldown-dont-be-the-first-to-install-a-version)
+is the defence for that event. `expectProvenance` is the stronger form: it
+pins the [attested identity](#provenance-an-identity-not-a-checkbox) to
+`"owner/repo"` or `"owner/repo:workflow-path"`. A package whose attestation
+does not match its pin, or whose identity cannot be resolved, is **never
+auto-approved**, with the reason naming both the expected and the actual
+identity. Packages without a pin are unaffected.
 
 ## Keeping the allowlist alive, in any package manager
 
@@ -704,7 +816,7 @@ Real output for a project depending on `sharp`, `prisma`, `core-js`, `chalk` (39
 | package | script | risk | signals |
 |---|---|---|---|
 | `sharp@0.33.5` <br>_1.9y old · 74M dl/wk · 1 maintainer_ | install | 🔴 HIGH | `exec: node-gyp rebuild --directory=src` · `exec: require('child_process')` … |
-| `@prisma/engines@5.22.0` <br>_via prisma · 15M dl/wk · provenance ✓_ | postinstall | 🔴 HIGH | `net: require('@prisma/fetch-engine')` · `exec: require('execa')` · `fs: writeFileSync` … |
+| `@prisma/engines@5.22.0` <br>_via prisma · 15M dl/wk · provenance ✓ github.com/prisma/prisma .github/workflows/release-latest.yml@refs/heads/main 718358a_ | postinstall | 🔴 HIGH | `net: require('@prisma/fetch-engine')` · `exec: require('execa')` · `fs: writeFileSync` … |
 | `core-js@3.38.1` | postinstall | 🟡 LOW | `fs: fs.writeFileSync` · `env: process.env` |
 | `chalk@5.3.0` | — | 🟢 SAFE | no lifecycle scripts |
 
@@ -785,7 +897,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN or BROKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN or BROKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script or a [changed provenance identity](#provenance-an-identity-not-a-checkbox) |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
@@ -795,7 +907,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | `audit` | scan a lockfile, report install-script risk (Markdown/JSON/SARIF); `--fail-on-high`, `--diff`/`--since`, `--check-v12-gaps` |
 | `allow` | split scripted packages into an auto-approved allowlist + `_review`, in your manager's native format; `--write`, `--ci-check`, `--manager`, `--policy` |
 | `review` | show pending approvals **with the actual script content** + verdict; `--output-allowscripts` writes decisions |
-| `diff` | compare a package's install scripts (+ implicit node-gyp) across two versions; exit 1 on any add/modify; `--json` |
+| `diff` | compare a package's install scripts (+ implicit node-gyp) and [provenance identity](#provenance-an-identity-not-a-checkbox) across two versions; exit 1 on any add/modify or identity change; `--json` |
 | `sources` | git + remote-URL deps vs npm v12's `allow-git`/`allow-remote`: ROOT/TRANSITIVE per dep, minimal correct `.npmrc`; `--check`, `--write`, `--json` |
 | [`publish`](#publish-will-your-release-workflow-survive-january-2027) | classify every CI publish path (TRUSTED/STAGED/TOKEN/BROKEN/UNKNOWN) vs npm's January-2027 token cliff and the setup-node < v7 OIDC breakage, with the migration patch + npmjs.com checklist; `--check`, `--json`, `--sarif` |
 | [`hooks`](#hooks-what-runs-when-the-folder-is-opened) | the open-time surface: `.vscode/tasks.json` folderOpen tasks + `.claude/settings.json` hooks, same risk ladder as `audit`; `--check`, `--fail-on`, `--deps` (dependency tarballs, where shipped entries are HIGH regardless), `--json`, `--sarif` |
