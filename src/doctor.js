@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { npmFullVersion, npmDryRunPending, classifyDryRun } = require('./review');
 const { resolveLockfile } = require('./lockfiles');
+const { REGISTRY } = require('./registry');
 const { managerFor } = require('./pm-contract');
 const { analyzeSources, checkSourceConfig, readSourceConfig, versionGte } = require('./sources');
 const {
@@ -177,6 +178,24 @@ function addGateSummary(add, g) {
   }
 }
 
+// Any HTTP answer (404 included) means provenance identities resolve; only
+// no answer at all degrades audits to bare present/absent.
+const ATTESTATION_PROBE = 'sigstore@3.1.0';
+
+async function checkAttestationsEndpoint(add, { offline, live }) {
+  if (!live || offline) return add('provenance endpoint', 'info', 'skipped (--offline / --no-live)');
+  try {
+    const res = await fetch(`${REGISTRY}/-/npm/v1/attestations/${ATTESTATION_PROBE}`, { signal: AbortSignal.timeout(10000) });
+    if (res.ok || res.status === 404) {
+      add('provenance endpoint', 'ok', `the registry's attestation endpoint answered (HTTP ${res.status} for ${ATTESTATION_PROBE}), so audits can resolve provenance identities`);
+    } else {
+      add('provenance endpoint', 'warn', `the registry's attestation endpoint returned HTTP ${res.status}; audits still run, provenance degrades to present/absent with no identity`);
+    }
+  } catch {
+    add('provenance endpoint', 'warn', 'the registry\'s attestation endpoint did not answer; audits still run, provenance degrades to present/absent with no identity');
+  }
+}
+
 // The keyv/ChainDrop worm's persistence layer (2026-08-04): folderOpen tasks
 // and Claude Code hooks fire when the folder is opened, before any install
 // step the other checks gate.
@@ -227,6 +246,7 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
   checkProjectAllowlist(add, ctx);
   const sources = await checkSources(add, ctx);
   const publish = checkPublishReadiness(add, ctx);
+  await checkAttestationsEndpoint(add, ctx);
   checkOpenTimeHooks(add, ctx);
   addContractSummary(add);
 

@@ -6,6 +6,7 @@
 // already downloads the tarball and indexes binding.gyp.
 const { fetchPackage, LIFECYCLE } = require('./registry');
 const { collectGypFindings } = require('./gyp');
+const { identityChanges } = require('./trust');
 
 // Split "<pkg>@<version>" into { name, version }. Handles scoped names
 // (@scope/pkg@1.2.3) by splitting on the LAST '@'.
@@ -105,7 +106,12 @@ function computeScriptDiff(oldPkg, newPkg) {
       unchanged.push({ key: 'binding.gyp', implicit: true });
     }
   }
-  const changed = added.length > 0 || modified.length > 0;
+  // The workflow that built the artifact is not the one you approved, so an
+  // identity move gates like an added script. Only when the caller resolved
+  // provenance (the diff command does), and never on an unresolved side.
+  const provChanges = (oldPkg.provenance || newPkg.provenance)
+    ? identityChanges(oldPkg.provenance, newPkg.provenance) : [];
+  const changed = added.length > 0 || modified.length > 0 || provChanges.length > 0;
   const json = {
     unchanged: unchanged.map((e) => e.key),
     added: added.map((e) => (e.implicit ? { key: e.key, script: e.script, implicit: true } : { key: e.key, script: e.script })),
@@ -117,7 +123,15 @@ function computeScriptDiff(oldPkg, newPkg) {
     // install surface and both exit 1); a pure removal shows up in `removed`.
     gyp: { changed: gypChanged, gainedChannels },
   };
-  return { unchanged, added, removed, modified, changed, json };
+  if (oldPkg.provenance || newPkg.provenance) {
+    json.provenance = {
+      changed: provChanges.length > 0,
+      changes: provChanges,
+      old: oldPkg.provenance || null,
+      new: newPkg.provenance || null,
+    };
+  }
+  return { unchanged, added, removed, modified, changed, provChanges, json };
 }
 
 const CODES = { green: 32, red: 31, yellow: 33, dim: 90, bold: 1 };
@@ -151,6 +165,13 @@ function renderDiff(oldPkg, newPkg, result, { color = process.stdout.isTTY && !p
       else if (d.t === '-') out.push(c(`    - ${d.line}`, 'yellow'));
       else out.push(c(`    + ${d.line}`, 'red'));
     }
+  }
+  if (result.provChanges && result.provChanges.length > 0) {
+    out.push(c(`PROVENANCE IDENTITY CHANGED  ${result.provChanges.map((ch) => `${ch.field} ${ch.from} → ${ch.to}`).join(', ')}`, 'red'));
+  } else if (result.json.provenance && result.json.provenance.new && result.json.provenance.new.repository
+    && result.json.provenance.old && result.json.provenance.old.repository) {
+    const p = result.json.provenance.new;
+    out.push(c(`UNCHANGED: provenance identity ${p.repository}${p.workflow ? ` ${p.workflow}${p.ref ? `@${p.ref}` : ''}` : ''}`, 'green'));
   }
   if (result.unchanged.length && !result.changed && !result.removed.length) {
     out.push(c('no install-time script changes', 'green'));

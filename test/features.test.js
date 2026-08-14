@@ -191,7 +191,11 @@ test('trust: OSV MAL advisory flags package, forces allowScripts false, renders 
     ageDays: pkga.trust.ageDays,
     weeklyDownloads: 42,
     maintainers: 1,
-    provenance: true,
+    // the mock registry has no attestation endpoint (404), so the identity
+    // stays unresolved and provenance degrades to bare presence
+    provenance: { present: true },
+    provenanceOk: true,
+    declaredRepository: null,
   });
   assert.ok(typeof pkga.trust.ageDays === 'number' && pkga.trust.ageDays >= 0);
   assert.strictEqual(buildAllowScripts(results).allowScripts['pkga@1.0.0'], false);

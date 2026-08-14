@@ -1,4 +1,5 @@
 'use strict';
+const http = require('node:http');
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -10,7 +11,7 @@ const { SAMPLE_DRY_RUN } = require('../src/npm-contract');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'src', 'cli.js');
-let tmp, npm10, npm12, npm13drift;
+let tmp, npm10, npm12, npm13drift, registry;
 
 function runCli(args, env = {}) {
   return new Promise((resolve) => {
@@ -30,7 +31,11 @@ const mkProj = (name) => {
   return dir;
 };
 
-before(() => {
+before(async () => {
+  // live doctor runs probe the attestation endpoint; keep them off the network
+  registry = http.createServer((req, res) => res.writeHead(404).end('{}'));
+  await new Promise((r) => registry.listen(0, '127.0.0.1', r));
+  process.env.NPM_SCRIPT_LENS_REGISTRY = `http://127.0.0.1:${registry.address().port}`;
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-doctor-'));
   npm10 = path.join(tmp, 'npm10.js');
   fs.writeFileSync(npm10, "if (process.argv.includes('--version')) { console.log('10.9.3'); process.exit(0); }\n");
@@ -52,7 +57,10 @@ before(() => {
   `);
 });
 
-after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+after(() => {
+  registry.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
 
 test('classifyDryRun: recognizes pending, empty, error, and drift shapes', () => {
   // canonical samples (the doctor self-test uses these)
@@ -113,6 +121,8 @@ test('doctor --json emits a structured report', async () => {
   assert.strictEqual(r.ok, true);
   assert.ok(Array.isArray(r.checks) && r.checks.length >= 6);
   assert.ok(r.checks.some((c) => c.name === 'live dry-run probe' && c.status === 'ok'));
+  // 404 from the mock = the endpoint answered (a version with no attestations)
+  assert.ok(r.checks.some((c) => c.name === 'provenance endpoint' && c.status === 'ok'));
 });
 
 test('doctor --no-live skips the live probe but still self-tests', async () => {

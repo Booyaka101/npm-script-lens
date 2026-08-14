@@ -11,7 +11,7 @@ const { fetchPackage, loadLocalPackage } = require('./registry');
 const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
-const { osvMalicious, fetchTrust, trustLabel } = require('./trust');
+const { osvMalicious, fetchTrust, trustLabel, resolveProvenance, identityChanges, driftNote } = require('./trust');
 const { buildReport, buildHtml, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport, BADGE } = require('./reporter');
 const { checkV12Gaps, workflowFiles } = require('./v12gaps');
 const { evaluateCooldown, cooldownReport, DEFAULT_HOURS: COOLDOWN_HOURS } = require('./cooldown');
@@ -170,6 +170,19 @@ async function runAudit(lockPath, {
       while (t < wanted.length) {
         const r = wanted[t++];
         r.trust = await fetchTrust(r.name, r.version);
+      }
+    }));
+    // upgrade: the attested build identity against the base version's, next
+    // to the capabilities-gained check. Same cache, same silent-failure
+    // contract as fetchTrust.
+    const upgraded = wanted.filter((r) => r.base && r.trust);
+    let u = 0;
+    await Promise.all(Array.from({ length: Math.min(6, upgraded.length) }, async () => {
+      while (u < upgraded.length) {
+        const r = upgraded[u++];
+        const baseTrust = await fetchTrust(r.name, r.base.version);
+        const changes = identityChanges(baseTrust && baseTrust.provenance, r.trust.provenance);
+        if (changes.length > 0) r.provenanceChange = { baseVersion: r.base.version, changes };
       }
     }));
   }
@@ -646,6 +659,8 @@ async function reviewAction(opts) {
         lines.push('', `── ${key}  [${r.malicious ? `⛔ KNOWN MALICIOUS: ${r.advisories.join(', ')}` : BADGE[packageRisk(r)]}]`);
         if (r.via) lines.push(`   via ${r.via.join(' → ')}`);
         if (r.trust) lines.push(`   ${trustLabel(r.trust)}`);
+        const drift = driftNote(r.trust);
+        if (drift) lines.push(`   ℹ️ ${drift}`);
         lines.push(`   OSV: ${!opts.trust || opts.offline ? 'skipped (--no-trust / --offline)'
           : r.malicious ? `⛔ ${r.advisories.join(', ')}` : 'no known malicious advisories'}`);
         if (r.error) { lines.push(`   fetch error: ${r.error}`); continue; }
@@ -700,7 +715,8 @@ function isAutoApproved(r, policy) {
 // A policy that gates on age or provenance needs trust data for EVERY
 // candidate (not just the risky ones runAudit fetches by default).
 const policyNeedsTrust = (policy) => Boolean(policy && policy.autoApprove
-  && (policy.autoApprove.minAgeDays > 0 || policy.autoApprove.requireProvenance));
+  && (policy.autoApprove.minAgeDays > 0 || policy.autoApprove.requireProvenance
+    || Object.keys(policy.autoApprove.expectProvenance || {}).length > 0));
 
 // Split the audited packages into an auto-approve set and a review set. This
 // is manager-agnostic ({name, version} pairs) so pm-contract can render each
@@ -1168,10 +1184,15 @@ async function manifestAction(opts) {
 async function diffAction(oldSpec, newSpec, opts) {
   const a = parseSpec(oldSpec);
   const b = parseSpec(newSpec);
-  const [oldPkg, newPkg] = await Promise.all([
+  const [oldPkg, newPkg, oldProv, newProv] = await Promise.all([
     fetchScripts(a.name, a.version),
     fetchScripts(b.name, b.version),
+    resolveProvenance(a.name, a.version),
+    resolveProvenance(b.name, b.version),
   ]);
+  // null = attestation endpoint unreachable: not comparable, never a finding
+  oldPkg.provenance = oldProv;
+  newPkg.provenance = newProv;
   const result = computeScriptDiff(oldPkg, newPkg);
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(result.json, null, 2)}\n`);
