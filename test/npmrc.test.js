@@ -20,7 +20,7 @@ test('parseNpmrc: pairs, comments, blanks, and the bare-key=true ini rule', () =
   assert.deepStrictEqual(lines[3], { type: 'pair', key: 'registry', value: 'https://r.example/', raw: 'registry=https://r.example/' });
   assert.strictEqual(lines[4].key, 'allow-git');
   assert.strictEqual(lines[4].value, 'root', 'whitespace around = is trimmed');
-  // npm's ini reads a bare key as key=true — for these enum keys that is an
+  // npm's ini reads a bare key as key=true, and for these enum keys that is an
   // INVALID value, so it must surface as 'true', not be normalized away
   assert.deepStrictEqual({ key: lines[5].key, value: lines[5].value, bare: lines[5].bare },
     { key: 'allow-remote', value: 'true', bare: true });
@@ -60,11 +60,11 @@ test('mergeNpmrc: appends missing keys, preserving other content byte-for-byte',
     'allow-git=all\nallow-remote=root\n');
 });
 
-test('mergeNpmrc: replaces existing keys in place — every occurrence (ini is last-wins)', () => {
+test('mergeNpmrc: replaces existing keys in place, every occurrence (ini is last-wins)', () => {
   const original = 'allow-git=none\n# comment\nallow-git=true\nregistry=https://r.example/\n';
   const merged = mergeNpmrc(original, { 'allow-git': 'root' });
   assert.strictEqual(merged, 'allow-git=root\n# comment\nallow-git=root\nregistry=https://r.example/\n',
-    'a stale later duplicate would silently override the fix — both rewritten');
+    'a stale later duplicate would silently override the fix, both rewritten');
   // untouched keys and unknown updates: null/undefined values are ignored
   assert.strictEqual(mergeNpmrc(original, { 'allow-remote': null }), original);
 });

@@ -78,8 +78,8 @@ async function auditPackageTool({ name, version }) {
     verdict: advisories.length > 0
       ? 'DO NOT INSTALL: flagged as malicious by OSV'
       : rows.length === 0
-        ? 'no install-time scripts — safe to install without allowScripts approval'
-        : `install scripts present, worst risk ${packageRisk({ rows })} — review signals before approving`,
+        ? 'no install-time scripts, safe to install without allowScripts approval'
+        : `install scripts present, worst risk ${packageRisk({ rows })}, review signals before approving`,
   };
 }
 

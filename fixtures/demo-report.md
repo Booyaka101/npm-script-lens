@@ -4,14 +4,14 @@ Audited **39** locked packages: **2** HIGH, **0** MEDIUM, **2** LOW risk install
 
 | package | script | risk | signals |
 |---|---|---|---|
-| `@prisma/engines@5.22.0`<br>_via prisma_<br>_1.8y old · 16.5M dl/wk · 4 maintainers · provenance ✓_ | postinstall | 🔴 HIGH | `env: process.env`<br>`exec: childProcess.spawn()`<br>`exec: childProcess.spawnSync()`<br>`exec: cp.spawn()`<br>`exec: cp.spawnSync()`<br>`exec: require('child_process')`<br>`exec: require('execa')`<br>`fs: fs2.openSync`<br>`fs: writeFileSync`<br>`net: require('@prisma/fetch-engine')` |
-| `sharp@0.33.5`<br>_2.0y old · 82.7M dl/wk · 1 maintainer · no provenance_ | install | 🔴 HIGH | `env: process.env`<br>`exec: node-gyp rebuild --directory=src`<br>`exec: pkg-config --modversion vips-cpp`<br>`exec: require('child_process')`<br>`exec: sysctl sysctl.proc_translated`<br>`exec: which brew >/dev/null 2>&1 && brew environment --plain ¦ ...`<br>`obf: require(<string-built specifier>)` |
+| `@prisma/engines@5.22.0`<br>_via prisma_<br>_1.8y old · 16.7M dl/wk · 4 maintainers · provenance ✓_ | postinstall | 🔴 HIGH | `env: process.env`<br>`exec: childProcess.spawn()`<br>`exec: childProcess.spawnSync()`<br>`exec: cp.spawn()`<br>`exec: cp.spawnSync()`<br>`exec: require('child_process')`<br>`exec: require('execa')`<br>`fs: fs2.openSync`<br>`fs: writeFileSync`<br>`net: require('@prisma/fetch-engine')` |
+| `sharp@0.33.5`<br>_2.0y old · 83.8M dl/wk · 1 maintainer · no provenance_ | install | 🔴 HIGH | `env: process.env`<br>`exec: node-gyp rebuild --directory=src`<br>`exec: pkg-config --modversion vips-cpp`<br>`exec: require('child_process')`<br>`exec: sysctl sysctl.proc_translated`<br>`exec: which brew >/dev/null 2>&1 && brew environment --plain ¦ ...`<br>`obf: require(<string-built specifier>)` |
 | `core-js@3.38.1` | postinstall | 🟡 LOW | `env: process.env`<br>`fs: fs.writeFileSync` |
 | `prisma@5.22.0` | preinstall | 🟡 LOW | `env: process.env` |
 
 ## Suggested allowScripts
 
-Paste into your `package.json` (entries with risky behavior default to `false` — review, then flip the ones you trust):
+Paste into your `package.json` (entries with risky behavior default to `false`, so review then flip the ones you trust):
 
 ```json
 {

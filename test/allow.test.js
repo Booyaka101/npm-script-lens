@@ -205,7 +205,7 @@ test('allow auto-detects pnpm from pnpm-lock.yaml and emits an allowBuilds block
   assert.strictEqual(j.allowBuilds.low1, true, out.stdout);
   assert.ok(!('allowScripts' in j), 'pnpm output uses allowBuilds, not allowScripts');
   assert.ok(j._review.includes('highpkg@1.0.0'));
-  assert.ok(out.stderr.includes('pnpm — allowlist in pnpm-workspace.yaml'), out.stderr);
+  assert.ok(out.stderr.includes('pnpm, allowlist in pnpm-workspace.yaml'), out.stderr);
 });
 
 test('allow --manager bun overrides detection and emits trustedDependencies', async () => {

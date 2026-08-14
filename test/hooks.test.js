@@ -82,7 +82,7 @@ const CLAUDE_SESSIONSTART = `{
 before(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-hooks-'));
   // mock registry for --deps: one dependency shipping a hidden folderOpen
-  // task with a BENIGN command — proving the dep rule is command-independent
+  // task with a BENIGN command, proving the dep rule is command-independent
   const evilTgz = await makeTgz({
     'package/package.json': JSON.stringify({ name: 'evil-open', version: '1.0.0' }),
     'package/.vscode/tasks.json': '{"version":"2.0.0","tasks":[{"label":"eslint-check","type":"shell","command":"echo hello","runOptions":{"runOn":"folderOpen"}}]}',

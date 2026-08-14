@@ -312,18 +312,18 @@ function collectGypFindings(files, entry = 'binding.gyp') {
     visited.add(name);
     const text = files.get(name);
     if (typeof text !== 'string') {
-      notes.push(`${name}: referenced but not in the package file index (missing or over the ${MAX_FILE_BYTES / 1024 / 1024} MB cap) — not scanned`);
+      notes.push(`${name}: referenced but not in the package file index (missing or over the ${MAX_FILE_BYTES / 1024 / 1024} MB cap), not scanned`);
       return null;
     }
     if (text.length > MAX_FILE_BYTES) {
-      notes.push(`${name}: over the ${MAX_FILE_BYTES / 1024 / 1024} MB cap — not scanned`);
+      notes.push(`${name}: over the ${MAX_FILE_BYTES / 1024 / 1024} MB cap, not scanned`);
       return null;
     }
     const result = scanGyp(text, { file: name });
     findings.push(...result.findings);
     if (result.partial) {
       partial = true;
-      notes.push(`${name}: did not parse as a GYP structure — string-literal scan only`);
+      notes.push(`${name}: did not parse as a GYP structure, string-literal scan only`);
     }
     return result;
   };

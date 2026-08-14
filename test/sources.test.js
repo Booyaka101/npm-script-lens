@@ -70,7 +70,7 @@ test('classifySourceSpec: git protocols and shorthands vs remote tarballs vs reg
   }
 });
 
-test('collectNonRegistryDeps: package-lock v3 — specs, resolved, parents', () => {
+test('collectNonRegistryDeps: package-lock v3: specs, resolved, parents', () => {
   const lock = fs.readFileSync(path.join(TRANSITIVE_FIXTURE, 'package-lock.json'), 'utf8');
   const deps = collectNonRegistryDeps(lock, 'npm');
   assert.deepStrictEqual(deps, [
@@ -127,7 +127,7 @@ my-lib@^1.0.0:
   resolved "https://example.com/tarpkg-1.0.0.tgz#deadbeef"
 `;
 
-test('collectNonRegistryDeps: yarn classic — selector ranges classify, deps give parents', () => {
+test('collectNonRegistryDeps: yarn classic: selector ranges classify, deps give parents', () => {
   const deps = collectNonRegistryDeps(YARN_CLASSIC, 'yarn');
   assert.deepStrictEqual(deps.map((d) => [d.name, d.kind, d.parents]),
     [['left-pad', 'git', []], ['some-pkg', 'git', ['my-lib']], ['tarpkg', 'remote', []]]);
@@ -162,7 +162,7 @@ __metadata:
   linkType: hard
 `;
 
-test('collectNonRegistryDeps: yarn berry — a .git#commit= resolution is still a git dep', () => {
+test('collectNonRegistryDeps: yarn berry: a .git#commit= resolution is still a git dep', () => {
   const deps = collectNonRegistryDeps(YARN_BERRY, 'yarn');
   assert.deepStrictEqual(deps.map((d) => [d.name, d.kind, d.parents]),
     [['left-pad', 'git', []], ['some-pkg', 'git', ['my-lib']]]);
@@ -210,7 +210,7 @@ snapshots:
   some-pkg@git+ssh://git@github.com/a/b.git#0f2ab0d: {}
 `;
 
-test('collectNonRegistryDeps: pnpm v9 — importer specifiers + snapshot deps', () => {
+test('collectNonRegistryDeps: pnpm v9: importer specifiers + snapshot deps', () => {
   const deps = collectNonRegistryDeps(PNPM_V9, 'pnpm');
   assert.deepStrictEqual(deps.map((d) => [d.name, d.kind, d.parents]),
     [['left-pad', 'git', []], ['some-pkg', 'git', ['my-lib']]]);
@@ -237,7 +237,7 @@ const BUN_LOCK = `{
 }
 `;
 
-test('collectNonRegistryDeps: bun.lock — workspace specs + package locators', () => {
+test('collectNonRegistryDeps: bun.lock: workspace specs + package locators', () => {
   const deps = collectNonRegistryDeps(BUN_LOCK, 'bun');
   assert.deepStrictEqual(deps.map((d) => [d.name, d.kind, d.parents]),
     [['left-pad', 'git', []], ['some-pkg', 'git', ['my-lib']]]);
@@ -282,7 +282,7 @@ test('analyzeSources: a dep declared only in a workspace package.json is NOT roo
     }),
   });
   const a = await analyzeSources(dir, { probeNpm: false });
-  assert.strictEqual(a.git.minimal, 'all', 'allow-git=root only honors the ROOT package.json — conservative');
+  assert.strictEqual(a.git.minimal, 'all', 'allow-git=root only honors the ROOT package.json, conservative');
   assert.deepStrictEqual(a.git.deps.map((d) => [d.name, d.root]), [['gitdep', false]]);
 });
 
@@ -400,7 +400,7 @@ test('cli e2e: sources --check fails on OVER-permission with a distinct message'
 });
 
 test('cli e2e: sources --check fails on an out-of-enum value, naming the valid three', async () => {
-  // published migration guides recommend `allow-git=true` — npm rejects it
+  // published migration guides recommend `allow-git=true`, which npm rejects it
   const dir = mkProj('invalid', GIT_ROOT_FIXTURE, { '.npmrc': 'allow-git=true\n' });
   const { status, stderr } = await run(['sources', '--check', '--path', dir]);
   assert.strictEqual(status, 1);
@@ -440,7 +440,7 @@ test('cli e2e: sources errors cleanly (exit 2) with no lockfile', async () => {
 // --- ci-check extension ----------------------------------------------------
 
 test('allow --ci-check fails when git deps exist and the committed config is insufficient', async () => {
-  // allowScripts is covered, npm is v12, a workflow installs — but the git
+  // allowScripts is covered, npm is v12, a workflow installs, but the git
   // dep has no allow-git: exactly the second silent v12 CI break
   const dir = mkProj('cibreak', TRANSITIVE_FIXTURE, {
     'package.json': JSON.stringify({

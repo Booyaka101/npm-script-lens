@@ -53,7 +53,7 @@ const writeProj = (name, packages, pkgJson = { name: 'proj', version: '1.0.0' })
   return dir;
 };
 
-// 45-line install script: 43 comment lines then a child_process.exec — HIGH,
+// 45-line install script: 43 comment lines then a child_process.exec, HIGH,
 // and long enough to prove the 40-line display cap.
 const LONG_INSTALL = [...Array.from({ length: 43 }, (_, i) => `// filler line ${i + 1}`),
   "require('child_process').exec('echo built');", ''].join('\n');
@@ -121,7 +121,7 @@ before(async () => {
   failNpm = path.join(tmp, 'fail-npm.js');
   fs.writeFileSync(failNpm, 'process.exit(7);\n');
   // npm v12 with everything covered: OMITS the unreviewedScripts key entirely
-  // (verified against npm 12.0.1) — must read as "nothing pending", not as
+  // (verified against npm 12.0.1), must read as "nothing pending", not as
   // "cannot answer".
   coveredNpm12 = path.join(tmp, 'covered-npm12.js');
   fs.writeFileSync(coveredNpm12, `
@@ -164,7 +164,7 @@ test('commandEntryFiles resolves the file a script command runs', () => {
 });
 
 test('review via npm v12 dry-run: content + OSV verdict, no lockfile needed', async () => {
-  const dir = writeProj('npm12proj', null); // package.json only — no lockfile
+  const dir = writeProj('npm12proj', null); // package.json only, no lockfile
   const out = await runCli(['review', '--path', dir], { NPM_SCRIPT_LENS_NPM: `node ${fakeNpm12}` });
   assert.strictEqual(out.status, 0, out.stderr);
   assert.ok(out.stdout.includes('source: npm install --dry-run --json'), out.stdout);
@@ -177,7 +177,7 @@ test('review via npm v12 dry-run: content + OSV verdict, no lockfile needed', as
   // behavioral verdict from the existing scanner + OSV verdicts
   assert.ok(out.stdout.includes('🔴 HIGH'));
   assert.ok(out.stdout.includes('OSV: no known malicious advisories'));
-  assert.ok(out.stdout.includes('⛔ KNOWN MALICIOUS — MAL-2026-9999'), out.stdout);
+  assert.ok(out.stdout.includes('⛔ KNOWN MALICIOUS: MAL-2026-9999'), out.stdout);
   // suggested block: HIGH and malicious default to false
   const block = JSON.parse(out.stdout.match(/\{[\s\S]*"allowScripts"[\s\S]*?\n\}/)[0]);
   assert.strictEqual(block.allowScripts['scripted@1.0.0'], false);
@@ -201,7 +201,7 @@ test('review falls back to lockfile + allowScripts when npm cannot answer', asyn
 });
 
 test('review reads npm v12 output without unreviewedScripts as nothing pending', async () => {
-  const dir = writeProj('allcovered', null); // no lockfile — npm's answer is the only source
+  const dir = writeProj('allcovered', null); // no lockfile, npm's answer is the only source
   const out = await runCli(['review', '--path', dir], { NPM_SCRIPT_LENS_NPM: `node ${coveredNpm12}` });
   assert.strictEqual(out.status, 0, out.stderr);
   assert.ok(out.stdout.includes('🟢 nothing pending'), out.stdout);

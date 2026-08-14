@@ -1,7 +1,7 @@
 # npm-compat canary: does this build still understand real npm? Drives the
 # ACTUAL npm (not the stub npms the unit tests use) across a matrix of npm
-# versions, so an upstream change to `npm install --dry-run --json` — the shape
-# `review`/`doctor` depend on — turns this workflow red. The unit tests can't
+# versions, so an upstream change to `npm install --dry-run --json`, the shape
+# `review`/`doctor` depend on, turns this workflow red. The unit tests can't
 # catch that; only a live-npm run can.
 name: npm-compat
 on:
@@ -18,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         # '12' pins the supported major; 'latest'/'next-12' catch drift early. A
-        # red leg means either shape drift OR npm bumped its node engine — the
+        # red leg means either shape drift OR npm bumped its node engine, the
         # logs say which.
         # NOT 'next': npm publishes no bare `next` dist-tag (its prerelease tags
-        # are per-major — next-11, next-12, …), so `npm i -g npm@next` fails
+        # are per-major: next-11, next-12, …), so `npm i -g npm@next` fails
         # ETARGET every single run. Any tag here is resolved before use below,
         # so a tag npm renames or drops skips the leg instead of reddening it.
         npm: ['12', 'latest', 'next-12']
@@ -40,9 +40,9 @@ jobs:
             npm install -g "npm@${{ matrix.npm }}"
           else
             # A dist-tag this canary watches no longer exists. That is npm
-            # moving its release tags, not our tool drifting — say so and skip
+            # moving its release tags, not our tool drifting, so say so and skip
             # rather than fail, so a real drift signal stays visible.
-            echo "::notice::npm dist-tag '${{ matrix.npm }}' does not resolve — skipping this leg"
+            echo "::notice::npm dist-tag '${{ matrix.npm }}' does not resolve, skipping this leg"
             echo "skipped=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Report npm version

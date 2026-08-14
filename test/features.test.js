@@ -343,7 +343,7 @@ test('audit --html writes a self-contained shareable report', async () => {
   assert.ok(html.includes('pkga'), 'lists audited packages');
   assert.ok(html.includes('Suggested allowScripts'), 'includes the allowlist block');
   assert.ok(html.trimEnd().endsWith('</html>'), 'well-formed close');
-  assert.ok(!html.includes('<script'), 'no scripts — safe to open/share');
+  assert.ok(!html.includes('<script'), 'no scripts, safe to open/share');
 });
 
 test('mcp: classify_allowscripts splits packages into allowScripts + _review', async () => {
@@ -420,7 +420,7 @@ test('manifest: stable behavior receipt, --check passes clean and fails with a d
   assert.strictEqual(clean.status, 0, clean.stderr);
   assert.ok(clean.stderr.includes('up to date'), clean.stderr);
 
-  // check: drift — tamper the committed capabilities, expect exit 1 + a diff line
+  // check: drift, tamper the committed capabilities, expect exit 1 + a diff line
   const tampered = JSON.parse(fs.readFileSync(file, 'utf8'));
   tampered.packages['pkga@1.0.0'].capabilities = ['fs'];
   tampered.packages['pkga@1.0.0'].risk = 'LOW';

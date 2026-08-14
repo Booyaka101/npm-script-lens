@@ -18,7 +18,7 @@ jobs:
       - run: npm test
 
       # The VS Code extension has its own suite and its own package.json, so the
-      # root `npm test` never reached it — 25 tests that only ever ran locally.
+      # root `npm test` never reached it, 25 tests that only ever ran locally.
       # It has no dependencies of its own (core.js deliberately does not import
       # `vscode`), so it needs no install step.
       - name: VS Code extension tests

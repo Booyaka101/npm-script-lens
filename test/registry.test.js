@@ -85,5 +85,5 @@ test('missing package rejects without retry storm', async () => {
   const { fetchPackage } = require('../src/registry');
   const countBefore = requests.length;
   await assert.rejects(() => fetchPackage('ghost', '9.9.9'), /HTTP 404/);
-  assert.strictEqual(requests.length, countBefore + 1, 'a 404 is final — exactly one request');
+  assert.strictEqual(requests.length, countBefore + 1, 'a 404 is final, exactly one request');
 });

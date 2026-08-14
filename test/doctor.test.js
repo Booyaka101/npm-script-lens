@@ -43,7 +43,7 @@ before(() => {
       { name: 'core-js', version: '3.38.1', scripts: { postinstall: 'node p.js' } },
     ] }));
   `);
-  // a future npm that RENAMED the key and dropped the summary — an
+  // a future npm that RENAMED the key and dropped the summary, an
   // unambiguous shape doctor can flag without ground truth
   npm13drift = path.join(tmp, 'npm13.js');
   fs.writeFileSync(npm13drift, `
@@ -69,13 +69,13 @@ test('classifyDryRun: recognizes pending, empty, error, and drift shapes', () =>
   assert.strictEqual(classifyDryRun('{"error":{"code":"ENETDOWN"}}').kind, 'error');
   assert.strictEqual(classifyDryRun('npm ERR! network').kind, 'error');
   assert.strictEqual(classifyDryRun('').kind, 'error');
-  // DRIFT (unambiguous): valid JSON with no recognizable key and no summary —
+  // DRIFT (unambiguous): valid JSON with no recognizable key and no summary,
   // a renamed key without a summary, or the wrong type on the key we depend on
   assert.strictEqual(classifyDryRun('{"pendingScripts":[{"name":"x"}]}').kind, 'unrecognized');
   assert.strictEqual(classifyDryRun('{"unreviewedScripts":{"a":1}}').kind, 'unrecognized');
   assert.strictEqual(classifyDryRun('{"foo":1}').kind, 'unrecognized');
   // AMBIGUOUS: a rename that KEEPS the summary is byte-identical to a real
-  // "nothing pending" summary — read as empty here; the canary's ground-truth
+  // "nothing pending" summary, read as empty here; the canary's ground-truth
   // check (a planted scripted dep) is what catches this rename, not the parser
   assert.strictEqual(classifyDryRun('{"added":1,"pendingScripts":[{"name":"x"}]}').kind, 'empty');
 });

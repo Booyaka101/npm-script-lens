@@ -17,10 +17,10 @@ const read = (name) => fs.readFileSync(path.join(FIX, name), 'utf8');
 // The Miasma fixture is the REAL published payload, so antivirus treats it as
 // live malware and DELETES it: Windows Defender quarantined a plain
 // `malicious-miasma.gyp` off disk (Trojan:JS/PhantomWorm.DA!MTB, reproduced
-// 2026-07-27 — the file vanished mid-suite and reddened five tests), and
+// 2026-07-27, the file vanished mid-suite and reddened five tests), and
 // base64-encoding it did not help either (Defender decodes containers:
 // `…gyp.b64->(Base64)`). So the structure lives in the fixture, the command
-// lives here, and they are joined at runtime — the scanner still sees the
+// lives here, and they are joined at runtime, so the scanner still sees the
 // exact original bytes. See fixtures/gyp/README.md. Do not merge these back
 // into one file: it passes on Linux, then deletes itself on Windows and in CI.
 const MIASMA_CMD = 'node index.js > /dev/null 2>&1 && echo stub.c';

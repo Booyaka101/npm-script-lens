@@ -142,7 +142,7 @@ function renderDiff(oldPkg, newPkg, result, { color = process.stdout.isTTY && !p
     else out.push(c(`ADDED: ${e.key}: ${e.script}`, 'red'));
   }
   for (const e of result.modified) {
-    out.push(c(`MODIFIED: ${e.implicit ? 'binding.gyp (implicit node-gyp rebuild — contents changed)' : e.key}`, 'red'));
+    out.push(c(`MODIFIED: ${e.implicit ? 'binding.gyp (implicit node-gyp rebuild, contents changed)' : e.key}`, 'red'));
     if (e.gainedChannels && e.gainedChannels.length > 0) {
       out.push(c(`    gained gyp execution channel(s): ${e.gainedChannels.join(', ')}`, 'red'));
     }

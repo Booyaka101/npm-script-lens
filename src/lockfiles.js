@@ -246,7 +246,7 @@ function resolveLockfile(input) {
     const found = LOCKFILE_NAMES.map((n) => path.join(p, n)).find((f) => fs.existsSync(f));
     if (!found) {
       const hint = fs.existsSync(path.join(p, 'bun.lockb'))
-        ? ' — found binary bun.lockb; run `bun install --save-text-lockfile` to get a readable bun.lock'
+        ? ', found binary bun.lockb; run `bun install --save-text-lockfile` to get a readable bun.lock'
         : '';
       throw new Error(`lockfile not found in ${p} (looked for ${LOCKFILE_NAMES.join(', ')})${hint}`);
     }

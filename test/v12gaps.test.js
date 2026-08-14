@@ -134,7 +134,7 @@ test('checkOptionalGap: a fixed npm drops inert optional deps, keeps the ones th
   const dir = inertLockDir(path.join(tmp, 'inert-fixed'));
   const findings = await checkOptionalGap(dir, { npmVersion: '12.0.1' });
   assert.deepStrictEqual(findings.map((f) => f.package), ['live-opt'],
-    'fsevents (os excludes this platform) and negated-opt (!thisPlatform) are inert — reify removes them before scripts run');
+    'fsevents (os excludes this platform) and negated-opt (!thisPlatform) are inert, reify removes them before scripts run');
   assert.ok(findings[0].fix.includes('12.0.1'), 'the fix names the npm that was checked');
   assert.ok(findings[0].fix.includes('11.18.0'), 'the fix names the version the bug was fixed in');
   assert.ok(!requests.some((u) => u.startsWith('/fsevents')),

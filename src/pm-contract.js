@@ -88,7 +88,7 @@ function ensureYarnScriptsDisabled(dir) {
   const file = path.join(dir, '.yarnrc.yml');
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   if (/^enableScripts:\s*false\s*$/m.test(text)) return null;
-  if (/^enableScripts:/m.test(text)) return `.yarnrc.yml sets enableScripts to a non-false value — set it to false to make dependenciesMeta an allowlist`;
+  if (/^enableScripts:/m.test(text)) return `.yarnrc.yml sets enableScripts to a non-false value. Set it to false to make dependenciesMeta an allowlist`;
   fs.writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}enableScripts: false\n`);
   return `set enableScripts: false in .yarnrc.yml`;
 }
@@ -175,7 +175,7 @@ const MANAGERS = {
   },
   bun: {
     id: 'bun', label: 'bun', allowlistFile: 'package.json', nativeKey: 'trustedDependencies',
-    note: 'bun keys by package name in trustedDependencies. ⚠️ Defining this field REPLACES bun\'s built-in trusted list — packages bun trusted by default (e.g. esbuild, sharp) will stop running scripts unless you add them here too.',
+    note: 'bun keys by package name in trustedDependencies. ⚠️ Defining this field REPLACES bun\'s built-in trusted list, so packages bun trusted by default (e.g. esbuild, sharp) will stop running scripts unless you add them here too.',
     keyOf: (name) => name,
     renderValue: (approved) => names(approved),
     renderDecisions: (decisions) => names(decisions.filter((d) => d.allow)),
@@ -186,14 +186,14 @@ const MANAGERS = {
       const set = new Set([...(Array.isArray(pkg.trustedDependencies) ? pkg.trustedDependencies : []), ...names(approved)]);
       pkg.trustedDependencies = [...set].sort();
       writePkg(pkgPath, raw, pkg);
-      return { file: pkgPath, note: 'trustedDependencies replaces bun\'s default trusted list — verify no default-trusted scripted deps were dropped' };
+      return { file: pkgPath, note: 'trustedDependencies replaces bun\'s default trusted list, so verify no default-trusted scripted deps were dropped' };
     },
     // bun has no way to record a denial (it is presence = trust); only trusts
     // are written, denials become untrusted-by-omission.
     writeDecisions(dir, decisions) {
       const denied = decisions.filter((d) => !d.allow).length;
       const res = this.write(dir, decisions.filter((d) => d.allow));
-      return { ...res, note: `${res.note}${denied ? `; ${denied} denial(s) can't be recorded in bun — left untrusted by omission` : ''}` };
+      return { ...res, note: `${res.note}${denied ? `; ${denied} denial(s) can't be recorded in bun, left untrusted by omission` : ''}` };
     },
     writeFull(dir, entries) {
       const { pkgPath, raw, pkg } = readPkg(dir);

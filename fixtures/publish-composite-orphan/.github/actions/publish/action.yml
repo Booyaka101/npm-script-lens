@@ -1,5 +1,5 @@
 name: publish
-description: publishes to npm — referenced by no workflow in this repo
+description: publishes to npm, referenced by no workflow in this repo
 runs:
   using: composite
   steps:

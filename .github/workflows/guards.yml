@@ -1,7 +1,7 @@
 name: Guards
 
 # Our own tools, run against this repo. If they are worth shipping they are worth
-# depending on ourselves — a guard that never runs on our code is untested.
+# depending on ourselves, since a guard that never runs on our code is untested.
 on:
   push:
     branches: [main]
@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Our own tool. Locks the runner image's tool versions and diffs them when
-      # GitHub bumps the image — including when a floating label like
+      # GitHub bumps the image, including when a floating label like
       # ubuntu-latest silently re-points. Report-only; no fail-on yet.
       - name: Runner image drift
         uses: Booyaka101/runner-drift@v1
@@ -46,7 +46,7 @@ jobs:
       - name: Dependency cooldown
         run: node src/cli.js audit --path . --cooldown
 
-      # Reports without gating, like the other guards — but a BREAKING finding
+      # Reports without gating, like the other guards, but a BREAKING finding
       # still shows as a failed step rather than being swallowed by '|| true'.
       - name: MCP spec readiness (2026-07-28)
         continue-on-error: true

@@ -15,98 +15,30 @@
 // Every date, floor, provider list and command name comes from PUBLISH in
 // npm-contract.js, verified verbatim against docs.npmjs.com/trusted-publishers,
 // docs.npmjs.com/staged-publishing and the 2026-07-31 changelog.
+//
+// Where things live:
+//   this file          finds publish paths and classifies their auth
+//                      (scanners per provider, then analyzePublish/checkPublish)
+//   publish/yaml.js    the tolerant CI-config reader every scanner runs on
+//   publish/gates.js   triggers and the six release-gate classes
+//   publish/report.js  the rendered report, --json, SARIF and failure messages
+//   publish/refs.js    how cited issue links and registry hosts are printed
+// Adding a CI provider means a scanner here plus a gate reader in gates.js.
 const fs = require('node:fs');
 const path = require('node:path');
 const { PUBLISH } = require('./npm-contract');
 const { workflowFiles } = require('./v12gaps');
 const { versionGte } = require('./sources');
-
-// --- tolerant YAML-subset reader ------------------------------------------
-// Indentation-based mappings, `- ` list items, `|`/`>` block scalars (kept
-// line-by-line so findings anchor to real line numbers), quoted keys/values,
-// comments. Not a YAML parser but a structural reader for the small dialect CI
-// configs actually use. Skips what it cannot read.
-
-function stripComment(line) {
-  let inS = false, inD = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === "'" && !inD) inS = !inS;
-    else if (c === '"' && !inS) inD = !inD;
-    else if (c === '#' && !inS && !inD && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
-  }
-  return line;
-}
-
-const unquote = (s) => {
-  const t = String(s).trim();
-  if (t.length >= 2 && ((t[0] === '"' && t.endsWith('"')) || (t[0] === "'" && t.endsWith("'")))) return t.slice(1, -1);
-  return t;
-};
-
-// node: { key, value, line, indent, children, item?, blockLines? }
-function parseYamlish(text) {
-  const root = { key: null, value: null, line: 0, indent: -1, children: [] };
-  const stack = [root];
-  let block = null; // active `|`/`>` scalar: { node, indent }
-  text.split(/\r?\n/).forEach((raw, idx) => {
-    const lineNo = idx + 1;
-    if (block) {
-      if (raw.trim() === '') { block.node.blockLines.push({ line: lineNo, text: '' }); return; }
-      const ind = raw.match(/^ */)[0].length;
-      if (ind > block.indent) { block.node.blockLines.push({ line: lineNo, text: raw.trim() }); return; }
-      block = null; // dedented: fall through to normal handling
-    }
-    const noComment = stripComment(raw);
-    if (noComment.trim() === '' || /^\s*---\s*$/.test(noComment)) return;
-    if (/^\t/.test(noComment)) return; // tabs are invalid YAML indentation, skip, stay tolerant
-    let indent = noComment.match(/^ */)[0].length;
-    let rest = noComment.slice(indent).trimEnd();
-    while (stack[stack.length - 1].indent >= indent) stack.pop();
-    // `- ` list items (possibly nested `- - x`); the item's children indent
-    // from the column after the dash
-    while (rest === '-' || rest.startsWith('- ')) {
-      const item = { key: null, value: null, line: lineNo, indent, children: [], item: true };
-      stack[stack.length - 1].children.push(item);
-      stack.push(item);
-      indent += 2;
-      rest = rest === '-' ? '' : rest.slice(2).trim();
-    }
-    if (rest === '') return;
-    const m = rest.match(/^("[^"]*"|'[^']*'|[^\s:][^:]*?)\s*:(?:\s+(.*))?$/);
-    if (!m) {
-      // a bare scalar: the value of the list item we just opened (e.g.
-      // `- npm publish` in a gitlab script array)
-      const top = stack[stack.length - 1];
-      if (top.item && top.value === null && top.children.length === 0) { top.value = rest; top.line = lineNo; }
-      return;
-    }
-    const node = { key: unquote(m[1]), value: m[2] === undefined || m[2] === '' ? null : m[2].trim(), line: lineNo, indent, children: [] };
-    if (node.value !== null && /^[|>][+-]?\d*$/.test(node.value)) {
-      node.value = null;
-      node.blockLines = [];
-      block = { node, indent: node.indent };
-    }
-    stack[stack.length - 1].children.push(node);
-    stack.push(node);
-  });
-  return root;
-}
-
-const child = (node, key) => (node ? node.children.find((c) => c.key === key) : undefined);
-
-// Every scalar line under a node that could hold shell commands: the node's
-// own value, its block-scalar lines, and bare list items (gitlab script:).
-function commandLines(node) {
-  if (!node) return [];
-  const out = [];
-  if (node.value !== null && node.value !== undefined) out.push({ line: node.line, text: node.value });
-  for (const b of node.blockLines || []) if (b.text) out.push({ line: b.line, text: b.text });
-  for (const c of node.children) {
-    if (c.item && c.value) out.push({ line: c.line, text: c.value });
-  }
-  return out;
-}
+const { unquote, parseYamlish, child, commandLines } = require('./publish/yaml');
+const { shortIssue, registryHost } = require('./publish/refs');
+const {
+  GATE, classifyGate, readTriggers, gitlabGate, circleciApproval,
+  REQUIRE_GATE_VALUES, GATE_RANK, REQUIRE_GATE_BAR,
+} = require('./publish/gates');
+const {
+  renderPublish, publishJson, publishFindings,
+  dangerousFailureMessage, ungatedFailureMessage, tokenFailureMessage, brokenFailureMessage,
+} = require('./publish/report');
 
 // --- publish-step detection ------------------------------------------------
 // Order matters: `yarn npm publish` contains `npm publish`, and
@@ -271,14 +203,6 @@ function classifyAuth({ staged = false, reusable = false, token = null, idToken 
   return 'UNKNOWN';
 }
 
-// 'https://github.com/npm/documentation/issues/1960' → 'npm/documentation#1960'
-const shortIssue = (url) => {
-  const m = String(url).match(/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)/);
-  return m ? `${m[1]}#${m[2]}` : url;
-};
-
-const registryHost = (url) => String(url).replace(/^\w+:\/\//, '').replace(/\/+$/, '');
-
 // A TRUSTED GitHub path on setup-node v6 or older with an npmjs
 // `registry-url:` is BROKEN: the step writes a dummy _authToken and npm never
 // starts the OIDC exchange. An unresolvable ref gets a note, not a downgrade.
@@ -394,6 +318,9 @@ function scanGithubWorkflow(file, rel, paths, ctx, inherited) {
   const workflowEnvToken = tokenEnvEntry(child(root, 'env'));
   const workflowFile = inherited ? inherited.workflowFile : path.basename(rel);
   const via = inherited ? inherited.via : undefined;
+  // triggers belong to the workflow FILE; a locally-called reusable workflow
+  // runs on the CALLING workflow's `on:`, its own is just `workflow_call`
+  const triggers = inherited ? inherited.triggers : readTriggers(root, rel);
   const jobs = child(root, 'jobs');
   if (!jobs) return;
   for (const job of jobs.children) {
@@ -426,7 +353,7 @@ function scanGithubWorkflow(file, rel, paths, ctx, inherited) {
           const rel2 = relTo(resolved);
           ctx.pushScanned(rel2);
           scanGithubWorkflow(resolved, rel2, paths, ctx, {
-            grant: jobGrant, depth, seen, workflowFile,
+            grant: jobGrant, depth, seen, workflowFile, triggers,
             via: [...(via || []), { file: rel, line: jobUses.line, job: job.key, step: null }],
           });
           continue;
@@ -440,6 +367,7 @@ function scanGithubWorkflow(file, rel, paths, ctx, inherited) {
         tool: `reusable workflow (${unquote(jobUses.value || '?')})`,
         classification: 'UNKNOWN', reusable: true, reason,
         runner, environment, workflowFile, via,
+        trigger: triggers, jobLine: job.line, jobFile: rel, ifGuard: child(job, 'if') ? 'job' : null,
       });
       continue;
     }
@@ -490,6 +418,8 @@ function scanGithubWorkflow(file, rel, paths, ctx, inherited) {
           token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
           idToken: jobGrant || null,
           via,
+          trigger: triggers, jobLine: job.line, jobFile: rel,
+          ifGuard: child(job, 'if') ? 'job' : child(step, 'if') ? 'step' : null,
         });
       }
       // a local composite action referenced by this step: scan it in place of
@@ -504,6 +434,8 @@ function scanGithubWorkflow(file, rel, paths, ctx, inherited) {
             usesRaw: unquote(uses.value || ''), withMap,
             jobGrant, callerWithToken: withTokenEntry(withMap), callerStepEnvToken: stepEnvToken, callerEnvToken: jobEnvToken,
             runner, environment, workflowFile,
+            triggers, jobLine: job.line, jobFile: rel,
+            ifGuard: child(job, 'if') ? 'job' : child(step, 'if') ? 'step' : null,
             nodeVersion, nodeVersionLine, nodeVersionFile: nodeVersion === null ? null : rel, setupNode, authTokenStrip,
             pinnedNote: pinnedRefNote(uses.value),
             via: [...(via || []), { file: rel, line: uses.line, job: job.key, step: nameNode ? unquote(nameNode.value || '') : null }],
@@ -528,6 +460,7 @@ function scanComposite(file, rel, ctx, paths, seen, depth) {
   const base = {
     provider: 'github', job: from.job, runner: ctx.runner, environment: ctx.environment,
     workflowFile: ctx.workflowFile,
+    trigger: ctx.triggers || null, jobLine: ctx.jobLine || null, jobFile: ctx.jobFile || null, ifGuard: ctx.ifGuard || null,
   };
   if (depth > 3) {
     paths.push({
@@ -625,6 +558,7 @@ function scanComposite(file, rel, ctx, paths, seen, depth) {
       paths.push({
         ...base, file: rel, line: hit.line, tool: hit.tool,
         classification, reason: `${reason}${ctx.pinnedNote}`,
+        ifGuard: ctx.ifGuard || (child(step, 'if') ? 'step' : null),
         nodeVersion, nodeVersionLine, nodeVersionFile, setupNode, authTokenStrip,
         token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
         idToken: ctx.jobGrant || null,
@@ -693,6 +627,8 @@ function scanOrphanComposites(projectDir, reached, pushScanned, paths) {
       reason: 'composite action defines a publish step but no scanned workflow in this repo references it, so it may be called from another repo',
       runner: { label: null, kind: 'unknown' }, environment: null,
       workflowFile: path.basename(rel), via: [],
+      trigger: null,
+      gate: { class: GATE.UNKNOWN, reason: 'no workflow in this repo references this composite action, so no trigger is visible' },
     });
   }
 }
@@ -745,6 +681,7 @@ function scanGitlabCi(file, rel, paths) {
     const runner = tags
       ? { label: `tags: ${commandLines(tags).map((l) => unquote(l.text)).join(', ')}`, kind: 'tagged' }
       : { label: 'gitlab.com shared runners (no tags)', kind: 'gitlab-shared' };
+    const { gate, trigger, environment } = gitlabGate(job, rel);
     for (const s of scripts) {
       for (const l of commandLines(s)) {
         const hit = detectRunPublisher(l.text);
@@ -754,9 +691,10 @@ function scanGitlabCi(file, rel, paths) {
           provider: 'gitlab', file: rel, line: l.line, job: job.key, tool: hit.tool,
           classification: classifyAuth({ staged: hit.staged, token, idToken: grant }),
           reason: describeAuth({ staged: hit.staged, token, idToken: grant, stepEnvToken: null, authTokenWrite }),
-          runner, environment: null, workflowFile: path.basename(rel),
+          runner, environment, workflowFile: path.basename(rel),
           token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
           idToken: grant || null,
+          trigger, gate,
         });
       }
     }
@@ -798,6 +736,13 @@ function scanCircleCi(file, rel, paths) {
         if (!authTokenWrite && isAuthTokenWrite(l.text)) authTokenWrite = { line: l.line, text: l.text };
       }
     }
+    const approval = circleciApproval(root, job.key);
+    const gate = approval && approval.job
+      ? { class: GATE.MANUAL, reason: `the "${approval.job}" approval job gates this publish in workflow "${approval.workflow}"` }
+      : { class: GATE.UNKNOWN, reason: 'no approval-type job is upstream of this publish in its workflow, and CircleCI triggers and filters are not read, so the gate cannot be determined' };
+    const trigger = approval && approval.job
+      ? { events: [{ event: `approval: ${approval.job}`, filters: null, line: approval.line }], file: rel }
+      : null;
     for (const l of stepCommands) {
       const hit = detectRunPublisher(l.text);
       if (!hit) continue;
@@ -809,6 +754,7 @@ function scanCircleCi(file, rel, paths) {
         runner, environment: null, workflowFile: path.basename(rel),
         token: token ? { key: token.key || '_authToken', value: token.value || null, line: token.line } : null,
         idToken: grant || null,
+        trigger, gate,
       });
     }
   }
@@ -902,34 +848,32 @@ function analyzePublish(target) {
     }
   }
 
+  // release gate per path: GitLab/CircleCI/orphan scanners set it in place,
+  // GitHub paths classify here from the threaded trigger + environment. An
+  // `if:` guard is reported, never evaluated.
+  for (const p of paths) {
+    if (!p.gate) p.gate = classifyGate({ triggers: p.trigger, environment: p.environment });
+    if (p.ifGuard) p.gate.reason += ` An \`if:\` condition guards the publish ${p.ifGuard} and was not evaluated.`;
+  }
+  const gates = { [GATE.DANGEROUS]: 0, [GATE.REVIEWABLE]: 0, [GATE.MANUAL]: 0, [GATE.TAG]: 0, [GATE.AUTO]: 0, [GATE.UNKNOWN]: 0 };
+  for (const p of paths) gates[p.gate.class]++;
+
   const counts = { TRUSTED: 0, STAGED: 0, TOKEN: 0, BROKEN: 0, UNKNOWN: 0 };
   for (const p of paths) counts[p.classification]++;
   return {
-    projectDir, scanned, paths, counts, floors,
+    projectDir, scanned, paths, counts, gates, floors,
     cliff: PUBLISH.cliff, repo,
     enginesNode, enginesBelowFloor,
   };
 }
 
 // --- the --check verdict ---------------------------------------------------
-// Exit 1 on TOKEN and BROKEN paths, each with its own message. UNKNOWN never
-// fails; a repo with no publish step passes with a one-line reason, matching
-// `allow --ci-check`.
-function tokenFailureMessage(p) {
-  return `${p.file}:${p.line} publishes with a long-lived token (\`${p.tool}\`, ${p.token ? p.token.key : 'token'})`
-    + `. 2FA-bypass tokens lose direct publish around ${PUBLISH.cliff.date} (${PUBLISH.cliff.changelog}).`
-    + ` Migrate to ${p.runner && p.runner.kind === 'self-hosted' ? `staged publishing (\`${PUBLISH.staged.commands.publish}\` + \`${PUBLISH.staged.commands.approve}\`), since trusted publishing does not support this runner` : 'trusted publishing (OIDC) or staged publishing'}.`;
-}
+// Exit 1 on TOKEN and BROKEN paths and on a DANGEROUS gate, each with its own
+// message. `--require-gate <none|tag|manual|environment>` raises the bar for
+// the remaining gates. UNKNOWN (verdict or gate) never fails; a repo with no
+// publish step passes with a one-line reason, matching `allow --ci-check`.
 
-function brokenFailureMessage(p) {
-  const o = PUBLISH.oidc;
-  return `${p.file}:${p.line} intends trusted publishing (OIDC) but actions/setup-node@${p.setupNode.ref}`
-    + ` with \`registry-url:\` writes a dummy _authToken that blocks the OIDC token exchange`
-    + ` (${shortIssue(o.issues[0])}). Bump setup-node to v${Number(o.setupNodeFixedIn.split('.')[0])} or later`
-    + ` (fixed in ${o.setupNodeFixedIn}: ${o.fixRelease}).`;
-}
-
-function checkPublish(analysis) {
+function checkPublish(analysis, { requireGate = 'none' } = {}) {
   const failures = analysis.paths
     .filter((p) => p.classification === 'TOKEN' || p.classification === 'BROKEN')
     .map((p) => ({
@@ -937,6 +881,20 @@ function checkPublish(analysis) {
       verdict: p.classification,
       message: p.classification === 'TOKEN' ? tokenFailureMessage(p) : brokenFailureMessage(p),
     }));
+  for (const p of analysis.paths) {
+    if (p.gate.class === GATE.DANGEROUS) {
+      failures.push({ path: p, verdict: GATE.DANGEROUS, message: dangerousFailureMessage(p) });
+    }
+  }
+  const bar = REQUIRE_GATE_BAR[requireGate] || 0;
+  if (bar > 0) {
+    for (const p of analysis.paths) {
+      const rank = GATE_RANK[p.gate.class];
+      if (rank !== undefined && rank < bar) {
+        failures.push({ path: p, verdict: 'UNGATED', message: ungatedFailureMessage(p, requireGate) });
+      }
+    }
+  }
   if (failures.length > 0) return { ok: false, failures, reason: null };
   const reason = analysis.paths.length === 0
     ? 'no publish steps found in CI configs, so nothing is exposed to the token cliff'
@@ -946,210 +904,9 @@ function checkPublish(analysis) {
   return { ok: true, failures: [], reason };
 }
 
-// --- rendering -------------------------------------------------------------
-
-// The npmjs.com side of trusted publishing, pre-filled from the repo. The
-// exact fields the settings form asks for, in its order.
-function checklistLines(analysis, p) {
-  const t = PUBLISH.trusted;
-  const repo = analysis.repo;
-  const lines = ['npmjs.com trusted-publisher settings (package Settings → Trusted publisher):'];
-  if (p.provider === 'github') {
-    lines.push(`  GitHub organization or user: ${repo ? repo.owner : '<your GitHub org or username>'}`);
-    lines.push(`  repository:                  ${repo ? repo.repo : '<repository name>'}`);
-    lines.push(`  workflow filename:           ${p.workflowFile}   (with its extension, exactly as on disk)`);
-    lines.push(`  environment:                 ${p.environment ? p.environment : '(the job declares none, leave blank)'}`);
-  } else if (p.provider === 'gitlab') {
-    lines.push(`  GitLab namespace:            ${repo ? repo.owner : '<your GitLab group or username>'}`);
-    lines.push(`  project:                     ${repo ? repo.repo : '<project name>'}`);
-    lines.push(`  CI file:                     ${p.workflowFile}   (and \`id_tokens\` audience \`${t.gitlabAudience}\` in the job)`);
-  } else {
-    lines.push(`  CircleCI organization:       ${repo ? repo.owner : '<your CircleCI org>'}`);
-    lines.push(`  project:                     ${repo ? repo.repo : '<project name>'}`);
-    lines.push(`  config file:                 ${p.workflowFile}   (the OIDC token arrives as \`${t.circleciTokenVar}\`)`);
-  }
-  lines.push(`  allowed actions:             npm publish${p.tool === PUBLISH.staged.commands.publish ? ' and npm stage publish' : '   (also allow "npm stage publish" if you plan to stage releases)'}`);
-  return lines;
-}
-
-function floorWarning(p) {
-  const t = PUBLISH.trusted, s = PUBLISH.staged;
-  if (!p.nodeBelowFloor) return null;
-  return `⚠️  node-version ${p.nodeVersion}${p.nodeVersionLine ? ` (${p.nodeVersionFile || p.file}:${p.nodeVersionLine})` : ''} is below the Node ${t.minNode} floor, which blocks BOTH fixes: `
-    + `trusted publishing needs npm >= ${t.minNpm} and Node >= ${t.minNode}, staged publishing needs npm >= ${s.minNpm} and Node >= ${s.minNode}. `
-    + `Bump setup-node to >= ${t.minNode} before either migration can work.`;
-}
-
-// The YAML patch for a GitHub TOKEN path: grant id-token, drop the token env.
-function tokenFixLines(analysis, p) {
-  const t = PUBLISH.trusted, s = PUBLISH.staged;
-  const lines = [];
-  if (p.runner && p.runner.kind === 'self-hosted') {
-    lines.push(`fix for ${p.file}:${p.line}, trusted publishing is UNAVAILABLE for this job:`);
-    lines.push(`  \`runs-on: ${p.runner.label}\` is not a GitHub-hosted runner, and the npm docs support only`);
-    lines.push(`  ${t.providers.join(', ')}:`);
-    lines.push(`  "${t.selfHostedQuote}"`);
-    lines.push('  Staged publishing is the survivable path here:');
-    lines.push(`    replace \`${p.tool}\` with \`${s.commands.publish}\`   (needs npm >= ${s.minNpm} and Node >= ${s.minNode})`);
-    lines.push(`    a maintainer then approves with 2FA: \`${s.commands.approve}\`  (\`${s.commands.list}\` shows the stage-id)`);
-    if (p.token) lines.push(`    the ${p.token.key} secret can then be retired, since staging needs no bypass-2FA token scope.`);
-    return lines;
-  }
-  lines.push(`fix for ${p.file}:${p.line}, switch to trusted publishing (OIDC):`);
-  if (p.provider === 'github') {
-    const viaChain = p.via && p.via.length ? p.via : null;
-    lines.push(`  add to the \`${p.job}\` job (or the workflow top level) in ${viaChain ? viaChain[0].file : p.file}:`);
-    lines.push('    + permissions:');
-    lines.push('    +   id-token: write');
-    if (viaChain) lines.push('    (a composite action cannot declare `permissions`, so the grant must live on the calling job)');
-    if (p.token && p.token.key !== '_authToken') {
-      lines.push(`  remove the token from the publish step (${p.via && p.via.length ? `${p.file}:` : 'line '}${p.token.line}):`);
-      lines.push('    - env:');
-      lines.push(`    -   ${p.token.key}: ${p.token.value || '${{ secrets.NPM_TOKEN }}'}`);
-    } else if (p.token) {
-      lines.push(`  remove the .npmrc write containing _authToken (line ${p.token.line}); OIDC needs no token in .npmrc`);
-    }
-    lines.push(`  the job needs npm >= ${t.minNpm} and Node >= ${t.minNode} (Node's bundled npm may be older than ${t.minNpm}, so add \`npm install -g npm@latest\` before publishing)`);
-  } else if (p.provider === 'gitlab') {
-    lines.push(`  add to the \`${p.job}\` job in ${p.file}:`);
-    lines.push('    + id_tokens:');
-    lines.push('    +   NPM_ID_TOKEN:');
-    lines.push(`    +     aud: ${t.gitlabAudience}`);
-    if (p.token) lines.push(`  remove the ${p.token.key} variable (line ${p.token.line})`);
-    lines.push(`  the job needs npm >= ${t.minNpm} and Node >= ${t.minNode}; trusted publishing supports GitLab.com shared runners only`);
-  } else {
-    lines.push(`  configure the trusted publisher on npmjs.com, and the OIDC token then arrives as \`${t.circleciTokenVar}\` (CircleCI cloud only)`);
-    if (p.token) lines.push(`  remove the ${p.token.key} environment entry (line ${p.token.line})`);
-    lines.push(`  the job needs npm >= ${t.minNpm} and Node >= ${t.minNode}`);
-  }
-  return lines;
-}
-
-// The three ways out, anchored to the setup-node step that caused it.
-function brokenFixLines(p) {
-  const o = PUBLISH.oidc;
-  const sn = p.setupNode;
-  const vMaj = `v${Number(o.setupNodeFixedIn.split('.')[0])}`;
-  return [
-    `fix for ${p.file}:${p.line}, any one of these restores the OIDC exchange:`,
-    `  bump actions/setup-node to @${vMaj} or later (${sn.file}:${sn.line}). v${o.setupNodeFixedIn} removed the dummy NODE_AUTH_TOKEN export (PR #1558)`,
-    `  or drop \`registry-url:\` (${sn.file}:${sn.registryLine}) and set the registry yourself: \`- run: npm config set registry https://${registryHost(sn.registryUrl)}/\``,
-    `  or strip the line setup-node wrote, after the setup-node step: \`- run: sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"\``,
-  ];
-}
-
-function renderPublish(analysis) {
-  const lines = [];
-  const { paths, counts } = analysis;
-  lines.push(`publish paths (${paths.length})`);
-  for (const p of paths) {
-    const where = `${p.file}:${p.line}`;
-    const ctx = [p.job ? `job ${p.job}` : null, p.runner && p.runner.label ? p.runner.label : null].filter(Boolean).join(' · ');
-    lines.push(`  ${p.classification.padEnd(8)}  ${where}  ${p.tool}${ctx ? `   [${ctx}]` : ''}`);
-    lines.push(`            ${p.reason}`);
-    if (p.oidcNote) lines.push(`            ⚠️  ${p.oidcNote}`);
-    for (const v of p.via || []) {
-      const vctx = [v.job ? `job ${v.job}` : null, v.step ? `step "${v.step}"` : null].filter(Boolean).join(', ');
-      lines.push(`            via ${v.file}:${v.line}${vctx ? ` (${vctx})` : ''}`);
-    }
-  }
-  if (paths.length === 0) {
-    lines.push('  (none; scanned .github/workflows, .github/actions/**/action.yml, .gitlab-ci.yml and .circleci/config.yml)');
-    lines.push('');
-    lines.push(`nothing is exposed to npm's ${analysis.cliff.date} token cliff: no publish steps in CI.`);
-    return lines.join('\n');
-  }
-  lines.push('');
-  if (counts.TOKEN > 0) {
-    lines.push(`⛔ ${counts.TOKEN} TOKEN publish path${counts.TOKEN === 1 ? '' : 's'}. Direct token publishing stops working around ${analysis.cliff.date}.`);
-    lines.push(`   github.blog (2026-07-31): "${analysis.cliff.quote}"`);
-    lines.push('');
-    for (const p of paths.filter((x) => x.classification === 'TOKEN')) {
-      lines.push(...tokenFixLines(analysis, p));
-      const floor = floorWarning(p);
-      if (floor) lines.push(`  ${floor}`);
-      lines.push('');
-      if (!(p.runner && p.runner.kind === 'self-hosted')) {
-        lines.push(...checklistLines(analysis, p));
-        lines.push('');
-      }
-    }
-  }
-  if (counts.BROKEN > 0) {
-    const o = PUBLISH.oidc;
-    lines.push(`⛔ ${counts.BROKEN} BROKEN publish path${counts.BROKEN === 1 ? '' : 's'}. id-token: write is granted, but setup-node older than v${o.setupNodeFixedIn} with \`registry-url:\` writes a dummy _authToken, so the publish fails.`);
-    lines.push(`   ${shortIssue(o.issues[0])}: "${o.quote}"`);
-    lines.push('');
-    for (const p of paths.filter((x) => x.classification === 'BROKEN')) {
-      lines.push(...brokenFixLines(p));
-      const floor = floorWarning(p);
-      if (floor) lines.push(`  ${floor}`);
-      lines.push('');
-      // BROKEN paths still intend OIDC, so the npmjs.com side still applies
-      lines.push(...checklistLines(analysis, p));
-      lines.push('');
-    }
-  }
-  if (counts.TOKEN === 0 && counts.BROKEN === 0) {
-    lines.push(`🟢 no TOKEN publish paths. Nothing here relies on direct token publishing (which ends around ${analysis.cliff.date}).`);
-    for (const p of paths.filter((x) => x.nodeBelowFloor)) {
-      const floor = floorWarning(p);
-      if (floor) lines.push(`  ${floor}`);
-    }
-  }
-  if (analysis.enginesBelowFloor) {
-    lines.push(`note: package.json engines.node is \`${analysis.enginesNode}\`, and a maintainer publishing locally on the minimum supported Node is below the ${PUBLISH.trusted.minNode} floor both trusted and staged publishing require.`);
-  }
-  return lines.join('\n').replace(/\n+$/, '');
-}
-
-// The exact shape `publish --json` emits.
-function publishJson(analysis) {
-  return {
-    cliff: { date: analysis.cliff.date, changelog: analysis.cliff.changelog },
-    floors: {
-      trusted: { npm: PUBLISH.trusted.minNpm, node: PUBLISH.trusted.minNode },
-      staged: { npm: PUBLISH.staged.minNpm, node: PUBLISH.staged.minNode },
-    },
-    counts: analysis.counts,
-    paths: analysis.paths.map((p) => ({
-      file: p.file, line: p.line, provider: p.provider, job: p.job, tool: p.tool,
-      classification: p.classification, reason: p.reason,
-      runner: p.runner ? { label: p.runner.label, kind: p.runner.kind } : null,
-      environment: p.environment || null,
-      nodeVersion: p.nodeVersion === undefined ? null : p.nodeVersion,
-      nodeBelowFloor: Boolean(p.nodeBelowFloor),
-      setupNode: p.setupNode || null,
-      oidcNote: p.oidcNote || null,
-      via: p.via || [],
-    })),
-    repo: analysis.repo,
-    engines: { node: analysis.enginesNode, belowFloor: analysis.enginesBelowFloor },
-  };
-}
-
-// TOKEN and BROKEN paths as SARIF-ready findings (rules publish-token-cliff
-// and publish-oidc-broken), in the shape reporter.buildSarif consumes.
-function publishFindings(analysis) {
-  return analysis.paths
-    .filter((p) => p.classification === 'TOKEN' || p.classification === 'BROKEN')
-    .map((p) => {
-      const id = p.classification === 'TOKEN' ? 'publish-token-cliff' : 'publish-oidc-broken';
-      return {
-        id,
-        severity: 'error',
-        level: 'error',
-        package: p.tool,
-        file: p.file,
-        line: p.line,
-        fix: p.classification === 'TOKEN' ? tokenFailureMessage(p) : brokenFailureMessage(p),
-        fingerprint: `${id}:${p.file}:${p.line}`,
-      };
-    });
-}
-
 module.exports = {
   analyzePublish, checkPublish, renderPublish, publishJson, publishFindings,
   classifyAuth, oidcBreakage, nodePinBelowFloor, enginesMinimum, parseYamlish, detectRunPublisher,
   classifyRunsOn, idTokenGrant, repoIdentity, resolveLocalUses,
+  classifyGate, readTriggers, REQUIRE_GATE_VALUES,
 };

@@ -7,10 +7,10 @@ const FLAGS = [
   '--path', '--json', '--manager', '--policy', '--write', '--check', '--html', '--sarif',
   '--no-trust', '--no-cache', '--offline', '--deep', '--fail-on-high', '--ci-check', '--sync-check',
   '--diff', '--since', '--output-allowscripts', '--input', '--auto-fix', '--force', '--out', '--help',
-  '--fail-on', '--deps',
+  '--fail-on', '--deps', '--require-gate',
 ];
 
-const bash = () => `# npm-script-lens bash completion — add to ~/.bashrc:
+const bash = () => `# npm-script-lens bash completion. Add to ~/.bashrc:
 #   source <(npm-script-lens completion bash)
 _npm_script_lens() {
   local cur cmds flags
@@ -27,7 +27,7 @@ complete -F _npm_script_lens npm-script-lens
 `;
 
 const zsh = () => `#compdef npm-script-lens
-# npm-script-lens zsh completion — add to your fpath, or:
+# npm-script-lens zsh completion. Add to your fpath, or:
 #   source <(npm-script-lens completion zsh)
 _npm_script_lens() {
   local -a cmds flags
@@ -42,7 +42,7 @@ _npm_script_lens() {
 compdef _npm_script_lens npm-script-lens
 `;
 
-const fish = () => `# npm-script-lens fish completion — save to:
+const fish = () => `# npm-script-lens fish completion. Save to:
 #   ~/.config/fish/completions/npm-script-lens.fish
 complete -c npm-script-lens -f
 complete -c npm-script-lens -n __fish_use_subcommand -a "${COMMANDS.join(' ')}"

@@ -3,7 +3,7 @@
 // TOKEN / UNKNOWN), the version-floor comparator, every publish-* fixture's
 // verdict + exit code + emitted fix, the edge cases (mixed workflow, reusable
 // job, write-all, no publish step), --json / --sarif surfaces, the doctor
-// section, and the Action's publish-check mode. Pure fs — no network anywhere.
+// section, and the Action's publish-check mode. Pure fs, no network anywhere.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -53,7 +53,7 @@ test('classifyAuth: exactly one of TRUSTED/STAGED/TOKEN/UNKNOWN', () => {
   assert.strictEqual(classifyAuth({ staged: true, token: { key: 'NPM_TOKEN' } }), 'STAGED');
   assert.strictEqual(classifyAuth({ token: { key: 'NODE_AUTH_TOKEN', line: 5 } }), 'TOKEN');
   assert.strictEqual(classifyAuth({ idToken: { line: 3 } }), 'TRUSTED');
-  // both present is ambiguous, neither is ambiguous — UNKNOWN, never a guess
+  // both present is ambiguous, neither is ambiguous, so UNKNOWN, never a guess
   assert.strictEqual(classifyAuth({ token: { key: 'NPM_TOKEN' }, idToken: { line: 3 } }), 'UNKNOWN');
   assert.strictEqual(classifyAuth({}), 'UNKNOWN');
   assert.strictEqual(classifyAuth({ reusable: true }), 'UNKNOWN');
@@ -71,7 +71,7 @@ test('nodePinBelowFloor: numeric pins answer, floats and dynamics do not', () =>
   assert.strictEqual(nodePinBelowFloor('22', floor), false);
   assert.strictEqual(nodePinBelowFloor('22.x', floor), false);
   assert.strictEqual(nodePinBelowFloor('20.x', floor), true);
-  // unanswerable pins stay null — never a false warning
+  // unanswerable pins stay null, never a false warning
   assert.strictEqual(nodePinBelowFloor('lts/*', floor), null);
   assert.strictEqual(nodePinBelowFloor('${{ matrix.node }}', floor), null);
   assert.strictEqual(nodePinBelowFloor(null, floor), null);
@@ -362,7 +362,7 @@ test('resolveLocalUses: ./dir → action.yml, ./file.yml direct, self-repo pin; 
   assert.strictEqual(resolveLocalUses(dir, 'other/repo/.github/actions/x@v1', repo), null);
   assert.strictEqual(resolveLocalUses(dir, './', repo), null);
   assert.strictEqual(resolveLocalUses(dir, 'acme/widget-composite/.github/actions/release@v1', null), null);
-  // a missing directory still RESOLVES — reported as unreadable, never lost
+  // a missing directory still RESOLVES, reported as unreadable, never lost
   assert.strictEqual(resolveLocalUses(dir, './.github/actions/nope', repo),
     path.join(dir, '.github', 'actions', 'nope', 'action.yml'));
 });
@@ -374,7 +374,7 @@ test('publish-composite-token: with:→inputs.* threading reads TOKEN at the com
   assert.match(stdout, /NODE_AUTH_TOKEN in the composite step env, fed by the caller's `with: npm-token`/);
   assert.match(stdout, /via \.github\/workflows\/release\.yml:11 \(job release, step "Release"\)/);
   assert.match(stdout, /a composite action cannot declare `permissions`, so the grant must live on the calling job/);
-  // the checklist still names the CALLING workflow — what npmjs.com asks for
+  // the checklist still names the CALLING workflow, which is what npmjs.com asks for
   assert.match(stdout, /workflow filename:\s+release\.yml/);
   assert.match(stderr, /FAIL: \.github\/actions\/release\/action\.yml:16 publishes with a long-lived token/);
 });
@@ -408,7 +408,7 @@ test('publish-composite-missing: an unreadable local action is one UNKNOWN, exit
   assert.match(stdout, /cannot be read from the working tree/);
 });
 
-test('publish-reusable-local: caller grant reaches the called workflow — TRUSTED once, not twice', async () => {
+test('publish-reusable-local: caller grant reaches the called workflow, TRUSTED once, not twice', async () => {
   const { status, stdout } = await run(['publish', '--check', '--path', FIX('publish-reusable-local')]);
   assert.strictEqual(status, 0);
   assert.match(stdout, /publish paths \(1\)/);
@@ -433,7 +433,7 @@ test('--json: via is [] for direct paths, populated for composite paths', async 
   assert.strictEqual(composite.paths[0].via[0].file, '.github/workflows/release.yml');
 });
 
-test('--sarif anchors a composite TOKEN finding to the composite file — a real, resolvable path', async () => {
+test('--sarif anchors a composite TOKEN finding to the composite file, a real, resolvable path', async () => {
   const file = path.join(tmp, 'composite.sarif');
   const { status } = await run(['publish', '--sarif', file, '--path', FIX('publish-composite-token')]);
   assert.strictEqual(status, 0);
@@ -514,7 +514,7 @@ test('composite nesting caps at depth 3 with one UNKNOWN, never a crash', () => 
     '.github/actions/a/action.yml': composite('./.github/actions/b'),
     '.github/actions/b/action.yml': composite('./.github/actions/c'),
     '.github/actions/c/action.yml': composite('./.github/actions/d'),
-    '.github/actions/d/action.yml': composite(null), // depth 4 — not followed
+    '.github/actions/d/action.yml': composite(null), // depth 4, not followed
   });
   const analysis = analyzePublish(dir);
   assert.strictEqual(analysis.paths.length, 1);
@@ -636,7 +636,7 @@ test('oidcBreakage: SHA, branch and expression refs get a note, never a downgrad
   }
 });
 
-test('oidcBreakage: only TRUSTED github paths qualify — TOKEN never becomes BROKEN', () => {
+test('oidcBreakage: only TRUSTED github paths qualify, TOKEN never becomes BROKEN', () => {
   const sn = setupNodeOn('v6', 6, 'https://registry.npmjs.org');
   assert.deepStrictEqual(oidcBreakage(trustedPath(sn, { classification: 'TOKEN' })), { broken: false, note: null });
   assert.deepStrictEqual(oidcBreakage(trustedPath(sn, { provider: 'gitlab' })), { broken: false, note: null });
@@ -659,7 +659,7 @@ test('publish-oidc-broken: BROKEN, all three fixes, the checklist, exit 1', asyn
   assert.match(stdout, /bump actions\/setup-node to @v7 or later \(\.github\/workflows\/release\.yml:13\)\. v7\.0\.0 removed the dummy NODE_AUTH_TOKEN export \(PR #1558\)/);
   assert.match(stdout, /or drop `registry-url:` \(\.github\/workflows\/release\.yml:16\) and set the registry yourself: `- run: npm config set registry https:\/\/registry\.npmjs\.org\/`/);
   assert.match(stdout, /or strip the line setup-node wrote, after the setup-node step: `- run: sed -i '\/_authToken\/d' "\$NPM_CONFIG_USERCONFIG"`/);
-  // a BROKEN path still intends OIDC — the npmjs.com checklist follows the fixes
+  // a BROKEN path still intends OIDC, so the npmjs.com checklist follows the fixes
   assert.match(stdout, /GitHub organization or user: acme/);
   assert.match(stdout, /repository:\s+widget-oidc/);
   assert.match(stderr, /FAIL: \.github\/workflows\/release\.yml:18 intends trusted publishing \(OIDC\) but actions\/setup-node@v6/);
@@ -697,7 +697,7 @@ test('publish-oidc-composite: the breakage is found inside the composite, via ch
   assert.match(stderr, /FAIL: \.github\/actions\/release\/action\.yml:10 intends trusted publishing/);
 });
 
-test('publish-oidc-stripped: the sed workaround is not a finding — TRUSTED, exit 0', async () => {
+test('publish-oidc-stripped: the sed workaround is not a finding, TRUSTED, exit 0', async () => {
   const { status, stdout } = await run(['publish', FIX('publish-oidc-stripped'), '--check']);
   assert.strictEqual(status, 0);
   assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:19\s+npm publish/);
@@ -800,4 +800,276 @@ test('action publish-check: ::error + BROKEN-named summary + SARIF merge + exit 
   assert.match(md, /- \*\*BROKEN\*\*: /);
   const merged = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
   assert.ok(merged.runs[0].results.some((r) => r.ruleId === 'publish-oidc-broken'));
+});
+
+// --- release gates: trigger + gate classification (1.10.0) ------------------
+// The ChainDrop lesson: auth says whether a path publishes after the cliff,
+// the gate says who can cause it to publish today. DANGEROUS beats
+// REVIEWABLE; otherwise environment wins; otherwise the weakest trigger.
+
+const { classifyGate, readTriggers } = require('../src/publish');
+const trig = (yaml) => readTriggers(parseYamlish(yaml), '.github/workflows/release.yml');
+
+test('readTriggers: block map, flow list, scalar and quoted "on": forms', () => {
+  const block = trig('on:\n  push:\n    branches: [main]\n    tags: [v1]\n  workflow_dispatch:\n');
+  assert.strictEqual(block.file, '.github/workflows/release.yml');
+  assert.deepStrictEqual(block.events[0], { event: 'push', filters: { branches: ['main'], tags: ['v1'] }, line: 2 });
+  assert.deepStrictEqual(block.events[1], { event: 'workflow_dispatch', filters: null, line: 5 });
+  const flow = trig('on: [push, pull_request]\n');
+  assert.deepStrictEqual(flow.events.map((e) => e.event), ['push', 'pull_request']);
+  const scalar = trig('on: push\n');
+  assert.deepStrictEqual(scalar.events, [{ event: 'push', filters: null, line: 1 }]);
+  const quoted = trig('"on":\n  release:\n    types: [published]\n');
+  assert.deepStrictEqual(quoted.events[0].filters, { types: ['published'] });
+  const list = trig('on:\n  - push\n  - workflow_dispatch\n');
+  assert.deepStrictEqual(list.events.map((e) => e.event), ['push', 'workflow_dispatch']);
+  assert.strictEqual(readTriggers(parseYamlish('jobs:\n  a:\n'), 'x.yml'), null);
+});
+
+test('classifyGate: DANGEROUS beats REVIEWABLE, environment beats AUTO, weakest trigger wins', () => {
+  const dangerous = classifyGate({ triggers: trig('on:\n  pull_request_target:\n'), environment: 'release' });
+  assert.strictEqual(dangerous.class, 'DANGEROUS');
+  assert.match(dangerous.reason, /crates\.io removed/);
+  const env = classifyGate({ triggers: trig('on:\n  push:\n    branches: [main]\n'), environment: 'release' });
+  assert.strictEqual(env.class, 'REVIEWABLE');
+  assert.match(env.reason, /required reviewers/);
+  // multiple triggers: MANUAL + AUTO reads AUTO (the weakest gate reached)
+  assert.strictEqual(classifyGate({ triggers: trig('on:\n  workflow_dispatch:\n  push:\n    branches: [main]\n') }).class, 'AUTO');
+  assert.strictEqual(classifyGate({ triggers: trig('on:\n  workflow_dispatch:\n  push:\n    tags: [v1]\n') }).class, 'TAG');
+  assert.strictEqual(classifyGate({ triggers: trig('on:\n  workflow_dispatch:\n  release:\n    types: [published]\n') }).class, 'MANUAL');
+  assert.strictEqual(classifyGate({ triggers: trig('on: workflow_run\n') }).class, 'DANGEROUS');
+  assert.strictEqual(classifyGate({ triggers: trig('on: schedule\n') }).class, 'AUTO');
+});
+
+test('classifyGate: push semantics, tags-only is TAG, bare/branches/mixed is AUTO', () => {
+  assert.strictEqual(classifyGate({ triggers: trig('on:\n  push:\n    tags: [v1]\n') }).class, 'TAG');
+  assert.strictEqual(classifyGate({ triggers: trig('on:\n  push:\n    tags-ignore: [beta]\n') }).class, 'TAG');
+  assert.strictEqual(classifyGate({ triggers: trig('on: push\n') }).class, 'AUTO');
+  assert.strictEqual(classifyGate({ triggers: trig('on:\n  push:\n    branches: [main]\n    tags: [v1]\n') }).class, 'AUTO');
+});
+
+test('classifyGate: workflow_call alone and no triggers stay UNKNOWN, never a guess', () => {
+  const call = classifyGate({ triggers: trig('on:\n  workflow_call: {}\n') });
+  assert.strictEqual(call.class, 'UNKNOWN');
+  assert.match(call.reason, /resolved by callers/);
+  assert.strictEqual(classifyGate({ triggers: null }).class, 'UNKNOWN');
+  assert.strictEqual(classifyGate({}).class, 'UNKNOWN');
+});
+
+test('publish-gate-auto: the worked example, AUTO, fix ladder, exit 0 without a bar', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-gate-auto'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/release\.yml:22\s+npm publish/);
+  assert.match(stdout, /trigger: push → branches: \[main\]\s+\(\.github\/workflows\/release\.yml:3\)/);
+  assert.match(stdout, /gate:\s+AUTO: any commit that lands on main publishes to npm\. The job declares no environment:, so GitHub cannot require an approval\./);
+  assert.match(stdout, /fix:\s+add `environment: release` to job "release" \(line 11\) and set required reviewers on it/);
+  assert.match(stdout, /PyPI: "Dedicated environments allow for additional protections like required reviewers"/);
+  assert.match(stdout, /or move to `on: release: types: \[published\]`; or publish with/);
+  assert.match(stdout, /`npm stage publish` \+ `npm stage approve <stage-id>`/);
+});
+
+test('publish-gate-auto: --require-gate environment fails it, tag fails it, none passes', async () => {
+  const bar = await run(['publish', FIX('publish-gate-auto'), '--check', '--require-gate', 'environment']);
+  assert.strictEqual(bar.status, 1);
+  assert.match(bar.stderr, /FAIL: \.github\/workflows\/release\.yml:22 publish gate is AUTO, below the --require-gate environment bar/);
+  assert.strictEqual((await run(['publish', FIX('publish-gate-auto'), '--check', '--require-gate', 'tag'])).status, 1);
+  assert.strictEqual((await run(['publish', FIX('publish-gate-auto'), '--check', '--require-gate', 'none'])).status, 0);
+});
+
+test('publish-gate-env: REVIEWABLE with the honesty caveat, no fix block, passes every bar', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-gate-env'), '--check', '--require-gate', 'environment']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /gate:\s+REVIEWABLE: job declares environment "release"; verify required reviewers are configured on it \(protection rules are not visible from the working tree\)/);
+  assert.doesNotMatch(stdout, /fix:\s+add `environment/);
+});
+
+test('publish-gate-tag: TAG passes bare --check and --require-gate tag, fails manual', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-gate-tag'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /gate:\s+TAG: only a pushed tag reaches this job/);
+  assert.strictEqual((await run(['publish', FIX('publish-gate-tag'), '--check', '--require-gate', 'tag'])).status, 0);
+  assert.strictEqual((await run(['publish', FIX('publish-gate-tag'), '--check', '--require-gate', 'manual'])).status, 1);
+});
+
+test('publish-gate-manual: workflow_dispatch + release reads MANUAL, passes the manual bar', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-gate-manual'), '--check', '--require-gate', 'manual']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /trigger: workflow_dispatch, release → types: \[published\]/);
+  assert.match(stdout, /gate:\s+MANUAL: only `workflow_dispatch` and `release` reach this job, each a deliberate human action/);
+});
+
+test('publish-gate-dangerous: exit 1 with no flag, the crates.io quote, the fix', async () => {
+  const { status, stdout, stderr } = await run(['publish', FIX('publish-gate-dangerous'), '--check']);
+  assert.strictEqual(status, 1);
+  assert.match(stdout, /gate:\s+DANGEROUS: reachable from `pull_request_target`/);
+  assert.match(stdout, /"Both triggers have been involved in past CI security incidents, where attackers exploited workflow permissions to escalate access or obtain publishing credentials\."/);
+  assert.match(stdout, /crates\.io development update, 2026-01-21/);
+  assert.match(stdout, /fix:\s+remove `pull_request_target` from on: \(\.github\/workflows\/release\.yml:3\)/);
+  assert.match(stderr, /FAIL: \.github\/workflows\/release\.yml:17 publishes from `pull_request_target` \(\.github\/workflows\/release\.yml:3\)/);
+});
+
+test('publish-gate-reusable-caller: the called workflow inherits the CALLER\'s on:, AUTO', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-gate-reusable-caller'), '--check']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /TRUSTED\s+\.github\/workflows\/reusable-publish\.yml:14\s+npm publish/);
+  assert.match(stdout, /trigger: push → branches: \[main\]\s+\(\.github\/workflows\/release\.yml:3\)/);
+  assert.match(stdout, /gate:\s+AUTO:/);
+  // the environment fix points at the job in the CALLED file (the path's own
+  // file, so a bare line number), where the environment can be declared
+  assert.match(stdout, /fix:\s+add `environment: release` to job "publish" \(line 5\) and set required reviewers/);
+  assert.strictEqual((await run(['publish', FIX('publish-gate-reusable-caller'), '--check', '--require-gate', 'environment'])).status, 1);
+});
+
+test('publish-gate-workflowcall-orphan: UNKNOWN gate, exit 0 even under --require-gate', async () => {
+  const { status, stdout } = await run(['publish', FIX('publish-gate-workflowcall-orphan'), '--check', '--require-gate', 'environment']);
+  assert.strictEqual(status, 0);
+  assert.match(stdout, /gate:\s+UNKNOWN: the effective trigger cannot be determined: `workflow_call`/);
+});
+
+test('--json: every gate fixture parses and carries gate.class, trigger and top-level gates counts', async () => {
+  const expect = {
+    'publish-gate-auto': 'AUTO', 'publish-gate-env': 'REVIEWABLE', 'publish-gate-tag': 'TAG',
+    'publish-gate-manual': 'MANUAL', 'publish-gate-dangerous': 'DANGEROUS', 'publish-gate-reusable-caller': 'AUTO',
+    'publish-gate-workflowcall-orphan': 'UNKNOWN',
+  };
+  for (const [fixture, cls] of Object.entries(expect)) {
+    const out = JSON.parse((await run(['publish', FIX(fixture), '--json'])).stdout);
+    assert.strictEqual(out.paths[0].gate.class, cls, fixture);
+    assert.strictEqual(typeof out.paths[0].gate.reason, 'string');
+    assert.strictEqual(out.gates[cls], 1, fixture);
+  }
+  const auto = JSON.parse((await run(['publish', FIX('publish-gate-auto'), '--json'])).stdout);
+  assert.deepStrictEqual(auto.paths[0].trigger, {
+    file: '.github/workflows/release.yml',
+    events: [{ event: 'push', filters: { branches: ['main'] }, line: 3 }],
+  });
+  assert.strictEqual(auto.paths[0].gate.environment, null);
+  const env = JSON.parse((await run(['publish', FIX('publish-gate-env'), '--json'])).stdout);
+  assert.strictEqual(env.paths[0].gate.environment, 'release');
+});
+
+test('--sarif: publish-dangerous-trigger at level error, anchored to the trigger line', async () => {
+  const file = path.join(tmp, 'dangerous.sarif');
+  await run(['publish', FIX('publish-gate-dangerous'), '--sarif', file]);
+  const sarif = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const run0 = sarif.runs[0];
+  assert.ok(run0.tool.driver.rules.some((r) => r.id === 'publish-dangerous-trigger'));
+  assert.ok(run0.tool.driver.rules.some((r) => r.id === 'publish-ungated'));
+  const result = run0.results.find((r) => r.ruleId === 'publish-dangerous-trigger');
+  assert.strictEqual(result.level, 'error');
+  const loc = result.locations[0].physicalLocation;
+  assert.strictEqual(loc.artifactLocation.uri, '.github/workflows/release.yml');
+  assert.strictEqual(loc.region.startLine, 3);
+});
+
+test('publish-ungated findings appear only under --require-gate, at level warning', async () => {
+  const analysis = analyzePublish(FIX('publish-gate-auto'));
+  assert.deepStrictEqual(publishFindings(analysis), []);
+  const gated = publishFindings(analysis, { requireGate: 'environment' });
+  assert.strictEqual(gated.length, 1);
+  assert.strictEqual(gated[0].id, 'publish-ungated');
+  assert.strictEqual(gated[0].level, 'warning');
+  assert.strictEqual(gated[0].line, 3); // the trigger line, not the publish line
+  // UNKNOWN gates never become findings, whatever the bar
+  assert.deepStrictEqual(publishFindings(analyzePublish(FIX('publish-gate-workflowcall-orphan')), { requireGate: 'environment' }), []);
+});
+
+test('an if: condition on the publish job or step is noted, never evaluated', () => {
+  const dir = mkProj('ifguard', {
+    '.github/workflows/release.yml': [
+      'on:',
+      '  push:',
+      '    branches: [main]',
+      'jobs:',
+      '  release:',
+      '    runs-on: ubuntu-latest',
+      "    if: github.repository == 'acme/widget'",
+      '    steps:',
+      '      - run: npm publish',
+      '',
+    ].join('\n'),
+  });
+  const p = analyzePublish(dir).paths[0];
+  assert.strictEqual(p.gate.class, 'AUTO');
+  assert.match(p.gate.reason, /An `if:` condition guards the publish job and was not evaluated\./);
+});
+
+test('a path that does not exist exits 2 instead of silently scanning its parent', async () => {
+  // dirOf() falls back to the parent directory for a non-directory path, so
+  // a typo used to print a green "publish paths (0)" for the wrong repo
+  const { status, stdout, stderr } = await run(['publish', path.join(tmp, 'no-such-project'), '--check']);
+  assert.strictEqual(status, 2);
+  assert.strictEqual(stdout, '');
+  assert.match(stderr, /error: no such path: .*no-such-project/);
+});
+
+test('invalid --require-gate value exits 2 with the accepted values', async () => {
+  const { status, stderr } = await run(['publish', FIX('publish-gate-auto'), '--check', '--require-gate', 'bogus']);
+  assert.strictEqual(status, 2);
+  assert.match(stderr, /invalid --require-gate value 'bogus' \(expected: none, tag, manual, environment\)/);
+});
+
+test('GitLab gates: environment wins, when: manual, tag-only rules/only, else UNKNOWN', () => {
+  let n = 0;
+  const gl = (job) => analyzePublish(mkProj(`gl-${n++}`, {
+    '.gitlab-ci.yml': `publish:\n${job}  script:\n    - npm publish\n`,
+  })).paths[0];
+  const env = gl('  environment: production\n');
+  assert.strictEqual(env.gate.class, 'REVIEWABLE');
+  assert.match(env.gate.reason, /environment "production"/);
+  const manual = gl('  when: manual\n');
+  assert.strictEqual(manual.gate.class, 'MANUAL');
+  const only = gl('  only:\n    - tags\n');
+  assert.strictEqual(only.gate.class, 'TAG');
+  const rules = gl('  rules:\n    - if: $CI_COMMIT_TAG\n');
+  assert.strictEqual(rules.gate.class, 'TAG');
+  const none = gl('');
+  assert.strictEqual(none.gate.class, 'UNKNOWN');
+  // environment beats a tag rule, same as GitHub
+  const both = gl('  environment: production\n  only:\n    - tags\n');
+  assert.strictEqual(both.gate.class, 'REVIEWABLE');
+});
+
+test('CircleCI gates: an approval job upstream of the publish is MANUAL, else UNKNOWN', () => {
+  const config = (workflow) => `version: 2.1\njobs:\n  publish:\n    docker:\n      - image: cimg/node:22.14\n    steps:\n      - run: npm publish\n${workflow}`;
+  const approved = analyzePublish(mkProj('cci-approved', {
+    '.circleci/config.yml': config('workflows:\n  release:\n    jobs:\n      - hold:\n          type: approval\n      - publish:\n          requires: [hold]\n'),
+  })).paths[0];
+  assert.strictEqual(approved.gate.class, 'MANUAL');
+  assert.match(approved.gate.reason, /"hold" approval job gates this publish in workflow "release"/);
+  const plain = analyzePublish(mkProj('cci-plain', {
+    '.circleci/config.yml': config('workflows:\n  release:\n    jobs:\n      - publish\n'),
+  })).paths[0];
+  assert.strictEqual(plain.gate.class, 'UNKNOWN');
+});
+
+test('doctor: one gate-summary line, warn on AUTO and DANGEROUS, ok on gated paths', async () => {
+  const auto = JSON.parse((await run(['doctor', '--json', '--no-live', '--path', FIX('publish-gate-auto')])).stdout);
+  const gAuto = auto.checks.find((c) => c.name === 'publish gates');
+  assert.strictEqual(gAuto.status, 'warn');
+  assert.match(gAuto.detail, /1 auto/);
+  assert.deepStrictEqual(auto.publish.gates, { DANGEROUS: 0, REVIEWABLE: 0, MANUAL: 0, TAG: 0, AUTO: 1, UNKNOWN: 0 });
+  const dangerous = JSON.parse((await run(['doctor', '--json', '--no-live', '--path', FIX('publish-gate-dangerous')])).stdout);
+  assert.strictEqual(dangerous.checks.find((c) => c.name === 'publish gates').status, 'warn');
+  const tag = JSON.parse((await run(['doctor', '--json', '--no-live', '--path', FIX('publish-gate-tag')])).stdout);
+  assert.strictEqual(tag.checks.find((c) => c.name === 'publish gates').status, 'ok');
+});
+
+test('action publish-check: exit 1 + ::error + DANGEROUS summary on a dangerous trigger', async () => {
+  const summary = path.join(tmp, 'summary-dangerous.md');
+  fs.writeFileSync(summary, '');
+  const { status, stdout } = await run(['publish-check'], {
+    INPUT_PATH: FIX('publish-gate-dangerous'),
+    GITHUB_STEP_SUMMARY: summary,
+  }, ACTION);
+  assert.strictEqual(status, 1);
+  assert.match(stdout, /::error::\.github\/workflows\/release\.yml:17 publishes from `pull_request_target`/);
+  const md = fs.readFileSync(summary, 'utf8');
+  assert.match(md, /- \*\*DANGEROUS\*\*: /);
+  assert.match(md, /reachable from a trigger crates\.io removed from Trusted Publishing/);
+});
+
+test('completion: shells learn --require-gate', () => {
+  const { completionScript } = require('../src/completion');
+  for (const shell of ['bash', 'zsh', 'fish']) assert.ok(completionScript(shell).includes('require-gate'), shell);
 });

@@ -69,7 +69,7 @@ function collectOptionalDeps(lock) {
   return [...out.values()];
 }
 
-const optionalGapFix = (name, npmVersion) => `Add to allowScripts in package.json: { "allowScripts": { "${name}": true } } — npm approve-scripts will not surface this package but npm ci --strict-allow-scripts will reject it (npm/cli#9562). Checked against npm ${npmVersion || 'version unknown'}; fixed for INERT optional deps in npm >= ${INERT_SKIP_FROM.npm11} (and >= ${INERT_SKIP_FROM.npm12} on the v12 line) via PR #9597, which skips inert nodes during the script-collection walk — this package is still reported because it is not inert on this platform (or your npm predates the fix).`;
+const optionalGapFix = (name, npmVersion) => `Add to allowScripts in package.json: { "allowScripts": { "${name}": true } }. npm approve-scripts will not surface this package but npm ci --strict-allow-scripts will reject it (npm/cli#9562). Checked against npm ${npmVersion || 'version unknown'}; fixed for INERT optional deps in npm >= ${INERT_SKIP_FROM.npm11} (and >= ${INERT_SKIP_FROM.npm12} on the v12 line) via PR #9597, which skips inert nodes during the script-collection walk, but this package is still reported because it is not inert on this platform (or your npm predates the fix).`;
 
 // npm's os/cpu matching: a bare entry allowlists, a `!`-prefixed one blocks.
 // Empty/absent list = every platform. Mirrors npm's own checkPlatform.
@@ -198,7 +198,7 @@ function workflowFiles(projectDir) {
   return names.filter((n) => /\.ya?ml$/i.test(n)).sort().map((n) => path.join(dir, n));
 }
 
-const eglobalFix = (name) => `Replace \`npm install -g ${name}\` with \`npm install -g --allow-scripts=${name} ${name}\` — npm approve-scripts fails with EGLOBAL in global install contexts (npm/cli#9463)`;
+const eglobalFix = (name) => `Replace \`npm install -g ${name}\` with \`npm install -g --allow-scripts=${name} ${name}\`. npm approve-scripts fails with EGLOBAL in global install contexts (npm/cli#9463)`;
 
 // Check 2, `npm install -g <pkg>` in .github/workflows/*.yml where <pkg> has
 // install scripts (per registry metadata) and the command carries no

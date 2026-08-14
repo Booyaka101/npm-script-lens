@@ -6,6 +6,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { execFileSync } = require('node:child_process');
 const { program } = require('commander');
+const { writeReport } = require('./format');
 const { fetchPackage, loadLocalPackage } = require('./registry');
 const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
@@ -192,7 +193,7 @@ async function v12GapsAction(opts) {
   const { findings, npmMajor, npmVersion } = await checkV12Gaps(opts.path, { log: (m) => process.stderr.write(`${m}\n`) });
   const output = opts.json ? JSON.stringify({ findings }, null, 2) : buildGapsReport(findings, { npmMajor, npmVersion });
   if (opts.out) fs.writeFileSync(opts.out, output);
-  else process.stdout.write(`${output}\n`);
+  else writeReport(output);
   if (opts.sarif) {
     writeSarif([], opts.path, opts.sarif, findings);
     process.stderr.write(`SARIF written to ${opts.sarif}\n`);
@@ -259,7 +260,7 @@ async function auditAction(opts) {
       }, null, 2)
       : buildReport(results, { note });
     if (opts.out) fs.writeFileSync(opts.out, output);
-    else process.stdout.write(`${output}\n`);
+    else writeReport(output);
     if (opts.sarif) {
       writeSarif(results, opts.path, opts.sarif);
       process.stderr.write(`SARIF written to ${opts.sarif}\n`);
@@ -367,7 +368,7 @@ async function syncNpm(opts, policy) {
   for (const rp of repinned) {
     lines.push(rp.preserve
       ? `- \`${rp.from}\` → \`${rp.to}\`: no new capabilities, decision **preserved** (${rp.value})`
-      : `- \`${rp.from}\` → \`${rp.to}\`: **needs re-review** — ${rp.gained === null ? 'base version could not be compared' : `gained ${rp.gained.map((g) => `\`${g}\``).join(' ')}`} (defaulted to ${rp.value})`);
+      : `- \`${rp.from}\` → \`${rp.to}\`: **needs re-review**, ${rp.gained === null ? 'base version could not be compared' : `gained ${rp.gained.map((g) => `\`${g}\``).join(' ')}`} (defaulted to ${rp.value})`);
   }
   if (repinned.length > 0) lines.push('');
   for (const a of added) {
@@ -375,7 +376,7 @@ async function syncNpm(opts, policy) {
   }
   if (added.length > 0) lines.push('');
   lines.push('```json', JSON.stringify({ allowScripts: sortedBlock(next) }, null, 2), '```');
-  process.stdout.write(`${lines.join('\n')}\n`);
+  writeReport(lines.join('\n'));
   const drift = removed.length + repinned.length + added.length;
   if (opts.write && drift > 0) {
     pkg.allowScripts = sortedBlock(next);
@@ -419,7 +420,7 @@ async function syncNameKeyed(opts, mgr, policy) {
   for (const a of added) lines.push(`- new: \`${a.name}\` ${a.malicious ? '⛔ MALICIOUS' : a.risk} → ${a.value}`);
   if (added.length > 0) lines.push('');
   lines.push('```json', JSON.stringify({ [mgr.nativeKey]: mgr.renderDecisions(Object.entries(next).map(([name, allow]) => ({ name, allow }))) }, null, 2), '```');
-  process.stdout.write(`${lines.join('\n')}\n`);
+  writeReport(lines.join('\n'));
 
   const drift = added.length + removed.length;
   if (opts.write && drift > 0) {
@@ -455,7 +456,7 @@ async function approveAction(opts) {
   const decisions = {};
   for (const r of queue) {
     const key = `${r.name}@${r.version}`;
-    const out = [`\n${key}  [${r.malicious ? '⛔ KNOWN MALICIOUS — ' + r.advisories.join(', ') : packageRisk(r)}]`];
+    const out = [`\n${key}  [${r.malicious ? '⛔ KNOWN MALICIOUS: ' + r.advisories.join(', ') : packageRisk(r)}]`];
     if (r.via) out.push(`  via ${r.via.join(' → ')}`);
     if (r.trust) out.push(`  ${trustLabel(r.trust)}`);
     for (const row of r.rows) {
@@ -464,7 +465,7 @@ async function approveAction(opts) {
     }
     if (r.error) out.push(`  fetch error: ${r.error}`);
     if (key in existing) out.push(`  current decision: ${existing[key]}`);
-    process.stdout.write(`${out.join('\n')}\n`);
+    writeReport(out.join('\n'));
     const ans = (await ask('allow? [y]es / [n]o / [s]kip / [q]uit > ')).trim().toLowerCase();
     if (ans === 'q') break;
     if (ans === 'y' || ans === 'yes') decisions[key] = true;
@@ -533,7 +534,7 @@ async function scriptContent(r, ctx, lockDep) {
         entries.push('binding.gyp');
       }
       if (entries.length === 0) {
-        out.push({ script, command, file: null, note: 'command is self-contained — no local script file to open' });
+        out.push({ script, command, file: null, note: 'command is self-contained, no local script file to open' });
         continue;
       }
       for (const file of entries) {
@@ -593,7 +594,7 @@ async function reviewAction(opts) {
   // trust it as "nothing pending", say so loudly and fall back to the
   // lockfile. This is the drift alarm; `npm-script-lens doctor` diagnoses it.
   if (viaNpm && viaNpm.unrecognized) {
-    log(`⚠️  local npm v${viaNpm.npmMajor} answered but its --dry-run --json shape is not recognized — `
+    log(`⚠️  local npm v${viaNpm.npmMajor} answered but its --dry-run --json shape is not recognized, `
       + 'npm-script-lens may be out of date with this npm. Falling back to the lockfile; run `npm-script-lens doctor` to diagnose.');
   }
   if (viaNpm && viaNpm.pending) {
@@ -602,11 +603,11 @@ async function reviewAction(opts) {
     pending = await auditSubset(viaNpm.pending, lock, ctx, opts.trust);
   } else if (lockInfo) {
     source = viaNpm && viaNpm.unrecognized
-      ? `lockfile + ${mgr.nativeKey} (local npm output shape unrecognized — see doctor)`
+      ? `lockfile + ${mgr.nativeKey} (local npm output shape unrecognized, see doctor)`
       : mgr.id === 'npm'
-        ? 'lockfile + allowScripts (local npm does not report unreviewed scripts — npm >= 12 does)'
+        ? 'lockfile + allowScripts (local npm does not report unreviewed scripts, npm >= 12 does)'
         : `lockfile + ${mgr.nativeKey} (${mgr.label})`;
-    if (mgr.id === 'npm' && !opts.offline && !(viaNpm && viaNpm.unrecognized)) log('local npm did not report unreviewed scripts — computing from the lockfile instead');
+    if (mgr.id === 'npm' && !opts.offline && !(viaNpm && viaNpm.unrecognized)) log('local npm did not report unreviewed scripts, computing from the lockfile instead');
     const existing = mgr.readExisting(projectDir);
     const results = await runAudit(opts.path, {
       log, cache: opts.cache, trust: opts.trust, offline: opts.offline, deep: opts.deep,
@@ -614,7 +615,7 @@ async function reviewAction(opts) {
     });
     pending = results.filter((r) => (r.rows.length > 0 || r.error || r.malicious) && !mgr.covers(existing, r.name, r.version));
   } else {
-    throw new Error(`no lockfile found under ${projectDir} and the local npm does not report unreviewed scripts (npm >= 12 does) — create one with \`npm install --package-lock-only\` or upgrade npm`);
+    throw new Error(`no lockfile found under ${projectDir} and the local npm does not report unreviewed scripts (npm >= 12 does). Create one with \`npm install --package-lock-only\` or upgrade npm`);
   }
 
   const contents = new Map();
@@ -635,14 +636,14 @@ async function reviewAction(opts) {
       [mgr.nativeKey]: nativeBlock,
     }, null, 2)}\n`);
   } else {
-    const lines = ['npm-script-lens review — pending install-script approvals', `source: ${source}`, ''];
+    const lines = ['npm-script-lens review: pending install-script approvals', `source: ${source}`, ''];
     if (pending.length === 0) {
-      lines.push(`🟢 nothing pending — every package with install scripts is covered by ${mgr.nativeKey}.`);
+      lines.push(`🟢 nothing pending. Every package with install scripts is covered by ${mgr.nativeKey}.`);
     } else {
       lines.push(`${pending.length} package(s) need a ${mgr.nativeKey} decision (${mgr.label}):`);
       for (const r of pending) {
         const key = `${r.name}@${r.version}`;
-        lines.push('', `── ${key}  [${r.malicious ? `⛔ KNOWN MALICIOUS — ${r.advisories.join(', ')}` : BADGE[packageRisk(r)]}]`);
+        lines.push('', `── ${key}  [${r.malicious ? `⛔ KNOWN MALICIOUS: ${r.advisories.join(', ')}` : BADGE[packageRisk(r)]}]`);
         if (r.via) lines.push(`   via ${r.via.join(' → ')}`);
         if (r.trust) lines.push(`   ${trustLabel(r.trust)}`);
         lines.push(`   OSV: ${!opts.trust || opts.offline ? 'skipped (--no-trust / --offline)'
@@ -657,9 +658,9 @@ async function reviewAction(opts) {
           if (!c.file) { lines.push(`   ${c.script}: ${c.note}`); continue; }
           for (const f of c.gyp || []) {
             lines.push(`   ${f.file || c.file}:${f.line == null ? '?' : f.line}  ${f.channel} ${GYP_KIND_LABEL[f.kind] || f.kind}`
-              + ` → ${String(f.command).trim()}${f.truncated ? '  (unterminated — no closing paren)' : ''}`);
+              + ` → ${String(f.command).trim()}${f.truncated ? '  (unterminated, no closing paren)' : ''}`);
           }
-          if (c.gypPartial) lines.push(`   ${c.file}: did not parse as GYP — scanned as raw text (findings above may be incomplete)`);
+          if (c.gypPartial) lines.push(`   ${c.file}: did not parse as GYP, scanned as raw text (findings above may be incomplete)`);
           for (const n of c.gypNotes || []) lines.push(`   ${n}`);
           lines.push('', `   ┌─ ${c.file} (${c.totalLines > c.lines.length
             ? `first ${c.lines.length} of ${c.totalLines} lines` : `${c.totalLines} line${c.totalLines === 1 ? '' : 's'}`})`);
@@ -672,7 +673,7 @@ async function reviewAction(opts) {
       if (mgr.note) lines.push('', `note: ${mgr.note}`);
       if (!opts.outputAllowscripts) lines.push('', `Run again with --output-allowscripts to write these into ${mgr.allowlistFile}.`);
     }
-    process.stdout.write(`${lines.join('\n')}\n`);
+    writeReport(lines.join('\n'));
   }
 
   if (opts.outputAllowscripts && pending.length > 0) {
@@ -828,7 +829,7 @@ async function allowAction(opts) {
   // (yarn) / trustedDependencies (bun), plus the _review list.
   process.stdout.write(`${JSON.stringify({ [mgr.nativeKey]: mgr.renderValue(approved), _review }, null, 2)}\n`);
   process.stderr.write(`${approved.length} package${approved.length === 1 ? '' : 's'} auto-approved, ${_review.length} need manual review. `
-    + `(${mgr.label} — allowlist in ${mgr.allowlistFile})\n`);
+    + `(${mgr.label}, allowlist in ${mgr.allowlistFile})\n`);
   if (mgr.note) process.stderr.write(`note: ${mgr.note}\n`);
 
   // --write merges the auto-approved entries into the manager's native file,
@@ -841,7 +842,7 @@ async function allowAction(opts) {
       + `${_review.length ? `; ${_review.length} still need manual review (left out)` : ''}\n`);
     if (note) process.stderr.write(`note: ${note}\n`);
   } else if (opts.write) {
-    process.stderr.write(`nothing auto-approved — ${mgr.allowlistFile} untouched\n`);
+    process.stderr.write(`nothing auto-approved, ${mgr.allowlistFile} untouched\n`);
   }
 }
 
@@ -947,15 +948,15 @@ async function initAction(opts) {
     }
   }
   const lines = [
-    `npm-script-lens init — detected package manager: ${mgrLabel}`, '',
+    `npm-script-lens init. Detected package manager: ${mgrLabel}`, '',
     ...done.map((d) => `  ${d}`), '',
     'Next steps:',
     '  1. Review script-lens.policy.json (raise maxRisk / add waivers as your team needs).',
     `  2. Run \`npx npm-script-lens allow --write\` to generate your ${mgrLabel} allowlist.`,
-    '  3. Commit both — the CI workflow will keep them enforced on every PR.',
+    '  3. Commit both. The CI workflow will keep them enforced on every PR.',
     opts.force ? '' : '  (re-run with --force to overwrite existing files)',
   ].filter((l) => l !== '');
-  process.stdout.write(`${lines.join('\n')}\n`);
+  writeReport(lines.join('\n'));
 }
 
 // --- sources: git/remote deps vs npm v12's allow-git / allow-remote --------
@@ -967,7 +968,7 @@ async function sourcesAction(opts) {
   const analysis = await analyzeSources(opts.path);
   const config = readSourceConfig(analysis.projectDir);
   if (opts.json) process.stdout.write(`${JSON.stringify(sourcesJson(analysis), null, 2)}\n`);
-  else process.stdout.write(`${renderSources(analysis)}\n`);
+  else writeReport(renderSources(analysis));
   for (const w of rootWarnings(analysis)) process.stderr.write(`${w}\n`);
   const npmrcApplies = analysis.lockType === 'npm';
 
@@ -989,7 +990,7 @@ async function sourcesAction(opts) {
         const text = config.exists ? fs.readFileSync(config.file, 'utf8') : '';
         const merged = mergeNpmrc(text, updates);
         if (merged === text) {
-          process.stderr.write(`${config.file} already has the minimal correct values — nothing to write\n`);
+          process.stderr.write(`${config.file} already has the minimal correct values, nothing to write\n`);
         } else {
           fs.writeFileSync(config.file, merged);
           process.stderr.write(`wrote ${Object.keys(updates).map((k) => `${k}=${updates[k]}`).join(', ')} to ${config.file}\n`);
@@ -1021,10 +1022,24 @@ async function sourcesAction(opts) {
 // npmjs.com trusted-publisher checklist. --check exits 1 only on TOKEN paths.
 
 async function publishAction(dir, opts) {
-  const { analyzePublish, checkPublish, renderPublish, publishJson, publishFindings } = require('./publish');
-  const analysis = analyzePublish(dir || opts.path);
+  const { analyzePublish, checkPublish, renderPublish, publishJson, publishFindings, REQUIRE_GATE_VALUES } = require('./publish');
+  const requireGate = opts.requireGate || 'none';
+  if (!REQUIRE_GATE_VALUES.includes(requireGate)) {
+    process.stderr.write(`invalid --require-gate value '${requireGate}' (expected: ${REQUIRE_GATE_VALUES.join(', ')})\n`);
+    process.exitCode = 2;
+    return;
+  }
+  // A path that does not exist would otherwise resolve to its PARENT and
+  // report a green "no publish paths" for a directory nobody asked about.
+  const target = dir || opts.path;
+  if (!fs.existsSync(target)) {
+    process.stderr.write(`error: no such path: ${path.resolve(target)}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  const analysis = analyzePublish(target);
   if (opts.json) process.stdout.write(`${JSON.stringify(publishJson(analysis), null, 2)}\n`);
-  else process.stdout.write(`${renderPublish(analysis)}\n`);
+  else writeReport(renderPublish(analysis));
   if (opts.sarif) {
     // publish findings anchor to their workflow files, so no lockfile is
     // required: fall back to package.json as the artifact when none exists
@@ -1037,11 +1052,11 @@ async function publishAction(dir, opts) {
       lockText = fs.readFileSync(lp, 'utf8');
     } catch { /* no lockfile, findings carry their own file anchors */ }
     fs.writeFileSync(opts.sarif,
-      JSON.stringify(buildSarif([], { lockPath, lockText, findings: publishFindings(analysis) }), null, 2));
+      JSON.stringify(buildSarif([], { lockPath, lockText, findings: publishFindings(analysis, { requireGate }) }), null, 2));
     process.stderr.write(`SARIF written to ${opts.sarif}\n`);
   }
   if (opts.check) {
-    const { ok, reason, failures } = checkPublish(analysis);
+    const { ok, reason, failures } = checkPublish(analysis, { requireGate });
     if (ok) {
       process.stderr.write(`publish check passed: ${reason}.\n`);
       return;
@@ -1073,7 +1088,7 @@ async function hooksAction(dir, opts) {
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(hooksJson(scan.findings, scan.partials, { errors: depErrors, depsScanned }), null, 2)}\n`);
   } else {
-    process.stdout.write(`${renderHooks(scan.findings, scan.partials)}\n`);
+    writeReport(renderHooks(scan.findings, scan.partials));
   }
   // the two surfaces gate differently, each caveat prints only for its own
   for (const c of surfaceCaveats(scan.findings)) process.stderr.write(`${c}\n`);
@@ -1099,7 +1114,7 @@ async function hooksAction(dir, opts) {
 async function doctorAction(opts) {
   const report = await runDoctor({ path: opts.path, offline: opts.offline, live: opts.live });
   if (opts.json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  else process.stdout.write(`${renderDoctor(report)}\n`);
+  else writeReport(renderDoctor(report));
   if (!report.ok) process.exitCode = 1; // genuine drift is a CI-actionable failure
 }
 
@@ -1123,7 +1138,7 @@ async function manifestAction(opts) {
   }
   if (opts.check) {
     if (!fs.existsSync(file)) {
-      process.stderr.write(`FAIL: no manifest at ${file} — run: npm-script-lens manifest --write\n`);
+      process.stderr.write(`FAIL: no manifest at ${file}. Run: npm-script-lens manifest --write\n`);
       process.exitCode = 1;
       return;
     }
@@ -1161,7 +1176,7 @@ async function diffAction(oldSpec, newSpec, opts) {
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(result.json, null, 2)}\n`);
   } else {
-    process.stdout.write(`${renderDiff(oldPkg, newPkg, result)}\n`);
+    writeReport(renderDiff(oldPkg, newPkg, result));
   }
   if (result.changed) process.exitCode = 1;
 }
@@ -1183,9 +1198,9 @@ if (require.main === module) {
     .option('--sarif <file>', 'also write SARIF 2.1.0 for GitHub code scanning')
     .option('--html <file>', 'also write a self-contained shareable HTML report')
     .option('--diff <base-lockfile>', 'audit only packages added or upgraded relative to a base lockfile, and report capabilities gained across upgrades')
-    .option('--since <git-ref>', 'like --diff, but extract the base lockfile from a git ref (branch, tag, or SHA) automatically — audit only what changed since then')
+    .option('--since <git-ref>', 'like --diff, but extract the base lockfile from a git ref (branch, tag, or SHA) automatically, auditing only what changed since then')
     .option('--fail-on-high', 'exit 1 if any package scores HIGH or is known malicious')
-    .option('--cooldown [hours]', `exit 1 if any dependency version was published less than N hours ago (default ${COOLDOWN_HOURS}) — npm worms are typically caught within hours, so declining to install first sits out the event`)
+    .option('--cooldown [hours]', `exit 1 if any dependency version was published less than N hours ago (default ${COOLDOWN_HOURS}). npm worms are typically caught within hours, so declining to install first sits out the event`)
     .option('--cooldown-allow <pkg...>', 'exempt packages from --cooldown, by name or name@version')
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .action(auditAction);
@@ -1200,7 +1215,7 @@ if (require.main === module) {
     .description('step through risky packages interactively and write allowScripts decisions')
     .action(approveAction);
   common(program.command('review'))
-    .description('show pending npm v12 script approvals WITH their actual script content and OSV verdict — the detail npm approve-scripts --allow-scripts-pending leaves out')
+    .description('show pending npm v12 script approvals WITH their actual script content and OSV verdict, the detail npm approve-scripts --allow-scripts-pending leaves out')
     .option('--json', 'emit JSON instead of terminal output')
     .option('--manager <pm>', 'target package manager: npm | pnpm | yarn | bun (default: auto-detect from the lockfile)')
     .option('--policy <file>', 'governance policy file (default: script-lens.policy.json if present)')
@@ -1228,7 +1243,7 @@ if (require.main === module) {
     .option('--force', 'overwrite existing files')
     .action(initAction);
   program.command('sources')
-    .description('report git and remote-URL dependencies against npm v12\'s allow-git/allow-remote defaults: ROOT vs TRANSITIVE per dep, the minimal correct .npmrc, and which transitive deps force allow-git=all — no scan, no network')
+    .description('report git and remote-URL dependencies against npm v12\'s allow-git/allow-remote defaults: ROOT vs TRANSITIVE per dep, the minimal correct .npmrc, and which transitive deps force allow-git=all. No scan, no network')
     .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock)', '.')
     .option('--json', 'emit { git, remote, npmrc } JSON instead of text')
     .option('--write', 'merge the minimal correct allow-git/allow-remote into .npmrc, preserving every other key and comment (npm lockfiles only)')
@@ -1238,33 +1253,34 @@ if (require.main === module) {
     .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .github/actions/**/action.yml, where local composite actions and reusable workflows are followed, .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / BROKEN / UNKNOWN (BROKEN = trusted publishing granted but setup-node < v7 with registry-url writes a dummy _authToken that blocks the OIDC exchange), checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist. No scan, no network')
     .argument('[dir]', 'project dir (the repo root holding the CI configs)')
     .option('--path <path>', 'project dir (the repo root holding the CI configs)', '.')
-    .option('--json', 'emit { cliff, floors, counts, paths, repo, engines } JSON instead of text')
-    .option('--sarif <file>', 'also write SARIF 2.1.0 (rules publish-token-cliff and publish-oidc-broken, anchored to the workflow line)')
-    .option('--check', 'exit 1 when a publish path still authenticates with a long-lived token (TOKEN) or is BROKEN by setup-node; UNKNOWN and no-publish repos pass (for CI)')
+    .option('--json', 'emit { cliff, floors, counts, gates, paths, repo, engines } JSON instead of text')
+    .option('--sarif <file>', 'also write SARIF 2.1.0 (rules publish-token-cliff, publish-oidc-broken, publish-dangerous-trigger and, under --require-gate, publish-ungated; anchored to the workflow line)')
+    .option('--check', 'exit 1 when a publish path still authenticates with a long-lived token (TOKEN), is BROKEN by setup-node, or is reachable from a DANGEROUS trigger crates.io removed from trusted publishing; UNKNOWN and no-publish repos pass (for CI)')
+    .option('--require-gate <bar>', 'with --check, also fail publish paths whose release gate is weaker than <bar>: tag, manual or environment (default none; UNKNOWN gates never fail)', 'none')
     .action(publishAction);
   program.command('hooks')
-    .description('scan the open-time execution surface — the code that runs when a folder is OPENED, not installed: .vscode/tasks.json tasks with runOptions.runOn "folderOpen" and .claude/settings.json hooks (auto-firing SessionStart/Setup/InstructionsLoaded tiered above agent-triggered PreToolUse/PostToolUse) — classified through the same risk ladder as audit; --deps also scans every locked dependency\'s tarball, where any shipped auto-run entry is HIGH regardless of command')
-    .argument('[dir]', 'project directory to scan (monorepo subdirectories included; node_modules excluded — that is what --deps covers)', '.')
+    .description('scan the open-time execution surface, the code that runs when a folder is OPENED, not installed: .vscode/tasks.json tasks with runOptions.runOn "folderOpen" and .claude/settings.json hooks (auto-firing SessionStart/Setup/InstructionsLoaded tiered above agent-triggered PreToolUse/PostToolUse), classified through the same risk ladder as audit; --deps also scans every locked dependency\'s tarball, where any shipped auto-run entry is HIGH regardless of command')
+    .argument('[dir]', 'project directory to scan (monorepo subdirectories included; node_modules excluded, which is what --deps covers)', '.')
     .option('--json', 'emit { findings, partial, caveats, deps } JSON instead of text')
     .option('--sarif [file]', 'also write SARIF 2.1.0 (rule hook-auto-run: warning, error at HIGH), anchored to the real file:line', undefined)
     .option('--check', 'exit 1 when any finding is at or above the --fail-on floor (for CI)')
     .option('--fail-on <level>', 'floor for --check: none | medium | high', 'high')
-    .option('--deps', 'also scan every locked dependency\'s registry tarball for shipped .vscode/tasks.json / .claude/settings.json — a folderOpen task inside a package is a payload, not a team convention (tiered HIGH regardless of command)')
+    .option('--deps', 'also scan every locked dependency\'s registry tarball for shipped .vscode/tasks.json / .claude/settings.json. A folderOpen task inside a package is a payload, not a team convention (tiered HIGH regardless of command)')
     .option('--no-cache', 'disable the on-disk result cache for --deps')
     .action(hooksAction);
   program.command('doctor')
-    .description('check whether this build still understands your local npm (contract probe + parser self-test + live dry-run shape check) — exit 1 on drift')
+    .description('check whether this build still understands your local npm (contract probe + parser self-test + live dry-run shape check). Exits 1 on drift')
     .option('--path <path>', 'project dir or lockfile to probe live', '.')
     .option('--offline', 'skip the live npm dry-run probe')
     .option('--no-live', 'skip the live npm dry-run probe (contract + self-test only)')
     .option('--json', 'emit the structured report as JSON')
     .action(doctorAction);
   program.command('completion')
-    .description('print a shell completion script (bash | zsh | fish) — e.g. `source <(npm-script-lens completion bash)`')
+    .description('print a shell completion script (bash | zsh | fish), e.g. `source <(npm-script-lens completion bash)`')
     .argument('[shell]', 'bash | zsh | fish', 'bash')
     .action((shell) => process.stdout.write(require('./completion').completionScript(shell)));
   program.command('diff')
-    .description('compare a package\'s install-time lifecycle scripts (preinstall/install/postinstall + implicit node-gyp) between two versions — exit 1 if any script was added or changed')
+    .description('compare a package\'s install-time lifecycle scripts (preinstall/install/postinstall + implicit node-gyp) between two versions. Exits 1 if any script was added or changed')
     .argument('<old>', 'baseline spec, e.g. sharp@0.32.6')
     .argument('<new>', 'candidate spec, e.g. sharp@0.33.0')
     .option('--json', 'emit JSON { unchanged, added, removed, modified } instead of colored text')
