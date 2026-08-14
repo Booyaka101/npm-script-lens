@@ -6,7 +6,7 @@ _The install-script-approval tool for **npm · pnpm · yarn · bun**, from your 
 
 Since [npm v12 (July 8, 2026)](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/), dependency lifecycle scripts (`preinstall`, `install`, `postinstall`) and implicit `node-gyp` builds **no longer run unless explicitly allowed** via the `allowScripts` field in `package.json`. [git and remote-URL dependencies **no longer resolve at all**](#git-and-remote-dependencies-the-other-two-npm-v12-flips) unless opted in via `allow-git`/`allow-remote`. And npm isn't alone: **pnpm** (`allowBuilds`), **yarn** Berry (`dependenciesMeta.built`), and **bun** (`trustedDependencies`) all made install scripts opt-in too. That leaves every team, on every package manager, staring at a list of package names asking: *which of these are safe to approve?*
 
-`npm-script-lens` answers that with evidence, not vibes: the review-report mode the community asked for in [npm/rfcs#897](https://github.com/npm/rfcs/pull/897). For every package in your lockfile (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (classic and berry), `pnpm-lock.yaml`, or `bun.lock`) it:
+`npm-script-lens` answers that with evidence, not vibes: the review-report mode the community asked for in [npm/rfcs#897](https://github.com/npm/rfcs/issues/897). For every package in your lockfile (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (classic and berry), `pnpm-lock.yaml`, or `bun.lock`) it:
 
 1. fetches the version metadata from the public npm registry,
 2. stream-downloads the tarball and indexes its source files (`tar-stream`, nothing written to disk), skipped entirely for the majority of packages with no install-time scripts, which is why real audits take seconds,
