@@ -11,7 +11,9 @@ Audited **39** locked packages: **2** HIGH, **0** MEDIUM, **2** LOW risk install
 
 ## Suggested allowScripts
 
-Paste into your `package.json` (entries with risky behavior default to `false`, so review then flip the ones you trust):
+Entries with risky behavior default to `false`, so review then flip the ones you trust.
+
+> This is the complete block for this lockfile, computed without reading your current one. Pasting it **replaces** any `allowScripts` you already have. To merge instead, keeping the decisions you have already made, run `npm-script-lens allow --write` or `npm-script-lens sync --write`.
 
 ```json
 {

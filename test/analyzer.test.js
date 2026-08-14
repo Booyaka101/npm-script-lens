@@ -177,3 +177,32 @@ test('report renders and allowScripts block is valid parseable JSON', () => {
   assert.deepStrictEqual(parsed, buildAllowScripts(results));
   assert.ok(!md.includes('exec: a | b'), 'pipes escaped inside table cells');
 });
+
+// The block is computed from the lockfile alone and never reads the
+// allowScripts you already have, so the report must never present it as
+// something to paste over an existing one.
+test('a non-empty suggestion warns that pasting replaces an existing block', () => {
+  const md = buildReport([{ name: 'ok', version: '2.0.0', rows: [{ script: 'install', command: 'node x', risk: 'LOW', signals: ['fs: writeFileSync'] }] }]);
+  assert.match(md, /## Suggested allowScripts/);
+  assert.match(md, /\*\*replaces\*\* any `allowScripts` you already have/);
+  assert.match(md, /allow --write|sync --write/, 'points at the commands that merge');
+  assert.doesNotMatch(md, /^Paste into your `package\.json`/m, 'no bare paste instruction');
+});
+
+test('nothing scripted means no paste block at all, and says to keep an existing one', () => {
+  const md = buildReport([{ name: 'clean', version: '1.0.0', rows: [] }]);
+  assert.doesNotMatch(md, /```json/, 'an empty allowScripts is not something to paste');
+  assert.match(md, /No package in this lockfile runs install scripts/);
+  assert.match(md, /keep it/);
+  assert.match(md, /sync --check/);
+});
+
+test('the HTML report follows the same two branches', () => {
+  const { buildHtml } = require('../src/reporter');
+  const empty = buildHtml([{ name: 'clean', version: '1.0.0', rows: [] }], {});
+  assert.ok(!empty.includes('"allowScripts": {}'), 'no empty block to copy');
+  assert.ok(empty.includes('no <code>allowScripts</code> entries are needed'));
+  const full = buildHtml([{ name: 'ok', version: '2.0.0', rows: [{ script: 'install', command: 'node x', risk: 'LOW', signals: [] }] }], {});
+  assert.ok(full.includes('<strong>replaces</strong>'), 'warns before the block');
+  assert.ok(full.includes('&quot;ok@2.0.0&quot;'), 'still shows the block');
+});
