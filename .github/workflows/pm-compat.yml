@@ -1,6 +1,6 @@
 # Cross-ecosystem writer canary: for each package manager, generate a real
 # lockfile, run `allow --write`, and confirm the manager then RUNS an approved
-# package's install script — i.e. our native allowlist output is still valid
+# package's install script, i.e. our native allowlist output is still valid
 # for that manager. Mirrors the flow verified locally during development. A red
 # leg means a manager changed its allowlist format and pm-contract needs a patch.
 name: pm-compat
@@ -31,7 +31,7 @@ jobs:
             pnpm) npm install -g pnpm ;;
             bun)  npm install -g bun ;;
             # the runner's bundled npm is v11, where install scripts still run
-            # by DEFAULT — the allowlist would never be consulted and the leg
+            # by DEFAULT, so the allowlist would never be consulted and the leg
             # would pass without testing anything. v12 is where allowScripts is
             # enforced, so that is the only version this canary is meaningful on.
             npm)  npm install -g npm@12 ;;
@@ -53,7 +53,7 @@ jobs:
       # core-js's funding banner, which cannot work: core-js suppresses it
       # whenever CI is set (GitHub always sets it), npm hides lifecycle stdout
       # without --foreground-scripts, and bun never echoes postinstall output at
-      # all — so the bun leg was passing only because the loose pattern matched
+      # all, so the bun leg was passing only because the loose pattern matched
       # bun's own "+ core-js@3.38.1" package line. Asserting on the manager's
       # signal removes every third-party dependency, and checking the BEFORE
       # state proves the assertion is not vacuous.
@@ -89,7 +89,7 @@ jobs:
             baseline=blocked
           else
             baseline=unblocked
-            echo "::warning::${{ matrix.pm }} did not block the install script by default — this leg cannot prove the allowlist did anything"
+            echo "::warning::${{ matrix.pm }} did not block the install script by default, so this leg cannot prove the allowlist did anything"
           fi
 
           echo "── allow --write ────────────────────────────────"
@@ -98,9 +98,9 @@ jobs:
           echo "── AFTER allow --write ──────────────────────────"
           after=$(probe); echo "$after"
           if echo "$after" | grep -Eqi "$BLOCKED"; then
-            echo "::error::${{ matrix.pm }}: still reports blocked install scripts after allow --write — our native allowlist format has drifted"
+            echo "::error::${{ matrix.pm }}: still reports blocked install scripts after allow --write, so our native allowlist format has drifted"
             exit 1
           fi
           [ "$baseline" = blocked ] \
-            && echo "✅ ${{ matrix.pm }}: blocked before, allowed after — allowlist format is still valid" \
+            && echo "✅ ${{ matrix.pm }}: blocked before, allowed after, allowlist format is still valid" \
             || echo "⚠️ ${{ matrix.pm }}: nothing was blocked to begin with (inconclusive, not a failure)"

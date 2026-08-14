@@ -69,12 +69,12 @@ async function main() {
     const { manifest } = buildManifest(results, { deep: input('DEEP', 'false') === 'true' });
     const json = serializeManifest(manifest);
     if (!fs.existsSync(file)) {
-      console.log(`::error::no audit manifest at ${file} — run: npx npm-script-lens manifest --write`);
+      console.log(`::error::no audit manifest at ${file}. Run: npx npm-script-lens manifest --write`);
       process.exitCode = 1;
     } else if (fs.readFileSync(file, 'utf8') !== json) {
       let parsed; try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { parsed = {}; }
       const drift = diffManifests(parsed, manifest);
-      console.log('::error::audit manifest is out of date — install-time behavior changed');
+      console.log('::error::audit manifest is out of date, install-time behavior changed');
       for (const line of drift) console.log(`::warning::${line}`);
       if (process.env.GITHUB_STEP_SUMMARY) {
         fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
@@ -100,7 +100,7 @@ async function v12GapsMain() {
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${report}\n`);
   for (const f of findings) {
     const at = f.file ? ` (${f.file}:${f.line})` : '';
-    console.log(`::warning::${f.id}: ${f.package}${at} — ${f.fix}`);
+    console.log(`::warning::${f.id}: ${f.package}${at}: ${f.fix}`);
   }
   const sarifFile = input('SARIF_FILE', '');
   if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
@@ -168,14 +168,14 @@ async function sourcesCheckMain() {
   }
   const counts = `${analysis.git.deps.length} git dep(s) (minimal ${SOURCES.git.key}=${analysis.git.minimal}) · ${analysis.remote.deps.length} remote dep(s) (minimal ${SOURCES.remote.key}=${analysis.remote.minimal})`;
   if (analysis.lockType !== 'npm') {
-    console.log(`npm v12 git/remote dependency check: ${counts} — .npmrc check skipped (npm-only; this is a ${analysis.lockType} lockfile)`);
+    console.log(`npm v12 git/remote dependency check: ${counts}, .npmrc check skipped (npm-only; this is a ${analysis.lockType} lockfile)`);
     return;
   }
   const { ok, failures } = checkSourceConfig(analysis, readSourceConfig(analysis.projectDir));
   if (ok) {
     console.log(`npm v12 git/remote dependency check passed: ${counts}`);
     if (process.env.GITHUB_STEP_SUMMARY) {
-      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ✅ npm v12 git/remote dependency check\n\n${counts} — .npmrc matches.\n`);
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ✅ npm v12 git/remote dependency check\n\n${counts}, .npmrc matches.\n`);
     }
     return;
   }
@@ -189,9 +189,10 @@ async function sourcesCheckMain() {
 
 // `node action.js publish-check`, opt-in gate (the `publish-check` input):
 // fails the job when a CI publish path still authenticates with a long-lived
-// npm token, which loses direct publish around January 2027. TOKEN paths get
-// an ::error each and a publish-token-cliff SARIF result merged into the file
-// the audit step wrote; UNKNOWN paths and no-publish repos pass.
+// npm token (which loses direct publish around January 2027), is BROKEN by
+// setup-node, or is reachable from a DANGEROUS trigger crates.io banned.
+// Each failure gets an ::error and a SARIF result merged into the file the
+// audit step wrote; UNKNOWN paths and no-publish repos pass.
 async function publishCheckMain() {
   const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
   const target = input('PATH', '.');
@@ -215,8 +216,10 @@ async function publishCheckMain() {
   for (const f of failures) console.log(`::error::${f.message}`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     const broken = failures.filter((f) => f.verdict === 'BROKEN').length;
+    const dangerous = failures.filter((f) => f.verdict === 'DANGEROUS').length;
     const intro = `Direct token publishing ends around **${PUBLISH.cliff.date}** (${PUBLISH.cliff.changelog}).`
-      + (broken > 0 ? `\n\n${broken} path(s) are **BROKEN**: trusted publishing is granted but setup-node older than v${PUBLISH.oidc.setupNodeFixedIn} with \`registry-url\` writes a dummy \`_authToken\` that blocks the OIDC exchange (${PUBLISH.oidc.issues[0]}).` : '');
+      + (broken > 0 ? `\n\n${broken} path(s) are **BROKEN**: trusted publishing is granted but setup-node older than v${PUBLISH.oidc.setupNodeFixedIn} with \`registry-url\` writes a dummy \`_authToken\` that blocks the OIDC exchange (${PUBLISH.oidc.issues[0]}).` : '')
+      + (dangerous > 0 ? `\n\n${dangerous} path(s) are **DANGEROUS**: reachable from a trigger crates.io removed from Trusted Publishing (${PUBLISH.gates.cratesio.source}).` : '');
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
       `\n## ❌ npm token-cliff publish check\n\n${intro}\n\n${failures.map((f) => `- **${f.verdict}**: ${f.message}`).join('\n')}\n\nRun \`npx npm-script-lens publish\` for the migration patch and the pre-filled npmjs.com trusted-publisher checklist.\n`);
   }
@@ -270,7 +273,7 @@ async function hooksCheckMain() {
     }
     return;
   }
-  for (const f of over) console.log(`::error::open-time execution: ${f.file}:${f.line || 1} — ${f.command || f.note || f.surface}${f.fromDep ? ` (shipped in ${f.fromDep})` : ''}`);
+  for (const f of over) console.log(`::error::open-time execution: ${f.file}:${f.line || 1}: ${f.command || f.note || f.surface}${f.fromDep ? ` (shipped in ${f.fromDep})` : ''}`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
       `\n## ❌ open-time execution check\n\n\`\`\`\n${renderHooks(scan.findings, scan.partials)}\n\`\`\`\n\n${surfaceCaveats(scan.findings).map((c) => `> ${c}`).join('\n')}\n\nInspect with \`npx npm-script-lens hooks\` (add \`--deps\` to also scan dependency tarballs).\n`);

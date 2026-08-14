@@ -9,7 +9,7 @@ const { buildAllowScripts, packageRisk } = require('../src/reporter');
 const ROOT = path.join(__dirname, '..');
 
 // A dozen real, script-heavy packages (native builds, binary downloaders,
-// telemetry, plus no-script controls) — every version must resolve, so this
+// telemetry, plus no-script controls), so every version must resolve, so this
 // also guards the fixture against typos: any 404 shows up as an ERROR row.
 test('native-heavy fixture: variety audit with zero fetch errors', async () => {
   const results = await runAudit(path.join(ROOT, 'fixtures', 'native-heavy'));
@@ -20,7 +20,7 @@ test('native-heavy fixture: variety audit with zero fetch errors', async () => {
   assert.strictEqual(byName['nan'], 'SAFE');
   assert.strictEqual(byName['ws'], 'SAFE');
   // husky publishes no install-time scripts (its "prepare" never runs from the
-  // registry) — flagging it would be exactly the false positive we avoid
+  // registry), and flagging it would be exactly the false positive we avoid
   assert.strictEqual(byName['husky'], 'SAFE');
   assert.strictEqual(byName['core-js'], 'LOW');
   const allow = buildAllowScripts(results).allowScripts;

@@ -1,0 +1,21 @@
+name: release
+on:
+  push:
+    branches: [main]
+
+# every merge to main ships to npm, behind the release environment
+
+permissions:
+  id-token: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.14.0
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm publish

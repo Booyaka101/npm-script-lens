@@ -237,8 +237,8 @@ function extractClaudeHooks(parsed) {
         if (kind !== 'command') {
           entry.target = target;
           entry.note = HOOK_TYPES.has(kind)
-            ? `a "${kind}" hook — not shell command execution (the documented type set is command/http/mcp_tool/prompt/agent)`
-            : `undocumented hook type "${kind}" — not classified as command execution`;
+            ? `a "${kind}" hook, not shell command execution (the documented type set is command/http/mcp_tool/prompt/agent)`
+            : `undocumented hook type "${kind}", not classified as command execution`;
         }
         entries.push(entry);
       }
@@ -256,9 +256,9 @@ const SURFACES = [
     label: 'VS Code folderOpen task',
     rawHints: ['folderOpen'],
     extract: extractVscodeTasks,
-    caveat: 'note (.vscode/tasks.json): a folderOpen finding means "this runs once you trust this folder and allow automatic tasks" — '
+    caveat: 'note (.vscode/tasks.json): a folderOpen finding means "this runs once you trust this folder and allow automatic tasks", '
       + "VS Code 1.117 defaults task.allowAutomaticTasks to 'off' with a one-time Allow/Disallow prompt "
-      + '(which does not display the command — microsoft/vscode#309406), workspace settings can no longer define that key, '
+      + '(which does not display the command, microsoft/vscode#309406), workspace settings can no longer define that key, '
       + 'and automatic tasks never run in an untrusted workspace.',
   },
   {
@@ -267,9 +267,9 @@ const SURFACES = [
     label: 'Claude Code hook',
     rawHints: ['SessionStart', 'InstructionsLoaded', '"Setup"'],
     extract: extractClaudeHooks,
-    caveat: 'note (.claude/settings.json): a SessionStart/Setup/InstructionsLoaded finding means "this runs on your next session in this trusted folder" — '
+    caveat: 'note (.claude/settings.json): a SessionStart/Setup/InstructionsLoaded finding means "this runs on your next session in this trusted folder", '
       + 'Claude Code has no hook review gate before a project command hook fires '
-      + '("Claude Code doesn\'t use the same hook review gate as Codex" — Datadog Security Labs, 2026-08).',
+      + '("Claude Code doesn\'t use the same hook review gate as Codex", Datadog Security Labs, 2026-08).',
   },
 ];
 
@@ -339,7 +339,7 @@ function scanSurfaceText(surface, text, relFile, { rootDir = null, files = null 
       findings: [],
       partial: {
         file: relFile, surface: surface.id, line: 1,
-        note: `did not parse as JSON/JSONC (${err.message})${hints.length > 0 ? ` — raw text mentions ${hints.map((h) => `"${h.replace(/"/g, '')}"`).join(', ')}` : ''}`,
+        note: `did not parse as JSON/JSONC (${err.message})${hints.length > 0 ? `, raw text mentions ${hints.map((h) => `"${h.replace(/"/g, '')}"`).join(', ')}` : ''}`,
         rawHit: hints.length > 0,
       },
     };
@@ -375,7 +375,7 @@ function scanProject(target = '.') {
       if (!stat.isFile()) continue;
       scanned.push(relFile);
       if (stat.size > MAX_FILE_BYTES) {
-        partials.push({ file: relFile, surface: surface.id, line: 1, note: `over the ${MAX_FILE_BYTES / 1024 / 1024} MB cap — not scanned`, rawHit: false });
+        partials.push({ file: relFile, surface: surface.id, line: 1, note: `over the ${MAX_FILE_BYTES / 1024 / 1024} MB cap, not scanned`, rawHit: false });
         continue;
       }
       const text = fs.readFileSync(file, 'utf8');
@@ -475,7 +475,7 @@ function checkHooks(findings, failOn = 'high') {
 }
 
 function describeFinding(f) {
-  if (f.kind === 'partial') return `unparseable ${f.surface === 'vscode-tasks' ? 'tasks.json' : 'settings.json'} — ${f.note}`;
+  if (f.kind === 'partial') return `unparseable ${f.surface === 'vscode-tasks' ? 'tasks.json' : 'settings.json'}: ${f.note}`;
   if (f.surface === 'vscode-task') {
     return `folderOpen task ${f.label ? `"${f.label}"` : '(unnamed)'} → ${f.command || '(no command)'}${f.silent ? ' (silent)' : ''}`;
   }
@@ -496,7 +496,7 @@ function renderHooks(findings, partials = []) {
   }
   if (findings.length === 0) {
     lines.push(partials.length > 0
-      ? `no open-time execution entries found (${partials.length} file(s) partial — see above)`
+      ? `no open-time execution entries found (${partials.length} file(s) partial, see above)`
       : 'no open-time execution entries found');
   } else {
     const counts = {};
@@ -542,7 +542,7 @@ function hooksFindings(findings) {
     package: f.fromDep || f.label || f.event || f.surface,
     file: f.file,
     line: f.line || 1,
-    fix: `${describeFinding(f)}${f.fromDep ? ` — shipped inside ${f.fromDep}: a published package has no business auto-running code when its folder is opened` : ''}`,
+    fix: `${describeFinding(f)}${f.fromDep ? `, shipped inside ${f.fromDep}: a published package has no business auto-running code when its folder is opened` : ''}`,
     fingerprint: `hook-auto-run:${f.file}:${f.line || 1}:${i}`,
   }));
 }

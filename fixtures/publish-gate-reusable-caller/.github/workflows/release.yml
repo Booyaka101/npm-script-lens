@@ -1,0 +1,10 @@
+name: release
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    permissions:
+      id-token: write
+    uses: ./.github/workflows/reusable-publish.yml
+    secrets: inherit

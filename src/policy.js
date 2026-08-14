@@ -62,7 +62,7 @@ function evaluate(r, policy, packageRisk, now) {
   if (w) {
     const expired = w.expires && Date.parse(w.expires) < now;
     if (!expired) return { allow: Boolean(w.allow), reason: `waiver${w.reason ? `: ${w.reason}` : ''}` };
-    return { allow: false, reason: `waiver expired ${w.expires} — re-review` };
+    return { allow: false, reason: `waiver expired ${w.expires}, re-review` };
   }
   const ap = policy.autoApprove;
   const risk = packageRisk(r);

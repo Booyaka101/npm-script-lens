@@ -63,32 +63,34 @@ inputs:
     description: >-
       Fail the job (exit 1) when the lockfile contains git or remote-URL
       dependencies and the committed .npmrc allow-git/allow-remote is
-      insufficient, over-permissive, or invalid — npm v12 refuses to resolve
+      insufficient, over-permissive, or invalid. npm v12 refuses to resolve
       uncovered git/remote deps by default. 'true' to enable (opt-in).
     default: 'false'
   publish-check:
     description: >-
       Fail the job (exit 1) when a CI publish step still authenticates with a
       long-lived npm token (NODE_AUTH_TOKEN/NPM_TOKEN or an .npmrc _authToken
-      write, with no id-token grant) — bypass-2FA tokens lose direct publish
-      around January 2027; trusted (OIDC) and staged publishing survive — or
-      when a trusted-publishing path is BROKEN by actions/setup-node older
-      than v7 writing a dummy _authToken via registry-url.
-      'true' to enable (opt-in).
+      write, with no id-token grant), since bypass-2FA tokens lose direct
+      publish around January 2027 while trusted (OIDC) and staged publishing
+      survive. Also fails on a trusted-publishing path BROKEN by
+      actions/setup-node older than v7 writing a dummy _authToken via
+      registry-url, and on a publish reachable from pull_request_target or
+      workflow_run (DANGEROUS), the triggers crates.io removed from Trusted
+      Publishing. 'true' to enable (opt-in).
     default: 'false'
   hooks-check:
     description: >-
       Fail the job (exit 1) when the working tree carries a HIGH open-time
-      execution entry — a .vscode/tasks.json task with runOn folderOpen or an
+      execution entry: a .vscode/tasks.json task with runOn folderOpen or an
       auto-firing .claude/settings.json command hook (SessionStart / Setup /
-      InstructionsLoaded) — code that runs when the folder is opened, with no
+      InstructionsLoaded), code that runs when the folder is opened, with no
       install step involved. 'true' to enable (opt-in).
     default: 'false'
   sync-check:
     description: >-
       Fail the job (exit 1) when the install-script allowlist has drifted from
       the lockfile (a new scripted dependency isn't covered, or a stale entry
-      lingers). Works for npm, pnpm, yarn, and bun — auto-detected. 'true' to
+      lingers). Works for npm, pnpm, yarn, and bun, auto-detected. 'true' to
       enable (opt-in).
     default: 'false'
   github-token:
@@ -169,6 +171,6 @@ runs:
         INPUT_PATH: ${{ inputs.path }}
       run: |
         if ! node "$GITHUB_ACTION_PATH/src/cli.js" sync --check --path "${INPUT_PATH:-.}"; then
-          echo "::error::install-script allowlist is out of sync with the lockfile — run 'npx npm-script-lens sync --write' and commit the result"
+          echo "::error::install-script allowlist is out of sync with the lockfile. Run 'npx npm-script-lens sync --write' and commit the result"
           exit 1
         fi

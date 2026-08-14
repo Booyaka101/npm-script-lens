@@ -42,7 +42,7 @@ test('LOW: fs write or env read only', () => {
   assert.ok(row.signals.includes('env: process.env'));
 });
 
-test('HIGH: obfuscation — eval, Function constructor, vm', () => {
+test('HIGH: obfuscation, eval, Function constructor, vm', () => {
   const row = analyze('eval("console.log(1)");');
   assert.strictEqual(row.risk, 'HIGH');
   assert.ok(row.signals.includes('obf: eval()'));
@@ -52,16 +52,16 @@ test('HIGH: obfuscation — eval, Function constructor, vm', () => {
   assert.strictEqual(analyze('require("node:vm");').risk, 'HIGH');
 });
 
-test('HIGH: obfuscation — string-built require specifiers', () => {
+test('HIGH: obfuscation, string-built require specifiers', () => {
   const cat = analyze('const m = require("child" + "_process"); m.execSync("id");');
   assert.strictEqual(cat.risk, 'HIGH');
   assert.ok(cat.signals.includes('obf: require(<string-built specifier>)'), JSON.stringify(cat.signals));
   assert.strictEqual(analyze('const x = "s"; require(`while-dynamic-${x}`);').risk, 'HIGH');
-  // plain identifier arguments are bundler/binding-loader bread and butter — not flagged
+  // plain identifier arguments are bundler/binding-loader bread and butter, not flagged
   assert.strictEqual(analyze('const p = "./known"; const q = p; console.log(q);').risk, 'SAFE');
 });
 
-test('HIGH: obfuscation — base64 and char-code payload decoding', () => {
+test('HIGH: obfuscation, base64 and char-code payload decoding', () => {
   const b64 = analyze('const s = Buffer.from("aGVsbG8=", "base64").toString();');
   assert.strictEqual(b64.risk, 'HIGH');
   assert.ok(b64.signals.some((s) => s.includes('base64')));

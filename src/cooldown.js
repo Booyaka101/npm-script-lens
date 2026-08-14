@@ -72,14 +72,14 @@ function cooldownReport(result) {
   const { hours, blocked, unknown, ok } = result;
   const lines = [];
   if (blocked.length === 0) {
-    lines.push(`✓ cooldown ${hours}h — all ${ok} dated package(s) are old enough to have been caught.`);
+    lines.push(`✓ cooldown ${hours}h: all ${ok} dated package(s) are old enough to have been caught.`);
   } else {
-    lines.push(`✗ cooldown ${hours}h — ${blocked.length} package version(s) published too recently:`);
+    lines.push(`✗ cooldown ${hours}h: ${blocked.length} package version(s) published too recently:`);
     for (const b of blocked) {
       lines.push(`  ${b.name}@${b.version}  ${b.label}  (clears ${b.releasesAt.replace('T', ' ').slice(0, 16)}Z)`);
     }
     lines.push('');
-    lines.push('These may be perfectly fine. Cooldown does not inspect them — it declines to be');
+    lines.push('These may be perfectly fine. Cooldown does not inspect them. It declines to be');
     lines.push('among the first to install a version, because npm worms are typically caught');
     lines.push('within hours. Wait, pin to an older version, or exempt with --cooldown-allow.');
   }

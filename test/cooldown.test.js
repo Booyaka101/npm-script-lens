@@ -15,7 +15,7 @@ const row = (name, version, hoursOld, extra = {}) => ({
 
 test('ageHours derives from publishedAt, ignoring a stale cached ageDays', () => {
   // fetchTrust caches its whole object for 24h, so ageDays can be a day behind
-  // and always errs toward "older" — i.e. it fails OPEN on a young package.
+  // and always errs toward "older", i.e. it fails OPEN on a young package.
   const trust = { publishedAt: agoH(2), ageDays: 30 };
   assert.strictEqual(Math.round(ageHours(trust, NOW)), 2, 'must not trust the cached ageDays');
   assert.strictEqual(ageHours(null, NOW), null);
@@ -40,7 +40,7 @@ test('blocks younger than the threshold, passes at and above it', () => {
 
 test('blocked entries carry when the version clears, sorted youngest first', () => {
   const r = evaluateCooldown([row('a', '1.0.0', 10), row('b', '2.0.0', 1)], { hours: 24, now: NOW });
-  assert.deepStrictEqual(r.blocked.map((b) => b.name), ['b', 'a'], 'youngest first — that is the riskiest');
+  assert.deepStrictEqual(r.blocked.map((b) => b.name), ['b', 'a'], 'youngest first, that is the riskiest');
   assert.strictEqual(r.blocked[0].releasesAt, new Date(NOW - 1 * 3600000 + 24 * 3600000).toISOString());
   assert.match(r.blocked[0].label, /h old$/);
 });

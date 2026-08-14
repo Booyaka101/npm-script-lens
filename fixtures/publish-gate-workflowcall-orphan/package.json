@@ -1,0 +1,8 @@
+{
+  "name": "widget-gate-orphan",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acme/widget-gate-orphan.git"
+  }
+}

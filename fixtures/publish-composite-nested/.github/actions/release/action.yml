@@ -1,5 +1,5 @@
 name: release
-description: outer composite — delegates the publish to an inner action
+description: outer composite, delegates the publish to an inner action
 runs:
   using: composite
   steps:

@@ -140,7 +140,7 @@ function renderSources(analysis) {
     for (const kind of KINDS) lines.push(`${SOURCES[kind].key} not needed (no ${kind} dependencies)`);
   }
   if (analysis.lockType !== 'npm') {
-    lines.push('', `note: the .npmrc emitter targets npm only — this is a ${analysis.lockType} lockfile, and ${analysis.lockType} does not read allow-git/allow-remote from .npmrc. The dependency report above still applies.`);
+    lines.push('', `note: the .npmrc emitter targets npm only. This is a ${analysis.lockType} lockfile, and ${analysis.lockType} does not read allow-git/allow-remote from .npmrc. The dependency report above still applies.`);
   }
   return lines.join('\n');
 }
@@ -161,7 +161,7 @@ function rootWarnings(analysis) {
       const d = DETECTORS.allowGitRoot;
       warnings.push(`⚠️  ${key}=root is unreliable on npm v${major}: root-level git deps were wrongly rejected (${d.issue}, ${d.upstream}${d.fixedInNpm ? `, fixed in npm v${d.fixedInNpm}` : '; fixed npm version not yet pinned'}). Recommend ${key}=all until your npm verifiably carries the fix.`);
     } else if (major < SOURCES.enforcedInNpm - 1) {
-      warnings.push(`note: local npm v${major} predates ${key} (introduced in npm ${introduced}); the setting takes effect once you upgrade — npm v${SOURCES.enforcedInNpm} enforces the '${SOURCES.default}' default.`);
+      warnings.push(`note: local npm v${major} predates ${key} (introduced in npm ${introduced}); the setting takes effect once you upgrade. npm v${SOURCES.enforcedInNpm} enforces the '${SOURCES.default}' default.`);
     }
   }
   return warnings;
@@ -182,7 +182,7 @@ function checkSourceConfig(analysis, config) {
       failures.push({
         source: kind,
         kind: 'invalid',
-        message: `.npmrc has ${key}=${committed}, which is not a valid value — ${key} is an enum: ${SOURCES.values.join(' | ')}. (A bare --${key} or ${key}=true does NOT enable ${kind} dependencies; npm v${SOURCES.enforcedInNpm} treats it as unset.)`,
+        message: `.npmrc has ${key}=${committed}, which is not a valid value, since ${key} is an enum: ${SOURCES.values.join(' | ')}. (A bare --${key} or ${key}=true does NOT enable ${kind} dependencies; npm v${SOURCES.enforcedInNpm} treats it as unset.)`,
       });
       continue;
     }
@@ -193,15 +193,15 @@ function checkSourceConfig(analysis, config) {
       failures.push({
         source: kind,
         kind: 'insufficient',
-        message: `${key}=${effective}${committed === null ? ` (the npm v${SOURCES.enforcedInNpm} default — no .npmrc entry)` : ' (committed)'} is insufficient: ${plural(n, `${kind} dependenc`)} in the lockfile need${n === 1 ? 's' : ''} ${key}=${minimal} — npm v${SOURCES.enforcedInNpm} will refuse to install ${n === 1 ? 'it' : 'them'}.`,
+        message: `${key}=${effective}${committed === null ? ` (the npm v${SOURCES.enforcedInNpm} default, no .npmrc entry)` : ' (committed)'} is insufficient: ${plural(n, `${kind} dependenc`)} in the lockfile need${n === 1 ? 's' : ''} ${key}=${minimal}. npm v${SOURCES.enforcedInNpm} will refuse to install ${n === 1 ? 'it' : 'them'}.`,
       });
     } else if (LEVEL[effective] > LEVEL[minimal]) {
       failures.push({
         source: kind,
         kind: 'over-permissive',
         message: `${key}=${committed} (committed) is over-permissive: ${minimal === 'none'
-          ? `the lockfile has no ${kind} dependencies — remove the line (or set ${key}=none)`
-          : `every ${kind} dependency is declared in the root package.json — tighten to ${key}=root`}.`,
+          ? `the lockfile has no ${kind} dependencies, so remove the line (or set ${key}=none)`
+          : `every ${kind} dependency is declared in the root package.json, so tighten to ${key}=root`}.`,
       });
     }
   }

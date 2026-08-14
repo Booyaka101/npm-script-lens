@@ -148,6 +148,36 @@ const PUBLISH = {
       approve: 'npm stage approve <stage-id>',
     },
   },
+  // Release gates: who can cause a resolved publish path to run today? The
+  // ChainDrop worm (2026-08-04) published through legitimate trusted-publishing
+  // workflows after an account takeover, so auth alone is not the whole story.
+  // The six gate classes, the two registry-precedent quotes and the trigger
+  // names crates.io banned all live here and nowhere else.
+  gates: {
+    classes: {
+      DANGEROUS: 'DANGEROUS',
+      REVIEWABLE: 'REVIEWABLE',
+      MANUAL: 'MANUAL',
+      TAG: 'TAG',
+      AUTO: 'AUTO',
+      UNKNOWN: 'UNKNOWN',
+    },
+    // crates.io removed both from Trusted Publishing outright.
+    dangerousTriggers: ['pull_request_target', 'workflow_run'],
+    cratesio: {
+      quote: 'Both triggers have been involved in past CI security incidents, where '
+        + 'attackers exploited workflow permissions to escalate access or obtain '
+        + 'publishing credentials.',
+      source: 'crates.io development update, 2026-01-21',
+      url: 'https://socket.dev/blog/crates-security-tab-tightened-publishing-controls',
+    },
+    pypi: {
+      quote: 'Dedicated environments allow for additional protections like required '
+        + 'reviewers, which can be used to require manual approval for a workflow '
+        + 'using the environment.',
+      docs: 'https://docs.pypi.org/trusted-publishers/security-model/',
+    },
+  },
   // setup-node up to v6 answers `registry-url:` by writing authLine into an
   // .npmrc and exporting the dummy token, which makes npm skip the OIDC
   // exchange. Fixed in v7.0.0; the trusted-publishers docs still show v6.

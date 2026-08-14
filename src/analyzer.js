@@ -324,7 +324,7 @@ function analyzePackage(pkg) {
   if (pkg.files && pkg.files.has('binding.gyp')) {
     const { findings, partial, notes } = collectGypFindings(pkg.files);
     gypSignals = findings.map((f) => `gyp: ${f.channel} ${short(String(f.command).trim())}`);
-    if (partial) gypSignals.push('gyp: binding.gyp did not parse — scanned as raw text');
+    if (partial) gypSignals.push('gyp: binding.gyp did not parse, scanned as raw text');
     for (const n of notes) if (/not scanned/.test(n)) gypSignals.push(`gyp: ${short(n)}`);
   }
   return Object.entries(pkg.scripts).map(([script, command]) => {
