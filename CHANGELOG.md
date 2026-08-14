@@ -60,6 +60,18 @@ workflow using the environment."*
   output on the 19 pre-existing publish fixtures was byte-diffed against
   1.9.0: the only delta is the two new lines per path.
 
+- **Fixed: the report told you to paste an `allowScripts` block that would
+  wipe the one you have.** The suggested block is computed from the lockfile
+  alone and never reads your current `allowScripts`, but the wording was
+  "Paste into your `package.json`". On a project with no scripted
+  dependencies that meant pasting `{"allowScripts": {}}` over a populated
+  block, silently un-approving every install script the project had allowed.
+  With nothing scripted there is now no JSON block at all, just a note that
+  no entries are needed and that an existing block should be kept
+  (`sync --check` finds stale entries). With something scripted the block
+  stays, prefaced by the fact that pasting **replaces** what you have, and
+  naming `allow --write` / `sync --write`, which merge and keep decisions
+  you have already made. Same fix in the HTML report.
 - **Fixed: `publish <path>` on a path that does not exist reported a green
   "publish paths (0)".** A mistyped directory resolved to its parent, so the
   scan ran against the wrong repo and exited 0. It now prints
