@@ -1,5 +1,5 @@
 'use strict';
-const { trustLabel } = require('./trust');
+const { trustLabel, driftNote } = require('./trust');
 const { INERT_SKIP_FROM, skipsInertOptional, PUBLISH } = require('./npm-contract');
 
 const RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, SAFE: 3, ERROR: 4 };
@@ -70,6 +70,20 @@ function gainedNote(r) {
     : `_no new capabilities vs ${r.base.version}_`;
 }
 
+// The sibling of gainedNote, set by runAudit on the --diff/--since path.
+const changeText = (changes) => changes.map((ch) => `${ch.field} ${ch.from} → ${ch.to}`).join(', ');
+
+function provenanceChangeNote(r) {
+  if (!r.provenanceChange) return null;
+  return `**⚠️ provenance identity changed vs ${r.provenanceChange.baseVersion}:** ${esc(changeText(r.provenanceChange.changes))}`;
+}
+
+// Informational only, never a severity. See trust.repoDrift for why.
+function repoDriftNote(r) {
+  const note = driftNote(r.trust);
+  return note ? `_ℹ️ ${esc(note)}_` : null;
+}
+
 function buildReport(results, { note } = {}) {
   const scripted = results.filter((r) => r.rows.length > 0 || r.error || r.malicious);
   const clean = results.length - scripted.length;
@@ -102,6 +116,8 @@ function buildReport(results, { note } = {}) {
         const cell = [];
         if (row.signals.length > 0) cell.push(row.signals.map((s) => `\`${esc(s)}\``).join('<br>'));
         if (i === 0 && gainedNote(r)) cell.push(gainedNote(r));
+        if (i === 0 && provenanceChangeNote(r)) cell.push(provenanceChangeNote(r));
+        if (i === 0 && repoDriftNote(r)) cell.push(repoDriftNote(r));
         lines.push(`| ${packageCell(r)} | ${row.script} | ` +
           `${r.malicious ? badge : BADGE[row.risk]} | ${cell.join('<br>') || '—'} |`);
       });
@@ -189,6 +205,20 @@ const PUBLISH_GATE_RULES = {
   },
 };
 
+// repo-drift is a note and must never be promoted: npm's publish flow rejects
+// a provenance repository mismatch, so a live drift is a rename, not an
+// attack signal.
+const PROVENANCE_RULES = {
+  'provenance-identity-changed': {
+    id: 'provenance-identity-changed',
+    text: 'The attested build identity (source repository, workflow path or ref) differs between the base and upgraded version, or provenance appeared/disappeared across the upgrade',
+  },
+  'provenance-repo-drift': {
+    id: 'provenance-repo-drift',
+    text: 'The provenance attestation names a different repository than the package declares, likely a repo rename or transfer since publish (informational, npm rejects a mismatch at publish time)',
+  },
+};
+
 // An open-time execution entry (from src/hooks.js): a .vscode/tasks.json task
 // with runOn: folderOpen, or a .claude/settings.json hook, code that runs
 // when the folder is opened, before any install step. warning by default,
@@ -241,7 +271,27 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
   }));
   const sarifResults = [];
   const gypSarifResults = [];
+  const provSarifResults = [];
   for (const r of results) {
+    if (r.provenanceChange) {
+      provSarifResults.push({
+        ruleId: 'provenance-identity-changed',
+        level: 'warning',
+        message: { text: `${r.name}@${r.version}: provenance identity changed vs ${r.provenanceChange.baseVersion}: ${changeText(r.provenanceChange.changes)}` },
+        locations: [{ physicalLocation: { artifactLocation: { uri }, region: { startLine: lineOf(r.name) } } }],
+        partialFingerprints: { provenance: `provenance-identity-changed:${r.name}@${r.version}` },
+      });
+    }
+    const drift = driftNote(r.trust);
+    if (drift) {
+      provSarifResults.push({
+        ruleId: 'provenance-repo-drift',
+        level: 'note',
+        message: { text: `${r.name}@${r.version}: ${drift}` },
+        locations: [{ physicalLocation: { artifactLocation: { uri }, region: { startLine: lineOf(r.name) } } }],
+        partialFingerprints: { provenance: `provenance-repo-drift:${r.name}@${r.version}` },
+      });
+    }
     const gypSignals = (r.rows || []).flatMap((row) => (row.signals || []).filter((s) => s.startsWith('gyp: ')));
     if (gypSignals.length > 0) {
       gypSarifResults.push({
@@ -271,7 +321,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
       partialFingerprints: { packageVersion: `${r.name}@${r.version}` },
     });
   }
-  sarifResults.push(...gypSarifResults, ...gapResults);
+  sarifResults.push(...gypSarifResults, ...provSarifResults, ...gapResults);
   return {
     version: '2.1.0',
     $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
@@ -281,7 +331,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
           name: 'npm-script-lens',
           informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
-          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, PUBLISH_OIDC_RULE, ...Object.values(PUBLISH_GATE_RULES), HOOK_RULE].map((rule) => ({
+          rules: [...Object.values(SARIF_RULES), GYP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, PUBLISH_OIDC_RULE, ...Object.values(PUBLISH_GATE_RULES), HOOK_RULE, ...Object.values(PROVENANCE_RULES)].map((rule) => ({
             id: rule.id,
             shortDescription: { text: rule.text },
           })),
@@ -372,8 +422,11 @@ function buildHtml(results, { note, title = 'npm-script-lens report' } = {}) {
       : r.rows.flatMap((row) => row.signals).map((s) => `<code>${htmlEsc(s)}</code>`).join(' ') || '—';
     const via = r.via && r.via.length ? `<div class="via">via ${htmlEsc(r.via.join(' → '))}</div>` : '';
     const trust = trustLabel(r.trust) ? `<div class="trust">${htmlEsc(trustLabel(r.trust))}</div>` : '';
+    const provChange = r.provenanceChange
+      ? `<div class="trust">⚠️ provenance identity changed vs ${htmlEsc(r.provenanceChange.baseVersion)}: ${htmlEsc(changeText(r.provenanceChange.changes))}</div>` : '';
+    const drift = driftNote(r.trust) ? `<div class="trust">ℹ️ ${htmlEsc(driftNote(r.trust))}</div>` : '';
     return `<tr>
-      <td><strong>${htmlEsc(r.name)}</strong>@${htmlEsc(r.version)}${via}${trust}</td>
+      <td><strong>${htmlEsc(r.name)}</strong>@${htmlEsc(r.version)}${via}${trust}${provChange}${drift}</td>
       <td><span class="badge" style="background:${color}">${label}</span></td>
       <td>${signals}</td></tr>`;
   }).join('\n');

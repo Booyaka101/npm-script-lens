@@ -62,7 +62,7 @@ test('diff --json emits the four buckets and exit 0 when identical', async () =>
   const out = await run(['diff', 'sharp@0.33.0', 'sharp@0.33.0', '--json']);
   assert.strictEqual(out.status, 0, out.stderr);
   const j = JSON.parse(out.stdout);
-  assert.deepStrictEqual(Object.keys(j).sort(), ['added', 'gyp', 'modified', 'removed', 'unchanged']);
+  assert.deepStrictEqual(Object.keys(j).sort(), ['added', 'gyp', 'modified', 'provenance', 'removed', 'unchanged']);
   assert.deepStrictEqual(j.added, []);
   assert.deepStrictEqual(j.modified, []);
   assert.ok(j.unchanged.includes('install'));

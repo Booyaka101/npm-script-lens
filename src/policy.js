@@ -6,6 +6,7 @@
 // policy file present, behavior is exactly the built-in default.
 const fs = require('node:fs');
 const path = require('node:path');
+const { provenancePresent, provenanceIdentity } = require('./trust');
 
 const RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, SAFE: 3, ERROR: 4 };
 const POLICY_FILE = 'script-lens.policy.json';
@@ -17,6 +18,9 @@ const DEFAULT_POLICY = {
     denyCapabilities: [], // never auto-approve if a signal of these kinds is present (exec|net|fs|env|obf|bin|gyp)
     minAgeDays: 0, // require the version to be at least this old (needs trust data)
     requireProvenance: false, // require sigstore provenance to auto-approve (needs trust data)
+    // name -> "owner/repo" or "owner/repo:workflow-path", pinning the attested
+    // build identity. Presence alone (requireProvenance) is not a trust signal
+    expectProvenance: {},
   },
   // name -> { allow, reason, expires? }, an explicit human decision that
   // overrides the heuristic until it expires
@@ -74,10 +78,37 @@ function evaluate(r, policy, packageRisk, now) {
     if (age === null || age === undefined) return { allow: false, reason: `age unknown; policy requires ≥ ${ap.minAgeDays}d (run with trust enabled)` };
     if (age < ap.minAgeDays) return { allow: false, reason: `only ${age}d old; policy requires ≥ ${ap.minAgeDays}d` };
   }
-  if (ap.requireProvenance && !(r.trust && r.trust.provenance)) {
+  if (ap.requireProvenance && !provenancePresent(r.trust)) {
     return { allow: false, reason: 'policy requires sigstore provenance' };
   }
+  const expected = (ap.expectProvenance || {})[r.name];
+  if (expected) {
+    const mismatch = expectationMismatch(expected, r.trust);
+    if (mismatch) return { allow: false, reason: mismatch };
+  }
   return { allow: true, reason: 'meets policy' };
+}
+
+// A policy expectation against the attested identity: the denial reason, or
+// null on match. Fails closed, since an expectation the tool cannot confirm
+// (no trust data, no provenance, unresolved identity) is not a match.
+function expectationMismatch(expected, trust) {
+  const colon = expected.indexOf(':');
+  const expRepo = colon > 0 ? expected.slice(0, colon) : expected;
+  const expWorkflow = colon > 0 ? expected.slice(colon + 1) : null;
+  if (!trust) return `policy expects provenance from ${expected}, but trust data is unavailable (run with trust enabled)`;
+  if (!provenancePresent(trust)) return `policy expects provenance from ${expected}, but this version has no attestation`;
+  const id = provenanceIdentity(trust);
+  if (!id) return `policy expects provenance from ${expected}, but the attested identity could not be resolved`;
+  // the attested repository is host/owner/repo; the expectation is owner/repo
+  const actualRepo = id.repository.split('/').slice(-2).join('/');
+  if (actualRepo.toLowerCase() !== expRepo.toLowerCase().split('/').slice(-2).join('/')) {
+    return `provenance identity mismatch: policy expects ${expected}, attestation names ${id.repository}${id.workflow ? ` ${id.workflow}` : ''}`;
+  }
+  if (expWorkflow && id.workflow !== expWorkflow) {
+    return `provenance identity mismatch: policy expects workflow ${expWorkflow}, attestation names ${id.workflow || '(unknown workflow)'} in ${id.repository}`;
+  }
+  return null;
 }
 
 module.exports = { loadPolicy, evaluate, capabilities, POLICY_FILE, DEFAULT_POLICY };
