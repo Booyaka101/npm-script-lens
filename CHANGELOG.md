@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.11.1 (2026-08-15)
+
+Metadata only. No behaviour change, no new code.
+
+The package ranked #1 on npm for `allowScripts` and nowhere in the top ten for
+`npm provenance`, `approve-scripts`, `postinstall audit` or
+`install script security`, which is most of how people actually phrase the
+problem. The description and keywords now cover provenance, attestation,
+sigstore, slsa, approve-scripts and the pnpm/yarn/bun allowlist names.
+
+The npm/rfcs#897 link points at `/issues/897` rather than `/pull/897`. It is
+an issue, and the old URL only worked by redirect.
+
 ## 1.11.0 (2026-08-15)
 
 **Provenance is an identity, not a checkbox.** Until now this tool reduced an
