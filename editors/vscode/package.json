@@ -1,8 +1,8 @@
 {
   "name": "npm-script-lens",
   "displayName": "npm-script-lens",
-  "description": "See what install scripts actually do — inline risk in package.json for npm/pnpm/yarn/bun allowlists, plus npm 12 migration checks.",
-  "version": "1.8.0",
+  "description": "See what install scripts actually do before you approve them: inline risk in package.json for npm/pnpm/yarn/bun allowlists, provenance identity, and npm 12 migration checks.",
+  "version": "1.8.1",
   "publisher": "booyaka101",
   "license": "MIT",
   "engines": {
@@ -22,7 +22,12 @@
     "security",
     "supply-chain",
     "allowScripts",
+    "approve-scripts",
     "postinstall",
+    "install scripts",
+    "provenance",
+    "attestation",
+    "sigstore",
     "npm 12",
     "migration",
     "allowlist",

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.1
+
+Listing metadata only. No functional change.
+
+The extension shells out to the CLI, so users already had the CLI's provenance
+identity work from 1.11.0 without updating anything here. The Marketplace
+listing just never said so, and neither the description nor the keywords
+mentioned provenance, attestation or approve-scripts, which is how people
+search for this.
+
 ## 1.8.0
 
 **Diagnostics on the open-time surface.** The 2026-08-04 keyv worm persisted
