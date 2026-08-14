@@ -1,5 +1,104 @@
 # Changelog
 
+## 1.11.0 (2026-08-15)
+
+**Provenance is an identity, not a checkbox.** Until now this tool reduced an
+npm attestation to one boolean and rendered it `provenance ✓`. That check mark
+earned nothing: the malicious `keyv@6.0.0` of 2026-08-04 carried a valid
+attestation naming GitHub Actions as its trusted publisher, and Snyk's
+teardown states the boundary precisely: *"Provenance can faithfully attest a
+build whose source or workflow context has already been compromised."* This
+release resolves what the attestation actually claims, the source repository,
+workflow path, ref, commit and builder, and treats that identity as the thing
+worth checking.
+
+Honesty first, and it is worth being blunt: **this would not have caught
+ChainDrop, and it would not have caught TanStack either.** ChainDrop published
+through each project's own repository and its own release workflow, so the
+attested identity matched the trusted one exactly. TanStack, three months
+earlier (2026-05-11, 84 malicious versions across 42 `@tanstack/*` packages,
+the first documented worm to ship validly-attested malicious packages), is
+worse for us: a `pull_request_target` workflow that does not publish anything
+(`bundle-size.yml`) poisoned a shared pnpm cache, `release.yml` on main
+restored it, and the payload then read the OIDC token out of the runner's
+memory and posted directly to the registry, bypassing the workflow's own
+publish step. The
+[postmortem](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem)
+records the outcome for anyone checking identity: *"The token's attested
+identity still matched `TanStack/router release.yml@refs/heads/main`."*
+
+So neither provenance presence nor provenance identity stops this class of
+attack. The defence in this tool that sits out such an event is `--cooldown`
+(1.6.0), which declines to install versions younger than the window in which
+worms get caught, and that window is short: TanStack's malicious versions were
+spotted publicly within 20 to 26 minutes. Note also what 1.10.0's DANGEROUS
+gate does **not** do here: it flags a publish path reachable from
+`pull_request_target`, and TanStack's publish path was not reachable from one.
+The link was a shared cache scope, not the trigger graph. That gap is real and
+recorded, not papered over.
+
+What identity resolution DOES catch is narrower: an attested repository that
+disagrees with the package's declared repository, and a build identity that
+moves between the version you trust and the version you are installing (a
+release suddenly built by `hotfix.yml` from a branch instead of `release.yml`
+from a tag).
+
+- **`trust.provenance` is now an identity object** `{ present, repository,
+  workflow, ref, commit, builder }`, read from the registry's attestation
+  endpoint (the SLSA v1 predicate inside the DSSE envelope) and cached in the
+  same 24h trust cache. Every surface that shows trust shows it: the audit
+  report and `--json`, `review`, `audit --html`, the trust one-liner now reads
+  `provenance ✓ github.com/jaredwray/keyv .github/workflows/release.yml@refs/heads/main 4a91c0e`,
+  or `provenance ✓ (identity unavailable)` when the registry's answer is not a
+  shape this build resolves. A `provenanceOk` boolean keeps
+  `requireProvenance` and every existing consumer working. We read claims the
+  registry serves over TLS, the same trust boundary as the tarball itself; no
+  signatures are verified.
+- **`PROVENANCE IDENTITY CHANGED`**: `diff <old> <new>` now compares the
+  attested identity between versions and exits 1 (the same gate as an added
+  or modified install script) when the repository, workflow path or ref moved,
+  or provenance appeared or disappeared. `audit --diff`/`--since` reports the
+  same fact per upgraded package, next to the capabilities-gained note,
+  without changing the exit code. An identity that cannot be resolved on
+  either side is never compared: enrichment failure must not manufacture a
+  finding.
+- **`autoApprove.expectProvenance`** in the policy file pins the identity:
+  `{"keyv": "jaredwray/keyv"}` or
+  `{"keyv": "jaredwray/keyv:.github/workflows/release.yml"}`. A package whose
+  attestation does not match its expectation (or cannot be resolved) is never
+  auto-approved, with the reason naming both the expected and the actual
+  identity. Packages without an expectation are unaffected. `requireProvenance`
+  keeps its old meaning, and presence alone is still not a trust signal.
+- **Repo drift is an INFO note, deliberately not a detection**: when the
+  attested repository names a different owner/repo than the packument declares
+  (monorepo subpaths ignored), the report says so with both values, e.g.
+  `provenance repo drift: package declares github.com/acme/widget, attestation
+  names github.com/acme-labs/widget, likely a repo rename or transfer`. npm
+  requires the declared repository to match at publish time and re-checks it
+  when provenance is viewed, so a live mismatch is almost always a later
+  rename or transfer. It never changes an exit code, never rises above note
+  severity, and never blocks auto-approval on its own.
+- **SARIF** gains `provenance-identity-changed` (warning) and
+  `provenance-repo-drift` (note, never warning). **doctor** reports whether
+  the registry's attestation endpoint answered.
+- **Prior art, named in the README rather than talked around**: npmjs.com's
+  package page already shows the build environment, source commit and build
+  file; `npm audit signatures` checks signatures and attestations; and
+  `cosign verify-blob-attestation --certificate-identity-regexp=...` already
+  pins an expected repository and workflow **cryptographically**, which this
+  release does not do. If you need cryptographic assurance for one package,
+  use cosign. What those do not do is work at tree scale, across an upgrade,
+  from checked-in policy.
+- Every failure path is silent enrichment failure, exactly the
+  osvMalicious/fetchTrust contract: a 404 is `{ present: false }`, a bundle
+  with only the npm publish attestation or a malformed payload degrades to
+  presence with no identity and behaves exactly as 1.10.0, and `--offline` /
+  `--no-trust` issue zero attestation requests.
+- Tests 350 to 366. Two pre-existing assertions were updated for the mandated
+  schema change (`trust.provenance` object in a deepStrictEqual, and `diff
+  --json` gaining a `provenance` key); every other pre-existing test passes
+  unchanged.
+
 ## 1.10.0 (2026-08-14)
 
 **The ChainDrop lesson: who can publish today, not just who can publish after
