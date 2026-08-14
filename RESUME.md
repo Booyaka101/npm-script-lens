@@ -1,8 +1,18 @@
 # ▶️ RESUME — npm-script-lens
 
-_Updated 2026-08-08 after shipping v1.8.0 (CLI + Action + VS Code extension) everywhere._
+_Updated 2026-08-14 after shipping v1.10.0._
 
-## v1.8.0 — RELEASED (2026-08-08): the open-time surface ⬅️ start here
+## v1.10.0 — RELEASED (2026-08-14): release gates in `publish` ⬅️ start here
+
+**What it adds**: `publish` now answers *who can trigger a publish today*, not just whether the path survives the January 2027 cliff. Two facts per resolved path, `trigger` (the `on:` events reaching the job, with file:line, inherited through reusable workflows and composite actions) and `gate` (DANGEROUS / REVIEWABLE / MANUAL / TAG / AUTO / UNKNOWN). Prompted by ChainDrop (2026-08-04, 2,234 poisoned versions across 444 names published through legitimate OIDC workflows after an account takeover) and by crates.io removing `pull_request_target` / `workflow_run` from Trusted Publishing. ⚠️ `--check` and the Action's `publish-check` now exit 1 on DANGEROUS; `--require-gate <none|tag|manual|environment>` raises the bar further.
+
+**Two bugs fixed, both found by using the tool on itself**: the report told you to paste an `allowScripts` block computed without reading yours (on a project with nothing scripted that meant pasting `{}` over a populated block, un-approving everything under npm v12), and `publish <typo-path>` resolved to the parent directory and printed a green all-clear. Also: reports reflow to terminal width instead of printing 300-column lines, and `src/publish.js` split 1,492 lines into four modules.
+
+**Shipped**: PR [#6](https://github.com/Booyaka101/npm-script-lens/pull/6) rebase-merged (4 commits survive) → **CI green on the exact main commit `82e9f4a`** (4 test legs + guards) BEFORE publishing → `v1.10.0` tagged, `v1` moved → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.10.0) → `npm publish` → npm `latest` = **1.10.0**. Clean-room install **from the live registry** re-verified: 17 packages, `--version` 1.10.0, `src/publish/` ships, exit codes 0/1/1/2 correct, and both bug fixes confirmed from the published package. 350 tests.
+
+**Still owner-gated**: the VS Code extension needs no release (it shells out to the CLI and never parses verdict strings, so extension users get 1.10.0 via `npx` automatically, same as 1.7.0/1.9.0). Action Marketplace listing auto-tracks the release. Promo post not written (owner-voiced only); the hook is "your release workflow can pass every scanner and still let one compromised account publish, with valid provenance".
+
+## v1.8.0 — RELEASED (2026-08-08): the open-time surface
 
 **CLI/Action**: new `hooks` command scanning `.vscode/tasks.json` folderOpen tasks + `.claude/settings.json` hooks (the 2026-08-04 keyv worm's persistence layer — Wiz: "Persistence is attempted via Claude Code hooks and VS Code `tasks.json`"), `--deps` tarball scan (shipped auto-run entries HIGH regardless of command), SARIF rule `hook-auto-run`, opt-in `hooks-check` Action input. 293/293 tests. Shipped `9b993ef` → CI green all 4 legs + Guards BEFORE publishing → `v1.8.0` tag + `v1` moved → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.8.0) → npm `latest` = **1.8.0** (clean-room registry re-verified) → **Action Marketplace auto-tracked to v1.8.0** (verified live; no sudo step needed — the listing follows releases once listed). Full detail in PROGRESS.md → v1.8.0.
 

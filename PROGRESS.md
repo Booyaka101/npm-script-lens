@@ -2,7 +2,13 @@
 
 > ▶️ **Read [`RESUME.md`](RESUME.md) first.**
 
-## v1.10.0 — `publish` release gates: the ChainDrop lesson (2026-08-14, all tested; 315 → 337) — **BUILT, NOT YET COMMITTED/PUSHED/PUBLISHED**
+## v1.10.0 — `publish` release gates: the ChainDrop lesson (2026-08-14, all tested; 315 → 350) — **RELEASED**
+
+**SHIPPED 2026-08-14 (owner-directed "commit this and open the PR", then "merge it and cut the release").** Branch `release/1.10.0` → PR [#6](https://github.com/Booyaka101/npm-script-lens/pull/6) → **rebase-merged** so all four commits survive on main (`1545d5c` feature, `99c1955` manifest re-baseline, `dc62525` report fix, `82e9f4a` changelog) → **CI green on the exact merged commit `82e9f4a`** (4 test legs + guards) verified through the commit's check-runs API BEFORE publishing, per the 1.0.0 lesson → annotated tag `v1.10.0`, `v1` force-moved from `231b10b` to `82e9f4a` → [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.10.0) → `npm publish` (32 files, 138.4 kB) → npm `latest` = **1.10.0**. **Clean-room install from the LIVE REGISTRY re-verified** (not a local tarball): 17 packages, `--version` 1.10.0, `src/publish/` present, exit codes 0 / 1 / 1 / 2 for gate-auto, `--require-gate environment`, dangerous and a nonexistent path, and both bug fixes confirmed from the published package. The `lens` CI job passed on the PR first try, the first release where it did, because the manifest was re-baselined ahead of time.
+
+**One item was NOT completed**: the temp clean-room dir `/d/tmp/lens-1100-registry` could not be deleted, the workspace guard blocks `rm` under `D:\tmp`. It is inert (a `node_modules` plus two fixture copies) and can be removed by hand.
+
+**Two bugs the tool found in itself during this release**, both fixed and shipped: the `allowScripts` suggestion (below) and the `publish <typo-path>` false all-clear. Both came from actually running the product, not from the test suite, which is the pattern worth keeping: the Action auditing its own PR has now caught a real bug in two consecutive releases.
 
 **Phase 0 re-verified live (2026-08-14)**: docs.zizmor.sh/audits (41 audits, none covers environment protection/required reviewers, none npm-publish-specific; `dangerous-triggers` does flag pull_request_target + workflow_run generically) · socket.dev crates blog (both trigger removals + the "Both triggers have been involved in past CI security incidents…" quote, crates.io dev update 2026-01-21) · docs.pypi.org/trusted-publishers/security-model ("Dedicated environments allow for additional protections like required reviewers, which can be used to require manual approval for a workflow **using the environment**." — note the live doc ends "using the environment", the contract quotes it verbatim in full) · harness.io ChainDrop teardown (2,234 versions / 444 names, 2026-08-04, OIDC-published-with-valid-provenance + both mitigation quotes). Zero paid resources; no LESSONS.md contradiction.
 
