@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# Collapsed in pull requests and excluded from the language bar. Dependabot
+# opens these weekly and the churn is machine-written, not reviewable by eye.
+package-lock.json linguist-generated=true

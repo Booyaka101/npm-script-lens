@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest something npm-script-lens should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reads lockfiles and fetches package metadata and tarballs from the registry. It never runs an install script, which is the whole point.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the solution. What got in your way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What are you doing instead today?
+    validations:
+      required: false
