@@ -17,7 +17,7 @@ local ok, err = pcall(function()
     { name = "evil", version = "1.0.0", malicious = true, advisories = { "MAL-1" }, rows = {} },
   }
   local diags = m.build_diagnostics(lines, results)
-  assert(#diags == 1, "only sharp anchored (chalk clean; evil not in manifest) — got " .. #diags)
+  assert(#diags == 1, "only sharp anchored (chalk clean; evil not in manifest), got " .. #diags)
   assert(diags[1].lnum == 2, "sharp diagnostic on line 2")
   assert(diags[1].severity == vim.diagnostic.severity.WARN, "HIGH → WARN")
   assert(diags[1].message:find("node%-gyp"), "message carries the signals")

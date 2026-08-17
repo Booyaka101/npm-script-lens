@@ -1,5 +1,5 @@
 'use strict';
-// Pure logic for the VS Code extension — no `vscode` import, so it unit-tests
+// Pure logic for the VS Code extension, with no `vscode` import, so it unit-tests
 // under plain node. Turns `npm-script-lens audit --json` output into editor
 // diagnostics anchored to dependency lines in package.json (where every manager
 // declares its deps) and to allowlist entries in pnpm's workspace file.
@@ -7,7 +7,7 @@
 //
 // The organising idea: an install script is only a *problem* while it is
 // undecided. Once a decision is recorded in the package manager's allowlist the
-// finding is settled and must stop nagging — otherwise the squiggle outlives the
+// finding is settled and must stop nagging. Otherwise the squiggle outlives the
 // exact action the tool asked for, and the Problems panel becomes something you
 // learn to scroll past. So a diagnostic here is a function of behavioral risk
 // AND the recorded decision, never risk alone.
@@ -71,7 +71,7 @@ function parseAllowBuilds(yamlText) {
 }
 
 // Collapse all four managers' allowlists into one lookup. Keys are whatever
-// that manager keys by — `name@version` for npm, bare `name` for the rest — and
+// that manager keys by (`name@version` for npm, bare `name` for the rest), and
 // decisionFor() tries both. A package.json that does not parse (mid-edit, or
 // genuinely broken) yields no decisions, which degrades to "nothing is decided
 // yet" rather than to "everything is approved".
@@ -86,14 +86,14 @@ function readDecisions(pkgText, yamlText = '') {
   let pkg = null;
   try { pkg = JSON.parse(pkgText); } catch { /* no decisions readable */ }
   if (pkg && typeof pkg === 'object') {
-    // npm: allowScripts { "pkg@1.2.3": true } — may also be keyed by bare name
+    // npm: allowScripts { "pkg@1.2.3": true }, may also be keyed by bare name
     for (const [key, v] of Object.entries(pkg.allowScripts || {})) record(key, Boolean(v));
     // yarn Berry: dependenciesMeta.<pkg>.built
     for (const [name, meta] of Object.entries(pkg.dependenciesMeta || {})) {
       if (meta && typeof meta === 'object' && 'built' in meta) record(name, Boolean(meta.built));
     }
     // bun: trustedDependencies is presence-only. It can record a trust but has
-    // no way to spell a denial, so an absent name stays undecided — never denied.
+    // no way to spell a denial, so an absent name stays undecided, never denied.
     if (Array.isArray(pkg.trustedDependencies)) {
       for (const n of pkg.trustedDependencies) if (typeof n === 'string') record(n, true);
     }
@@ -115,15 +115,15 @@ function decisionFor(decisions, name, version) {
 // --- what the editor should say -------------------------------------------
 // One state per package, from behavioral risk crossed with the recorded
 // decision:
-//   alarm    — known-malicious. An allowlist entry predates the advisory, so a
-//              recorded `true` must never suppress this one.
-//   decide   — has install-time behavior, nobody has ruled on it. The single
-//              actionable state, and the only one that warrants a warning.
-//   override — allowed, but the analysis would have held it back. A standing
-//              risk acceptance: worth a marker, not a nag.
-//   settled  — decided, and the decision agrees with the analysis.
-//   blocked  — denied. The script does not run; nothing to warn about.
-//   quiet    — no install-time behavior, or nothing worth saying.
+//   alarm:    known-malicious. An allowlist entry predates the advisory, so a
+//             recorded `true` must never suppress this one.
+//   decide:   has install-time behavior, nobody has ruled on it. The single
+//             actionable state, and the only one that warrants a warning.
+//   override: allowed, but the analysis would have held it back. A standing
+//             risk acceptance: worth a marker, not a nag.
+//   settled:  decided, and the decision agrees with the analysis.
+//   blocked:  denied. The script does not run; nothing to warn about.
+//   quiet:    no install-time behavior, or nothing worth saying.
 function stateFor(r, decisions, recommended) {
   const scripted = (r.rows && r.rows.length > 0) || r.malicious || r.error;
   if (!scripted) return 'quiet';
@@ -144,14 +144,14 @@ const STATE_SEVERITY = { alarm: 'error', override: 'information' };
 function severityFor(r, state) {
   if (STATE_SEVERITY[state]) return STATE_SEVERITY[state];
   // A package that could not be fetched or parsed carries no meaningful risk
-  // label — the CLI reports whatever it had, often SAFE. Running that through
+  // label. The CLI reports whatever it had, often SAFE. Running that through
   // the risk table would render "we do not know what this does" as a Hint, i.e.
   // a dotted underline nobody sees. It is an open question, so: information.
   if (r.error) return 'information';
   return RISK_SEVERITY[riskOf(r)] || 'information';
 }
 
-// gyp command strings carry gyp's own macro syntax — `<(VAR)`, `>(VAR)`,
+// gyp command strings carry gyp's own macro syntax: `<(VAR)`, `>(VAR)`,
 // `<!(cmd)`. Verbatim in a one-line diagnostic that reads as line noise, so
 // render it as the shell-ish `$VAR` a human already parses at a glance.
 const GYP_MACRO = /[<>]!?@?\(([^()]*)\)/g;
@@ -159,7 +159,7 @@ const readableSignal = (s) => s.replace(GYP_MACRO, '$$$1');
 
 // Flatten a result's signals into the shortest readable set. A package's rows
 // routinely repeat the same finding, and gyp in particular emits one signal per
-// action invocation — so the same command shows up several times with extra
+// action invocation, so the same command shows up several times with extra
 // trailing args. Keep the shortest spelling of each and drop the rest.
 function condenseSignals(rows) {
   const out = [];
@@ -185,8 +185,8 @@ function detailFor(r) {
 
 // The trailing clause is the part that answers "…and what do I do about it?".
 const STATE_NOTE = {
-  alarm: 'remove it — an allowlist entry cannot make this safe',
-  decide: 'undecided — run “npm-script-lens: Generate allowlist”',
+  alarm: 'remove it: an allowlist entry cannot make this safe',
+  decide: 'undecided, run “npm-script-lens: Generate allowlist”',
   override: 'allowed in your allowlist, overriding the recommendation',
 };
 
@@ -194,7 +194,7 @@ function messageFor(r, state = 'decide', via = null) {
   const risk = riskOf(r);
   const note = STATE_NOTE[state];
   const chain = via && via.length ? ` (via ${via.join(' → ')})` : '';
-  return `${RISK_ICON[risk] || ''} ${risk} — ${r.name}@${r.version}${chain}: ${detailFor(r)}${note ? ` · ${note}` : ''}`;
+  return `${RISK_ICON[risk] || ''} ${risk} ${r.name}@${r.version}${chain}: ${detailFor(r)}${note ? ` · ${note}` : ''}`;
 }
 
 const toDiagnostic = (r, state, line, via = null) => ({
@@ -210,7 +210,7 @@ const toDiagnostic = (r, state, line, via = null) => ({
 });
 
 // Where does this package's diagnostic go? Most install-time risk is NOT a line
-// in your package.json — it arrives transitively, and the audit reports it under
+// in your package.json. It arrives transitively, and the audit reports it under
 // a name you never typed. Anchoring only on the package's own line would drop
 // those silently, leaving the status bar counting packages with no squiggle
 // anywhere to find. So fall back to the direct dependency that pulled it in;
@@ -227,7 +227,7 @@ function anchorFor(text, r) {
 
 // Build diagnostics for one package.json document. Only alarm/decide/override
 // surface; settled, blocked and clean packages produce nothing. Messages carry
-// no `(npm-script-lens)` suffix — extension.js sets `diagnostic.source`, which
+// no `(npm-script-lens)` suffix, because extension.js sets `diagnostic.source`, which
 // VS Code already renders in the Problems panel and on hover.
 //
 // `decisions` defaults to whatever this very document records, so npm, yarn and
@@ -247,8 +247,8 @@ function diagnosticsForPackageJson(text, results, { recommended, decisions } = {
 }
 
 // pnpm keeps its allowlist outside package.json, so the entries worth a second
-// look — a standing override, or something OSV has flagged since it was
-// approved — are anchored on their own line in pnpm-workspace.yaml. Undecided
+// look (a standing override, or something OSV has flagged since it was
+// approved) are anchored on their own line in pnpm-workspace.yaml. Undecided
 // packages are not here by definition: they have no allowBuilds line to point at.
 function diagnosticsForWorkspaceYaml(yamlText, results, { recommended, decisions } = {}) {
   const known = decisions || readDecisions('{}', yamlText);
@@ -264,7 +264,7 @@ function diagnosticsForWorkspaceYaml(yamlText, results, { recommended, decisions
 }
 
 // One-line workspace summary for the status bar / notifications. The headline
-// number is how many packages still need a ruling — that is the only figure the
+// number is how many packages still need a ruling, the only figure the
 // reader can act on. Settled scripted deps stay visible as a reassuring count
 // rather than disappearing entirely.
 function summarize(results, { recommended, decisions } = {}) {
@@ -291,7 +291,7 @@ function summarize(results, { recommended, decisions } = {}) {
 // --- open-time hooks (CLI `hooks --json`, since CLI 1.8.0) ------------------
 // The fourth surface: code that runs when the folder is OPENED, not installed.
 // The CLI anchors every finding to a real file:line in .vscode/tasks.json or
-// .claude/settings.json — which are exactly the files you'd have open when you
+// .claude/settings.json, exactly the files you'd have open when you
 // want to know, so the diagnostic lands on the offending task/hook itself.
 
 const HOOK_FILES = ['.vscode/tasks.json', '.claude/settings.json'];
@@ -321,13 +321,13 @@ function hookMessage(f) {
       : `${f.event} ${f.kind} hook (not shell command execution)`;
   const target = f.command || f.target || '';
   const signals = (f.signals || []).map(readableSignal).slice(0, 4).join(' · ');
-  return `${RISK_ICON[f.risk] || ''} ${f.risk} — ${what}: ${target}`
+  return `${RISK_ICON[f.risk] || ''} ${f.risk} ${what}: ${target}`
     + `${signals ? ` · ${signals}` : ''}${f.fromDep ? ` · shipped in ${f.fromDep}` : ''}`;
 }
 
 // Diagnostics for one open hooks-surface document. HIGH is the actionable
 // state (warning, same bar as an undecided risky install script); everything
-// tiered lower — agent-triggered hooks, non-command hook types — is
+// tiered lower (agent-triggered hooks, non-command hook types) is
 // information. A file the CLI reported `partial` gets one line-1 note: a
 // surface file that will not parse is itself worth a look (warning when the
 // raw bytes still mention folderOpen or an auto event).
@@ -349,7 +349,7 @@ function diagnosticsForHooksFile(relFile, findings, partials = []) {
       line: 0,
       severity: p.rawHit ? 'warning' : 'information',
       risk: 'PARTIAL',
-      message: `⚠️ npm-script-lens could not fully read this file — ${p.note}`,
+      message: `⚠️ npm-script-lens could not fully read this file: ${p.note}`,
     });
   }
   return out;

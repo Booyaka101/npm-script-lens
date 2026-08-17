@@ -36,7 +36,7 @@ const pubRes = await fetch(`https://marketplace.visualstudio.com/publishers/${pu
 if (!pubRes.ok) {
   fail(
     `publisher "${publisher}" does not resolve (HTTP ${pubRes.status})`,
-    `create it at https://marketplace.visualstudio.com/manage — the id must match package.json exactly`,
+    `create it at https://marketplace.visualstudio.com/manage. The id must match package.json exactly`,
   );
 }
 console.log(`preflight: publisher "${publisher}" exists`);
@@ -56,8 +56,8 @@ const query = await fetch('https://marketplace.visualstudio.com/_apis/public/gal
 const found = (await query.json())?.results?.[0]?.extensions ?? [];
 
 if (found.length === 0) {
-  console.log(`preflight: ${publisher}.${name} is not in the gallery yet — this will be a first publish`);
+  console.log(`preflight: ${publisher}.${name} is not in the gallery yet, this will be a first publish`);
 } else {
   console.log(`preflight: gallery has ${publisher}.${name} v${found[0].versions?.[0]?.version}`);
 }
-console.log(`preflight: about to publish v${version} — OK`);
+console.log(`preflight: about to publish v${version}, OK`);

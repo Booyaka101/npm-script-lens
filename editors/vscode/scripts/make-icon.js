@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// Dependency-free icon generator (zlib only): renders a 128×128 PNG — a white
+// Dependency-free icon generator (zlib only): renders a 128×128 PNG, a white
 // magnifying lens on a red rounded square, matching the Action's search/red
 // branding. Rendered at 3× and box-downsampled for anti-aliasing.
 const fs = require('node:fs');

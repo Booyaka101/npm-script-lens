@@ -2,8 +2,8 @@
 
 **npm-script-lens: Generate allowlist (write)** splits every package with an install script into two buckets:
 
-- **auto-approved** — behavioral analysis found it harmless (SAFE/LOW). Written straight into your allowlist.
-- **`_review`** — spawns processes, reaches the network, is known-malicious, or couldn't be fetched. Held back for a human.
+- **auto-approved**: behavioral analysis found it harmless (SAFE/LOW). Written straight into your allowlist.
+- **`_review`**: spawns processes, reaches the network, is known-malicious, or couldn't be fetched. Held back for a human.
 
 It writes your package manager's **native** format, auto-detected from the lockfile:
 
