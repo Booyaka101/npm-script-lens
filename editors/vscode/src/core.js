@@ -1,4 +1,5 @@
 'use strict';
+const nodePath = require('node:path');
 // Pure logic for the VS Code extension, with no `vscode` import, so it unit-tests
 // under plain node. Turns `npm-script-lens audit --json` output into editor
 // diagnostics anchored to dependency lines in package.json (where every manager
@@ -364,14 +365,27 @@ function parseAudit(stdout) {
   if (i < 0) return null;
   try {
     const j = JSON.parse(stdout.slice(i));
-    if (!Array.isArray(j.results)) return null;
-    return { results: j.results, recommended: j.allowScripts || {} };
+    // A CLI given a directory holding no lockfile answers { projects: [...] }.
+    // One of them is still unambiguous; several cannot paint one file.
+    const one = Array.isArray(j.projects) ? (j.projects.length === 1 ? j.projects[0] : null) : j;
+    if (!one || !Array.isArray(one.results)) return null;
+    return { results: one.results, recommended: one.allowScripts || {} };
   } catch { return null; }
 }
+
+const TRACKED_FILES = new Set(['package.json', 'pnpm-workspace.yaml']);
+
+// The project an allowlist file belongs to is its own directory, never the
+// workspace root. In a monorepo those differ, and auditing the root reports a
+// different project's lockfile and reads a different project's allowlist.
+// Returns null for anything that is not an allowlist file, so callers can fall
+// back to the workspace.
+const projectDirOf = (fsPath) => (TRACKED_FILES.has(nodePath.basename(String(fsPath))) ? nodePath.dirname(String(fsPath)) : null);
 
 module.exports = {
   findDepLine, findYamlKeyLine, diagnosticsForPackageJson, diagnosticsForWorkspaceYaml,
   summarize, parseAudit, readDecisions, decisionFor, parseAllowBuilds, stateFor,
   riskOf, messageFor, condenseSignals, readableSignal, RISK_SEVERITY, RISK_ICON,
   isHookFile, parseHooks, hookMessage, diagnosticsForHooksFile, HOOK_FILES,
+  projectDirOf, TRACKED_FILES,
 };

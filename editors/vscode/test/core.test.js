@@ -4,8 +4,9 @@ const assert = require('node:assert');
 const {
   findDepLine, findYamlKeyLine, diagnosticsForPackageJson, diagnosticsForWorkspaceYaml,
   summarize, parseAudit, readDecisions, decisionFor, parseAllowBuilds, stateFor,
-  condenseSignals, readableSignal, messageFor,
+  condenseSignals, readableSignal, messageFor, projectDirOf,
 } = require('../src/core');
+const nodePath = require('node:path');
 
 const PKG = `{
   "name": "app",
@@ -77,6 +78,26 @@ test('readDecisions understands all four managers', () => {
   const pnpm = readDecisions('{}', 'packages:\n  - a\nallowBuilds:\n  sharp: true\n  "@s/x": false\n');
   assert.strictEqual(decisionFor(pnpm, 'sharp', '0.33.5'), true);
   assert.strictEqual(decisionFor(pnpm, '@s/x', '1.0.0'), false);
+});
+
+test('an allowlist file resolves to its own directory, not the workspace root', () => {
+  assert.strictEqual(projectDirOf(nodePath.join('repo', 'apps', 'web', 'package.json')), nodePath.join('repo', 'apps', 'web'));
+  assert.strictEqual(projectDirOf(nodePath.join('repo', 'pnpm-workspace.yaml')), 'repo');
+  assert.strictEqual(projectDirOf(nodePath.join('repo', 'src', 'index.ts')), null, 'not an allowlist file, caller falls back');
+});
+
+test('two package.json files in one workspace are different projects', () => {
+  const a = projectDirOf(nodePath.join('repo', 'apps', 'web', 'package.json'));
+  const b = projectDirOf(nodePath.join('repo', 'apps', 'api', 'package.json'));
+  assert.notStrictEqual(a, b, 'grouping these together is what audited the wrong lockfile');
+});
+
+test('parseAudit reads a single discovered project, and refuses several', () => {
+  const one = JSON.stringify({ projects: [{ project: '.', results: [{ name: 'a', version: '1' }], allowScripts: { 'a@1': false } }] });
+  assert.deepStrictEqual(parseAudit(one).results, [{ name: 'a', version: '1' }]);
+  assert.deepStrictEqual(parseAudit(one).recommended, { 'a@1': false });
+  const many = JSON.stringify({ projects: [{ project: 'a', results: [] }, { project: 'b', results: [] }] });
+  assert.strictEqual(parseAudit(many), null, 'several projects cannot paint one file');
 });
 
 test('a denial wins over a trust recorded in another manager', () => {
