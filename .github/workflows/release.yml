@@ -1,13 +1,25 @@
 name: Release
 
-# Publishes npm-script-lens to npm with provenance when a v* tag is pushed.
+# Publishes npm-script-lens to npm when a v* tag is pushed, authenticating by
+# OIDC (trusted publishing) rather than a long-lived token. Provenance is
+# generated automatically on that path, which is the point: bypass-2FA tokens
+# lose direct publish around January 2027, and a token in CI is the credential
+# an account takeover reuses.
 #
-# id-token: write is what makes --provenance work. npm rejects the flag without
-# it, and the permission is never granted by default.
+# id-token: write is the whole mechanism. Without it there is no OIDC token to
+# exchange, and the permission is never granted by default.
 #
-# Needs an NPM_TOKEN secret (automation token). Without one the build and tests
-# still run as release validation and the publish step skips cleanly, so a tag
-# push never red-Xs just because CI cannot do the interactive 2FA.
+# Deliberately no NODE_AUTH_TOKEN. A token alongside the id-token grant makes
+# the path ambiguous, npm prefers the token and silently skips the OIDC
+# exchange, and `npm-script-lens publish` grades that UNKNOWN rather than
+# TRUSTED. This repo ships that detector; it should pass it.
+#
+# The npmjs.com side must name this file: Booyaka101 / npm-script-lens /
+# release.yml. Renaming this file breaks publishing until that entry matches.
+#
+# setup-node is pinned to v7 on purpose. Up to v6 it answers registry-url: by
+# writing a dummy _authToken into .npmrc, which makes npm skip the OIDC
+# exchange entirely. The npm trusted-publishers docs still show v6.
 on:
   push:
     tags: ['v*']
@@ -28,23 +40,29 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-          cache: npm
+
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0. Node 22
+      # still bundles npm 10, so the runner's default is below the floor.
+      - name: Meet the trusted-publishing version floor
+        run: |
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          node --version
+          npm --version
+
+      # No cache: restoring a dependency cache into the job that publishes is
+      # how the TanStack compromise moved, a workflow that never published
+      # poisoning a shared cache the release job then restored.
       - run: npm ci
       - run: npm test
 
-      - name: Publish to npm with provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "No NPM_TOKEN configured. Build and tests passed; publish by hand." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           VERSION=$(node -p "require('./package.json').version")
           if npm view "npm-script-lens@$VERSION" version >/dev/null 2>&1; then
             echo "npm-script-lens@$VERSION is already on the registry, nothing to do." >> "$GITHUB_STEP_SUMMARY"
           else
-            npm publish --provenance --access public
+            npm publish --access public
             echo "Published npm-script-lens@$VERSION with provenance." >> "$GITHUB_STEP_SUMMARY"
           fi
