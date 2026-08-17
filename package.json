@@ -1,6 +1,6 @@
 {
   "name": "npm-script-lens",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "description": "See what an install script actually does before you approve it: behavioral analysis, binding.gyp inspection and resolved provenance identity for npm 12 allowScripts, pnpm allowBuilds, yarn and bun",
   "license": "MIT",
   "author": "cbosch101 <cbosch101@gmail.com>",

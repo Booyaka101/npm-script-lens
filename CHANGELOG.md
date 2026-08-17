@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.13.1 (2026-08-17)
+
+**The first release published by the release workflow rather than by hand, and
+the first carrying a provenance attestation.** No functional change: the code is
+identical to 1.13.0.
+
+Every release from 1.0.0 to 1.13.0 was published from a maintainer's machine, so
+none of them carry an attestation. `release.yml` has authenticated by OIDC since
+the 1.12.0 cycle, but npmjs.com did not yet trust it, so the publish step kept
+taking its "already on the registry" branch and the real path was never
+exercised. The Trusted Publisher entry now exists
+(`Booyaka101/npm-script-lens`, `release.yml`), and this release is the proof
+that the path works end to end.
+
+What that buys you: `npm view npm-script-lens dist.attestations` resolves from
+here on, the tarball can be traced to the workflow run and commit that built it,
+and no long-lived npm token exists in CI to be stolen. Verify with
+`npm audit signatures`.
+
 ## 1.13.0 (2026-08-17)
 
 **`--path` finds your projects instead of demanding you point at one.** It only
