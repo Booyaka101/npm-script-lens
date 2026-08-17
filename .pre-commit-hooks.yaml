@@ -1,7 +1,7 @@
 # pre-commit framework integration (https://pre-commit.com). Add to a repo's
 # .pre-commit-config.yaml:
 #   - repo: https://github.com/Booyaka101/npm-script-lens
-#     rev: v1.0.0
+#     rev: v1.11.2
 #     hooks:
 #       - id: npm-script-lens
 - id: npm-script-lens

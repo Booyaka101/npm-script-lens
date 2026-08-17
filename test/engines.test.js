@@ -1,10 +1,7 @@
 'use strict';
-// The floor this package advertises has to be the floor it can actually run on.
-// commander 15 shipped ESM-only with engines >=22.12 while package.json still
-// said >=20, so `npx npm-script-lens` died with ERR_REQUIRE_ESM on every Node
-// below 20.19 instead of anything a user could act on. npm and npx only warn on
-// an engines mismatch, and CI's floating `node: 20` always resolves to a patch
-// new enough to hide it, so nothing else catches this.
+// The floor this package advertises has to be the one it can actually run on.
+// commander 15 was ESM-only with engines >=22.12 under a declared >=20, which
+// no other check here could see.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
