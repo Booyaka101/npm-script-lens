@@ -874,7 +874,7 @@ npm test        # analyzer/lockfile/reporter units, offline mock-registry tests,
                 # dry-run against a local mock GitHub API
 ```
 
-Node.js ≥ 20 (uses global `fetch`). No paid APIs: the public npm registry, plus the free OSV.dev and npm downloads APIs for trust enrichment (`--no-trust` or `--offline` to skip).
+Node.js ≥ 18 (uses global `fetch`). No paid APIs: the public npm registry, plus the free OSV.dev and npm downloads APIs for trust enrichment (`--no-trust` or `--offline` to skip).
 
 ## Staying current with npm
 

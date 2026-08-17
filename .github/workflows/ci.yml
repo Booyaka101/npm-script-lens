@@ -19,9 +19,12 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        # 20.18, not a floating 20: require(esm) landed in 20.19, and a Node
-        # that has it loads ESM-only dependencies the declared floor cannot.
-        node: ['20.18', 22]
+        # 18 is the declared floor and has no require(esm), so it is also the
+        # leg that catches an ESM-only dependency slipping back in. 20.18 keeps
+        # a pre-20.19 mid-range. Node 20.0.x is deliberately absent: the CLI
+        # runs there, but its test runner does not fire root before() hooks, so
+        # the suite cannot start its own mock registry.
+        node: ['18', '20.18', 22]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

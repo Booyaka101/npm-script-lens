@@ -1,6 +1,6 @@
 {
   "name": "npm-script-lens",
-  "version": "1.11.2",
+  "version": "1.12.0",
   "description": "See what an install script actually does before you approve it: behavioral analysis, binding.gyp inspection and resolved provenance identity for npm 12 allowScripts, pnpm allowBuilds, yarn and bun",
   "license": "MIT",
   "author": "cbosch101 <cbosch101@gmail.com>",
@@ -15,7 +15,7 @@
   },
   "main": "src/cli.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "files": [
     "src",
@@ -59,7 +59,7 @@
     "acorn": "^8.12.0",
     "acorn-loose": "^8.4.0",
     "acorn-walk": "^8.3.0",
-    "commander": "^14.0.3",
+    "commander": "^13.1.0",
     "tar-stream": "^3.1.7"
   }
 }
