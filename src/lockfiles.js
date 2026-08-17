@@ -238,27 +238,87 @@ function parseBunLock(text) {
   return { deps: [...deps.values()], edges };
 }
 
-// Accepts a directory (searched in LOCKFILE_NAMES order) or a lockfile path;
-// returns { path, type: 'npm' | 'yarn' | 'pnpm' | 'bun' }.
+const typeOf = (p) => {
+  const base = path.basename(p);
+  return base === 'yarn.lock' ? 'yarn'
+    : base.startsWith('pnpm-lock') ? 'pnpm'
+      : base === 'bun.lock' ? 'bun' : 'npm';
+};
+
+const lockfileIn = (dir) => LOCKFILE_NAMES.map((n) => path.join(dir, n)).find((f) => fs.existsSync(f));
+
+// A tree of checkouts is deeper than one project but never unbounded, and the
+// exclusions match hooks' walker so both commands agree on what a project is.
+const MAX_DISCOVERY_DEPTH = 6;
+
+// Every project at or below `root`, nearest first. node_modules is skipped
+// because a dependency's own lockfile is not a project the caller owns.
+function discoverLockfiles(root, maxDepth = MAX_DISCOVERY_DEPTH) {
+  const out = [];
+  const visit = (dir, depth) => {
+    const found = lockfileIn(dir);
+    if (found) out.push(found);
+    if (depth >= maxDepth) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!e.isDirectory() || e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      visit(path.join(dir, e.name), depth + 1);
+    }
+  };
+  visit(path.resolve(root), 0);
+  return out;
+}
+
+// Nearest lockfile at or above `dir`, so the tool works from a subdirectory the
+// way npm itself does. Stops at the filesystem root.
+function nearestLockfileUp(dir) {
+  let cur = path.resolve(dir);
+  for (;;) {
+    const found = lockfileIn(cur);
+    if (found) return found;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+const notFound = (p) => {
+  const hint = fs.existsSync(path.join(p, 'bun.lockb'))
+    ? ', found binary bun.lockb; run `bun install --save-text-lockfile` to get a readable bun.lock'
+    : '';
+  return new Error(`lockfile not found in ${p} or any directory above it (looked for ${LOCKFILE_NAMES.join(', ')})${hint}`);
+};
+
+// Accepts a directory (searched in LOCKFILE_NAMES order, then upward) or a
+// lockfile path; returns { path, type: 'npm' | 'yarn' | 'pnpm' | 'bun' }.
 function resolveLockfile(input) {
   let p = path.resolve(input);
   if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
-    const found = LOCKFILE_NAMES.map((n) => path.join(p, n)).find((f) => fs.existsSync(f));
-    if (!found) {
-      const hint = fs.existsSync(path.join(p, 'bun.lockb'))
-        ? ', found binary bun.lockb; run `bun install --save-text-lockfile` to get a readable bun.lock'
-        : '';
-      throw new Error(`lockfile not found in ${p} (looked for ${LOCKFILE_NAMES.join(', ')})${hint}`);
-    }
+    const found = lockfileIn(p) || nearestLockfileUp(p);
+    if (!found) throw notFound(p);
     p = found;
   } else if (!fs.existsSync(p)) {
     throw new Error(`lockfile not found: ${p} (run npm install --package-lock-only)`);
   }
-  const base = path.basename(p);
-  const type = base === 'yarn.lock' ? 'yarn'
-    : base.startsWith('pnpm-lock') ? 'pnpm'
-      : base === 'bun.lock' ? 'bun' : 'npm';
-  return { path: p, type };
+  return { path: p, type: typeOf(p) };
+}
+
+// Every project `input` refers to: the path itself, else the nearest one above
+// it, else every project underneath. Returns them with how they were found, so
+// callers can say "audited 4 projects under ." rather than pretending the user
+// asked for each one.
+function findProjects(input) {
+  const p = path.resolve(input);
+  if (fs.existsSync(p) && !fs.statSync(p).isDirectory()) return { how: 'exact', lockfiles: [{ path: p, type: typeOf(p) }] };
+  if (!fs.existsSync(p)) throw new Error(`lockfile not found: ${p} (run npm install --package-lock-only)`);
+  const here = lockfileIn(p);
+  if (here) return { how: 'exact', lockfiles: [{ path: here, type: typeOf(here) }] };
+  const up = nearestLockfileUp(p);
+  if (up) return { how: 'up', lockfiles: [{ path: up, type: typeOf(up) }] };
+  const down = discoverLockfiles(p);
+  if (down.length) return { how: 'down', lockfiles: down.map((f) => ({ path: f, type: typeOf(f) })) };
+  throw notFound(p);
 }
 
 function loadDeps(input) {
@@ -637,4 +697,5 @@ function collectNonRegistryDeps(lock, type) {
 module.exports = {
   LOCKFILE_NAMES, collectNpmDeps, parseYarnLock, parsePnpmLock, parseBunLock,
   resolveLockfile, loadDeps, viaChain, classifySourceSpec, collectNonRegistryDeps,
+  findProjects, discoverLockfiles, nearestLockfileUp,
 };

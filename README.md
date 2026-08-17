@@ -29,8 +29,11 @@ Results are cached on disk keyed `name@version` + tool version (published tarbal
 ```bash
 npx npm-script-lens audit --path ./my-project --fail-on-high
 # --path PATH   project dir or lockfile: package-lock.json, npm-shrinkwrap.json,
-#               yarn.lock, pnpm-lock.yaml, bun.lock (default: .)
-# --json        machine-readable output
+#               yarn.lock, pnpm-lock.yaml, bun.lock (default: .). A directory
+#               with no lockfile searches upward like npm does; a directory of
+#               checkouts audits every project underneath
+# --json        machine-readable output ({results, allowScripts}, or {projects}
+#               when more than one project was found)
 # --out FILE    write report to a file
 # --sarif FILE  also write SARIF 2.1.0 for GitHub code scanning
 # --html FILE   also write a self-contained, shareable HTML report
