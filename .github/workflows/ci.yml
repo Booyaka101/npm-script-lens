@@ -19,7 +19,12 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [20, 22]
+        # 20.18 rather than a floating 20: require(esm) was backported in
+        # 20.19, so a floating major always resolved to a Node that could
+        # require an ESM-only dependency and hid that commander 15 broke every
+        # user below it. The declared floor is still >=20; test/engines.test.js
+        # checks the dependency tree against it on whatever Node runs.
+        node: ['20.18', 22]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
