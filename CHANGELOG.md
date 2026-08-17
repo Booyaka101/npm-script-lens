@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.11.2 (2026-08-17)
+
+**Fixes a crash on every Node below 20.19.** A Dependabot bump in 1.4.0 took
+commander from 12 straight to 15, and commander 15 is ESM-only with
+`engines.node >= 22.12`, while this package still advertised `>= 20`. A
+CommonJS `require('commander')` can only load an ESM module where
+`require(esm)` is unflagged, which is Node 20.19 and 22.12 upward, so
+`npx npm-script-lens audit` died with `ERR_REQUIRE_ESM` and a stack trace into
+`node_modules` for anyone on Node 18, or on 20.0 through 20.18. npm and npx
+only warn on an engines mismatch, so nothing stopped those installs either.
+
+commander is pinned back to 14.0.3, which is CommonJS and declares the same
+`>= 20` floor this package does. No commander 15 API was in use, so there is no
+behaviour change. `engines.node` stays `>= 20`, verified by running the CLI on
+20.0.0 rather than by assertion.
+
+Two guards so it cannot recur quietly. `test/engines.test.js` reads the
+lockfile and fails if any runtime dependency declares a Node floor above ours,
+or is ESM-only while the entrypoint is CommonJS, naming the package and the
+reason either way. And CI's Node matrix moves off a floating `20` to `20.18`: a
+floating major always resolved to a patch that has `require(esm)` and so loaded
+the broken dependency happily, which is why 368 passing tests said nothing
+about a CLI that could not start.
+
+The CLI now also checks `process.versions.node` against `engines.node` before
+it requires anything, so an unsupported Node gets told which Node it needs
+instead of a module resolution stack.
+
 ## 1.11.1 (2026-08-15)
 
 Metadata only. No behaviour change, no new code.
