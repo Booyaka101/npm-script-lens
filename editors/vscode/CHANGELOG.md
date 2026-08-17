@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.9.0
+
+**The audit follows the `package.json` you opened, not the workspace root.** In
+any repo with more than one project, opening `apps/web/package.json` audited the
+lockfile at the workspace root instead, so the diagnostics painted on your file
+described a different project's dependencies. It also read the *root's*
+`allowScripts` when deciding what was already approved, so decisions recorded in
+`apps/web/package.json` were invisible and decisions made at the root silenced
+warnings that were never about it.
+
+The cause was one line: the extension resolved a document to
+`vscode.workspace.getWorkspaceFolder(...)` and ran the CLI there, never passing
+`--path`. It now resolves to the opened file's own directory and pins the audit
+to it. Sibling projects are no longer repainted from each other's results, and
+after a write command every open project refreshes rather than only the first
+one found.
+
+A workspaces member with no lockfile of its own still resolves correctly: the
+CLI searches upward from the file's directory and lands on the root that
+actually governs it.
+
+The palette commands follow the same rule. *Generate allowlist*, *Sync
+allowlist*, *Review*, *Doctor*, *Sources* and *Publish readiness* act on the
+project whose `package.json` is in front of you. *Open-time hooks* still scans
+the whole workspace, because it walks a tree by design.
+
+Needs CLI 1.13.0 or newer for the upward search. On an older CLI the extension
+still pins `--path`, so it audits the right directory or reports plainly that
+there is no lockfile there.
+
 ## 1.8.2
 
 House style, no behaviour change. Diagnostic messages, the status-bar tooltip

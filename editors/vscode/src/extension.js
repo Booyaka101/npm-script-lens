@@ -40,6 +40,13 @@ function workspaceDir(doc) {
   return first ? first.uri.fsPath : undefined;
 }
 
+// A tracked file's own directory, falling back to the workspace. When that
+// directory holds no lockfile of its own (an npm workspaces member), the CLI
+// searches upward from it and lands on the root that really governs it.
+function projectDir(doc) {
+  return (doc && core.projectDirOf(doc.uri.fsPath)) || workspaceDir(doc);
+}
+
 // Run a CLI subcommand in the workspace, resolving { code, stdout, stderr }.
 function runCli(args, cwd) {
   const { command } = config();
@@ -53,7 +60,9 @@ function runCli(args, cwd) {
 // Audit the workspace and return { results, recommended } (or null on failure).
 async function audit(cwd) {
   const { trust } = config();
-  const args = ['audit', '--json'];
+  // --path pins the audit to this project. Without it the CLI defaults to the
+  // cwd, and a cwd holding no lockfile now audits every project underneath.
+  const args = ['audit', '--json', '--path', JSON.stringify(cwd)];
   if (!trust) args.push('--no-trust');
   const { stdout, stderr, code } = await runCli(args, cwd);
   const parsed = core.parseAudit(stdout);
@@ -75,15 +84,17 @@ const readIfPresent = (cwd, file) => {
 // other one asserting something that is no longer true. One audit, all views.
 async function refresh(doc) {
   if (!doc || !TRACKED.has(path.basename(doc.uri.fsPath))) return;
-  const cwd = workspaceDir(doc);
+  const cwd = projectDir(doc);
   if (!cwd) return;
   const parsed = await audit(cwd);
   if (!parsed) return;
   const { results, recommended } = parsed;
 
+  // Only the files of this project. Grouping by workspace root would repaint a
+  // sibling package's package.json from these results.
   const open = new Map([[doc.uri.toString(), doc]]);
   for (const d of vscode.workspace.textDocuments) {
-    if (TRACKED.has(path.basename(d.uri.fsPath)) && workspaceDir(d) === cwd) open.set(d.uri.toString(), d);
+    if (TRACKED.has(path.basename(d.uri.fsPath)) && projectDir(d) === cwd) open.set(d.uri.toString(), d);
   }
 
   // Prefer the live buffer over disk, so an unsaved allowlist edit is reflected
@@ -152,17 +163,23 @@ async function refreshHooks(doc) {
 
 // Re-audit after a command that writes an allowlist: the CLI edits the file on
 // disk, so onDidSaveTextDocument never fires and the diagnostics would still be
-// demanding a decision that was just made. One tracked document is enough,
-// refresh() repaints all of them.
+// demanding a decision that was just made. One document per project, since
+// refresh() repaints the rest of that project but knows nothing of its siblings.
 const refreshOpen = () => {
-  const doc = vscode.workspace.textDocuments.find((d) => TRACKED.has(path.basename(d.uri.fsPath)));
-  return doc ? refresh(doc).catch(() => {}) : Promise.resolve();
+  const byProject = new Map();
+  for (const d of vscode.workspace.textDocuments) {
+    if (TRACKED.has(path.basename(d.uri.fsPath))) byProject.set(projectDir(d), d);
+  }
+  return Promise.all([...byProject.values()].map((d) => refresh(d).catch(() => {})));
 };
 
-// A command that streams CLI output to the output channel.
-function cliCommand(title, argsFn, { writes = false } = {}) {
+// A command that streams CLI output to the output channel. Lockfile commands
+// run against the open package.json's own project; `hooks` walks a tree, so it
+// keeps the whole workspace.
+function cliCommand(title, argsFn, { writes = false, wholeWorkspace = false } = {}) {
   return async () => {
-    const cwd = workspaceDir(vscode.window.activeTextEditor && vscode.window.activeTextEditor.document);
+    const doc = vscode.window.activeTextEditor && vscode.window.activeTextEditor.document;
+    const cwd = wholeWorkspace ? workspaceDir(doc) : projectDir(doc);
     if (!cwd) { vscode.window.showWarningMessage('npm-script-lens: open a workspace folder first'); return; }
     channel.show(true);
     channel.appendLine(`\n$ ${config().command} ${argsFn().join(' ')}  (in ${cwd})`);
@@ -199,8 +216,8 @@ function activate(context) {
     vscode.commands.registerCommand('npmScriptLens.sync', cliCommand('sync allowlist', () => ['sync', '--write'], { writes: true })),
     vscode.commands.registerCommand('npmScriptLens.sources', cliCommand('sources', () => ['sources'])),
     vscode.commands.registerCommand('npmScriptLens.publish', cliCommand('publish readiness', () => ['publish'])),
-    vscode.commands.registerCommand('npmScriptLens.hooks', cliCommand('open-time hooks', () => ['hooks'])),
-    vscode.commands.registerCommand('npmScriptLens.hooksDeps', cliCommand('open-time hooks (dependency tarballs)', () => ['hooks', '--deps'])),
+    vscode.commands.registerCommand('npmScriptLens.hooks', cliCommand('open-time hooks', () => ['hooks'], { wholeWorkspace: true })),
+    vscode.commands.registerCommand('npmScriptLens.hooksDeps', cliCommand('open-time hooks (dependency tarballs)', () => ['hooks', '--deps'], { wholeWorkspace: true })),
   );
 
   // audit any package.json already open at activation
