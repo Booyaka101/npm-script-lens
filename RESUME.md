@@ -16,7 +16,9 @@ _Updated 2026-08-17 after shipping v1.11.2._
 
 **Note on the self-audit gate**: the version bump alone made `manifest --check` fail (`tool 1.11.1 → 1.11.2, detector changed, re-review`), which is the gate working as designed. Re-baselined in `6a10088`; only the version stamp moved, `packages` is still empty.
 
-**Still owner-gated**: the VS Code extension is at 1.8.2 in the repo but the Marketplace still shows 1.8.1. The change is cosmetic (em dash removal in diagnostics and the listing), so extension users are not blocked; the CLI fix reaches them through `npx` regardless. The `:9223` automation browser is not currently running, only `:9222`.
+**VS Code extension 1.8.2 PUBLISHED to the Marketplace (2026-08-17)**: cosmetic only (em dashes out of the diagnostics and the listing). Published the documented way, but note two corrections to the 1.7.0/1.8.0 recipe below. The `:9223` automation browser was not running, and bridging cookies was unnecessary: the PUT works from the ordinary `:9222` browser's own `marketplace.visualstudio.com/manage` tab. And a `GET` on that same gallery path answers `503 TF10216 Azure DevOps services are currently unavailable`, which is the route rejecting the verb, not an outage; the public `POST /_apis/public/gallery/extensionquery` returned 200 throughout. The PUT returned 200 `flags: validated, public` as before.
+
+**Do not read the PUT's 200 as published.** The manage row sits at `Verifying1.8.2` for roughly 10 minutes while Marketplace validation runs, and `extensionquery` keeps serving the previous version with an unchanged `lastUpdated` for that whole window. Confirmed live only when the manage row lost the `Verifying` prefix *and* the public query returned `["1.8.2","1.8.1","1.8.0"]` with `lastUpdated` 2026-08-17T06:36:06Z.
 
 **Also this session**: em dashes swept out of `editors/` and the two notes files, the last places carrying them after the 1.11.0 pass covered `src/`. The empty-cell markers in `reporter.js` and the READMEs stay, being table typography.
 
