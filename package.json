@@ -23,7 +23,8 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "demo:report": "node src/cli.js audit --path fixtures/demo --out fixtures/demo-report.md"
   },
   "keywords": [
     "npm",
