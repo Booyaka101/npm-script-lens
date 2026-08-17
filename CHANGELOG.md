@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.12.0 (2026-08-17)
+
+**Node 18 is supported.** `engines.node` has said `>= 20` since 0.2.0, so
+`npx npm-script-lens` refused to run on Firebase Studio, Google IDX, and any
+other environment still on Node 18. Nothing in the code actually needed Node
+20: the newest thing it uses is global `fetch`, which is Node 18. The floor was
+a guess that nobody had tested, and it cost real users the tool.
+
+The floor is now `>= 18`, and commander moves from 14 to 13.1.0, the last line
+that declares `engines.node >= 18` while staying CommonJS. No commander 14 API
+was in use.
+
+This is verified rather than asserted. The full suite runs green on Node
+18.19.1, and CI gains an `18` leg on both Linux and Windows, so the floor is
+exercised on every push instead of being a number in a manifest. 368 tests on
+18.19.1, 20.18.3 and 22.18.0.
+
+One honest gap: Node **20.0.x** is inside the supported range and the CLI runs
+there, but the suite cannot. That release's test runner does not fire
+top-level `before()` hooks, so the tests never start their own mock registry
+and fall through to the real one. Node 18.19 and 20.18 both fire them. CI
+therefore pins `18`, `20.18` and `22`, and 20.0.x is covered by the declared
+range rather than by a test leg.
+
 ## 1.11.2 (2026-08-17)
 
 **Fixes a crash on every Node below 20.19.** A Dependabot bump in 1.4.0 took

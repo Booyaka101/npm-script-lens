@@ -1,8 +1,18 @@
 # ▶️ RESUME: npm-script-lens
 
-_Updated 2026-08-17 after shipping v1.11.2._
+_Updated 2026-08-17 after shipping v1.12.0._
 
-## v1.11.2 RELEASED (2026-08-17): the CLI runs on the Node it advertises again ⬅️ start here
+## v1.12.0 (2026-08-17): Node 18 supported ⬅️ start here
+
+**Why**: the same reporter who hit the commander crash was still blocked after 1.11.2, because they are on Firebase Studio (Node 18.19.1) and `engines.node` has said `>= 20` since 0.2.0. 1.11.2 turned a stack trace into a clear refusal, which is better but still a refusal. Nothing in the code needs Node 20; the newest API used is global `fetch`, which is Node 18. The floor was a guess nobody had tested.
+
+**What changed**: `engines.node` `>= 18`, commander 14 to 13.1.0 (last line that is CommonJS *and* declares `>= 18`), README requirement line, and CI gains an `18` leg on both OSes. Version is 1.12.0, not a patch, because widening the supported runtime is a capability.
+
+**Two diagnostic lessons worth keeping.** First, `npx` served the reporter a cached 1.11.1 out of `~/.npm/_npx/<hash>/` long after 1.11.2 was live; the tell was the stack pointing at `cli.js:8`, which is where `require('commander')` sits in 1.11.1 and not in 1.11.2 (line 29, below the floor guard). Pin the version or delete `~/.npm/_npx` when a fix "does not work".
+
+Second, **the suite failing on an old Node was twice misdiagnosed as `node:test` runner limits.** On Node 18 the 127 failures were entirely the 1.11.2 floor guard: every e2e test spawns the CLI, and the CLI exited 1 under `>= 20`. Lowering the floor took Node 18 to 368/368. On Node 20.0.0 the 123 failures are a genuinely different cause: that runner does not fire top-level `before()` hooks, so tests never start their own mock registry and fall through to the real one (`HTTP 404 for registry.npmjs.org/mock-gyp/1.0.0`). 20.0.x is therefore in the supported range with the CLI verified working, but has no CI leg. Read the actual assertion before blaming the runner.
+
+## v1.11.2 RELEASED (2026-08-17): the CLI runs on the Node it advertises again
 
 **What it fixes: the CLI could not start on Node 18, or on Node 20.0 through 20.18, in every version from 1.4.0 to 1.11.1.** Dependabot PR #2 took commander from 12 straight to 15, and commander 15 is ESM-only with `engines.node >= 22.12` while this package advertises `>= 20`. `require('commander')` from a CommonJS entrypoint only resolves an ESM module where `require(esm)` is unflagged, so users got `ERR_REQUIRE_ESM` and a stack trace into `node_modules`. npm and npx only warn on an engines mismatch, so nothing stopped the install. Reported against `npx npm-script-lens audit` on Node 18.19.1.
 
