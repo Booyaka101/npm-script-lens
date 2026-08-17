@@ -11,6 +11,12 @@ CommonJS `require('commander')` can only load an ESM module where
 `node_modules` for anyone on Node 18, or on 20.0 through 20.18. npm and npx
 only warn on an engines mismatch, so nothing stopped those installs either.
 
+Every surface was affected, not just the CLI. `src/action.js` requires
+`src/cli.js`, so the GitHub Action failed the same way on a runner pinned below
+20.19, and the pre-commit hook, the VS Code extension and the Neovim plugin all
+reach the CLI too. Action users pick the fix up when the `v1` tag moves; the
+editor integrations shell out through `npx`, so they get it on the next run.
+
 commander is pinned back to 14.0.3, which is CommonJS and declares the same
 `>= 20` floor this package does. No commander 15 API was in use, so there is no
 behaviour change. `engines.node` stays `>= 20`, verified by running the CLI on

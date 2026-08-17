@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 'use strict';
 
-// engines.node is advisory: npm and npx only warn when it is unmet, so without
-// this an under-floor user gets a stack trace from whichever dependency breaks
-// first rather than being told which Node to run. Must stay above the requires.
+// Above the requires on purpose: npm and npx only warn on an engines mismatch,
+// so this is the last chance to name the Node we need before a dependency fails
+// to load and buries it in a resolution stack.
 {
-  const floor = require('../package.json').engines.node.match(/\d[\d.]*/)[0];
+  const engines = require('../package.json').engines || {};
+  const floor = (String(engines.node || '').match(/\d[\d.]*/) || [])[0];
   const parts = (v) => v.split('.').map(Number);
-  const [have, need] = [parts(process.versions.node), parts(floor)];
+  const [have, need] = [parts(process.versions.node), parts(floor || '0')];
   let below = false;
   for (let i = 0; i < need.length; i++) {
     const diff = (have[i] || 0) - need[i];
     if (diff !== 0) { below = diff < 0; break; }
   }
-  if (below) {
+  if (floor && below) {
     process.stderr.write(`npm-script-lens requires Node >=${floor}, but this is Node ${process.versions.node}.\n`
       + `Upgrade Node (nvm install ${parts(floor)[0]}) and run it again.\n`);
     process.exit(1);
