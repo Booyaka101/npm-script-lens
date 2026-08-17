@@ -1,8 +1,22 @@
 # ▶️ RESUME: npm-script-lens
 
-_Updated 2026-08-17 after shipping v1.12.0._
+_Updated 2026-08-17 after shipping v1.12.0, with v1.13.0 on a branch._
 
-## v1.12.0 (2026-08-17): Node 18 supported ⬅️ start here
+## v1.13.0 (2026-08-17, branch `chore/stop-tests-writing-fixtures`): `--path` finds projects ⬅️ start here
+
+**Why**: `resolveLockfile` only ever looked in the exact directory it was handed, so `audit` from a subdirectory of a normal project, or from a directory of checkouts, was a hard `lockfile not found`. The tool already disagreed with itself here: `hooks` has walked subdirectories since 1.8.0 and its help says "monorepo subdirectories included".
+
+**Resolution order**, first hit wins: the path itself, then upward like npm, then every project underneath. Steps 1 and 2 apply to every lockfile command via `resolveLockfile`; step 3 is `audit` only, via the new `findProjects` in `src/lockfiles.js`.
+
+**Deliberate boundaries.** `node_modules` and dot directories are never descended into, depth caps at 6, and a directory *inside* a project resolves upward to that project rather than splitting it into children (a workspace subdir belongs to its root). `--sarif`, `--html`, `--diff` and `--since` describe one project, so multi-project mode names the flag and refuses rather than merging artifacts it would have to guess at.
+
+**No single-project regression**: output is byte-identical to 1.12.0, verified by diffing a fresh run against the committed sample. `--json` keeps `{results, allowScripts}` for one project, gains `{projects: [...]}` for several.
+
+**Also on this branch**: the e2e suite no longer rewrites `fixtures/demo-report.md` from the live registry, which is what dirtied the tree on every test run for months and let the committed sample go stale at the pre-1.11.0 provenance format. `npm run demo:report` refreshes it deliberately.
+
+Tests 368 to 381 (9 resolver units in `test/discovery.test.js`, 4 e2e).
+
+## v1.12.0 (2026-08-17): Node 18 supported
 
 **Why**: the same reporter who hit the commander crash was still blocked after 1.11.2, because they are on Firebase Studio (Node 18.19.1) and `engines.node` has said `>= 20` since 0.2.0. 1.11.2 turned a stack trace into a clear refusal, which is better but still a refusal. Nothing in the code needs Node 20; the newest API used is global `fetch`, which is Node 18. The floor was a guess nobody had tested.
 

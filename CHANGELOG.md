@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.13.0 (2026-08-17)
+
+**`--path` finds your projects instead of demanding you point at one.** It only
+ever looked in the exact directory it was given, so running `npm-script-lens
+audit` anywhere but the precise folder holding the lockfile was a hard stop:
+
+```
+error: lockfile not found in /home/idx/bulk
+```
+
+That was true from a subdirectory of a perfectly normal project, and true in a
+directory of checkouts where every project underneath was auditable. The tool
+was already inconsistent with itself about this: `hooks` has always walked
+subdirectories, and its own help says "monorepo subdirectories included".
+
+Resolution now goes in three steps, stopping at the first that hits.
+
+1. The path itself, a lockfile or a directory holding one. Unchanged.
+2. **Upward**, the way npm resolves a project, so running it from
+   `repo/src/components` audits `repo`.
+3. **Downward**, so a directory of checkouts audits every project underneath.
+
+Steps 1 and 2 apply to every command that reads a lockfile. Step 3 applies to
+`audit`, which reports each project in turn and fails if any of them fails.
+`node_modules` and dot directories are never descended into, and a directory
+inside a project resolves upward to that project rather than splitting it into
+its children.
+
+Single-project output is byte-identical to 1.12.0, verified by diffing against
+the committed sample. `--json` keeps `{results, allowScripts}` for one project
+and gains `{projects: [{project, results, allowScripts}]}` for several.
+`--sarif`, `--html`, `--diff` and `--since` describe exactly one project, so
+rather than merge them across several they now name the flag and ask you to
+point `--path` at one.
+
+Also: the e2e suite no longer rewrites `fixtures/demo-report.md` from the live
+registry on every run. That dirtied the working tree constantly and the churn
+was reverted so routinely that the committed sample went stale, still showing
+the pre-1.11.0 provenance format the README links to as real output. Refresh it
+deliberately with `npm run demo:report`.
+
 ## 1.12.0 (2026-08-17)
 
 **Node 18 is supported.** `engines.node` has said `>= 20` since 0.2.0, so

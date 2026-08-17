@@ -79,6 +79,51 @@ test('diff on a bad spec is a clean usage error, exit 2', async () => {
   assert.ok(out.stderr.includes('expected <package>@<version>'), out.stderr);
 });
 
+// A directory of checkouts, the shape that used to be a hard "lockfile not
+// found" even though every project under it was auditable.
+function bulkTree() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-bulk-'));
+  for (const rel of ['app1', 'app2/nested']) {
+    fs.mkdirSync(path.join(root, rel), { recursive: true });
+    fs.writeFileSync(path.join(root, rel, 'package-lock.json'),
+      '{"lockfileVersion":3,"packages":{"":{"name":"p","version":"1.0.0"}}}');
+  }
+  return root;
+}
+
+test('a directory of projects audits every one of them', async () => {
+  const out = await run(['audit', '--path', bulkTree(), '--no-trust']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.ok(out.stderr.includes('auditing 2 projects'), out.stderr);
+  assert.ok(out.stdout.includes('Audited **2** projects'), out.stdout);
+  assert.ok(out.stdout.includes('**Project `app1`**'), out.stdout);
+  assert.ok(out.stdout.includes('**Project `app2/nested`**'), out.stdout);
+});
+
+test('multi-project --json keys results by project', async () => {
+  const out = await run(['audit', '--path', bulkTree(), '--no-trust', '--json']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  const j = JSON.parse(out.stdout);
+  assert.deepStrictEqual(j.projects.map((p) => p.project), ['app1', 'app2/nested']);
+});
+
+test('single-project artifacts refuse to guess across projects', async () => {
+  const out = await run(['audit', '--path', bulkTree(), '--no-trust', '--sarif', 'x.sarif']);
+  assert.strictEqual(out.status, 2);
+  assert.ok(out.stderr.includes('--sarif describes a single project'), out.stderr);
+});
+
+test('audit run from a subdirectory finds the project above it', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-up-'));
+  fs.writeFileSync(path.join(root, 'package-lock.json'),
+    '{"lockfileVersion":3,"packages":{"":{"name":"p","version":"1.0.0"}}}');
+  const deep = path.join(root, 'src', 'components');
+  fs.mkdirSync(deep, { recursive: true });
+  const out = await run(['audit', '--path', deep, '--no-trust']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.ok(out.stderr.includes(path.join(root, 'package-lock.json')), out.stderr);
+});
+
 test('missing lockfile is a clean error, exit 2', async () => {
   const out = await run(['audit', '--path', 'does/not/exist']);
   assert.strictEqual(out.status, 2);

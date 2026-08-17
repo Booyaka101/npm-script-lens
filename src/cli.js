@@ -30,7 +30,7 @@ const { program } = require('commander');
 const { writeReport } = require('./format');
 const { fetchPackage, loadLocalPackage } = require('./registry');
 const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles } = require('./analyzer');
-const { loadDeps, resolveLockfile, viaChain } = require('./lockfiles');
+const { loadDeps, resolveLockfile, viaChain, findProjects } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel, resolveProvenance, identityChanges, driftNote } = require('./trust');
 const { buildReport, buildHtml, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport, BADGE } = require('./reporter');
@@ -263,25 +263,77 @@ function baseLockfileFromGit(target, ref) {
   return path.join(tmpDir, base);
 }
 
+// Artifacts and modes that describe exactly one project. Producing a merged
+// one across several would be a guess, so say which flag to drop instead.
+const SINGLE_PROJECT_ONLY = [['sarif', '--sarif'], ['html', '--html'], ['diff', '--diff'], ['since', '--since']];
+
 async function auditAction(opts) {
   if (opts.checkV12Gaps) return v12GapsAction(opts);
+  const found = findProjects(opts.path);
+  if (found.lockfiles.length === 1) return auditProject(found.lockfiles[0].path, opts);
+
+  const blocked = SINGLE_PROJECT_ONLY.filter(([k]) => opts[k] !== undefined && opts[k] !== false).map(([, flag]) => flag);
+  if (blocked.length) {
+    throw new Error(`${blocked.join(', ')} describes a single project, but ${found.lockfiles.length} were found under `
+      + `${path.resolve(opts.path)}. Point --path at one of them.`);
+  }
+  const base = path.resolve(opts.path);
+  const rel = (p) => path.relative(base, path.dirname(p)).replace(/\\/g, '/') || '.';
+  process.stderr.write(`no lockfile in ${base}, auditing ${found.lockfiles.length} projects found under it\n`);
+
+  const projects = [];
+  for (const { path: lockPath } of found.lockfiles) {
+    projects.push({ rel: rel(lockPath), results: await runAudit(lockPath, auditRunOpts(opts)) });
+  }
+  const output = opts.json
+    ? JSON.stringify({
+      projects: projects.map((p) => ({
+        project: p.rel,
+        results: p.results.map((r) => ({ ...r, risk: packageRisk(r) })),
+        allowScripts: buildAllowScripts(p.results).allowScripts,
+      })),
+    }, null, 2)
+    : `Audited **${projects.length}** projects under \`${base}\`.\n\n`
+      + projects.map((p) => `**Project \`${p.rel}\`**\n\n${buildReport(p.results)}`).join('\n\n---\n\n');
+  if (opts.out) fs.writeFileSync(opts.out, output);
+  else writeReport(output);
+
+  const bad = projects.reduce((n, p) => n + failCount(p.results), 0);
+  if (opts.failOnHigh && bad > 0) {
+    process.stderr.write(`FAIL: ${bad} package(s) with HIGH risk or known-malicious install scripts across ${projects.length} projects\n`);
+    process.exitCode = 1;
+  }
+  if (opts.cooldown !== undefined) {
+    const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
+    if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
+    for (const p of projects) {
+      const cd = evaluateCooldown(p.results, { hours, allow: opts.cooldownAllow || [] });
+      process.stderr.write(`${p.rel}: ${cooldownReport(cd)}\n`);
+      if (cd.blocked.length > 0) process.exitCode = 1;
+    }
+  }
+}
+
+const auditRunOpts = (opts, diffBase = null) => ({
+  log: (m) => process.stderr.write(`${m}\n`),
+  cache: opts.cache,
+  trust: opts.trust,
+  offline: opts.offline,
+  deep: opts.deep,
+  diffBase,
+  trustEvery: opts.cooldown !== undefined && opts.trust,
+});
+
+async function auditProject(target, opts) {
   let diffBase = opts.diff || null;
   let sinceDir = null;
   if (opts.since) {
     if (opts.diff) throw new Error('use either --diff or --since, not both');
-    diffBase = baseLockfileFromGit(opts.path, opts.since);
+    diffBase = baseLockfileFromGit(target, opts.since);
     sinceDir = path.dirname(diffBase);
   }
   try {
-    const results = await runAudit(opts.path, {
-      log: (m) => process.stderr.write(`${m}\n`),
-      cache: opts.cache,
-      trust: opts.trust,
-      offline: opts.offline,
-      deep: opts.deep,
-      diffBase,
-      trustEvery: opts.cooldown !== undefined && opts.trust,
-    });
+    const results = await runAudit(target, auditRunOpts(opts, diffBase));
     const note = opts.since
       ? `_Diff mode: only packages added or upgraded relative to git ref \`${opts.since}\` were audited._`
       : opts.diff
@@ -296,7 +348,7 @@ async function auditAction(opts) {
     if (opts.out) fs.writeFileSync(opts.out, output);
     else writeReport(output);
     if (opts.sarif) {
-      writeSarif(results, opts.path, opts.sarif);
+      writeSarif(results, target, opts.sarif);
       process.stderr.write(`SARIF written to ${opts.sarif}\n`);
     }
     if (opts.html) {
@@ -1228,13 +1280,13 @@ if (require.main === module) {
     .description('Audit npm lifecycle scripts for behavioral risks before approving them under npm v12 allowScripts')
     .version(require('../package.json').version);
   const common = (cmd) => cmd
-    .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock)', '.')
+    .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock). A directory with no lockfile searches upward, the way npm resolves a project', '.')
     .option('--no-cache', 'disable the on-disk result cache')
     .option('--no-trust', 'skip trust enrichment (OSV malware check, publish age, downloads, provenance)')
     .option('--deep', 'also analyze lockfile packages that install scripts require() by bare name')
     .option('--offline', 'analyze packages from node_modules instead of the registry (implies --no-trust)');
   common(program.command('audit'))
-    .description('audit every package in a lockfile and report install-script risks')
+    .description('audit every package in a lockfile and report install-script risks. A directory holding no lockfile, and none above it, audits every project found underneath')
     .option('--json', 'emit JSON instead of Markdown')
     .option('--out <file>', 'write report to a file instead of stdout')
     .option('--sarif <file>', 'also write SARIF 2.1.0 for GitHub code scanning')
@@ -1286,7 +1338,7 @@ if (require.main === module) {
     .action(initAction);
   program.command('sources')
     .description('report git and remote-URL dependencies against npm v12\'s allow-git/allow-remote defaults: ROOT vs TRANSITIVE per dep, the minimal correct .npmrc, and which transitive deps force allow-git=all. No scan, no network')
-    .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock)', '.')
+    .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock). A directory with no lockfile searches upward, the way npm resolves a project', '.')
     .option('--json', 'emit { git, remote, npmrc } JSON instead of text')
     .option('--write', 'merge the minimal correct allow-git/allow-remote into .npmrc, preserving every other key and comment (npm lockfiles only)')
     .option('--check', 'exit 1 when the committed .npmrc is insufficient, over-permissive, or holds an invalid value for these keys (for CI)')
