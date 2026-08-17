@@ -31,12 +31,14 @@ test('audit --fail-on-high exits 1 on the demo fixture', async () => {
   const out = await run(['audit', '--path', 'fixtures/demo', '--fail-on-high', '--out', tmp]);
   assert.strictEqual(out.status, 1, out.stderr);
   assert.ok(out.stderr.includes('FAIL: '), out.stderr);
+  // Asserts on --out, never on fixtures/demo-report.md. That file is rendered
+  // from the live registry, so a test that rewrote it dirtied the tree on every
+  // run; the churn got reverted so routinely that the sample went stale instead.
+  // Refresh it deliberately with `npm run demo:report`.
   const report = fs.readFileSync(tmp, 'utf8');
+  assert.ok(report.startsWith('# npm-script-lens report'), report.slice(0, 80));
   assert.ok(report.includes('`sharp@0.33.5`'));
-  assert.ok(JSON.parse(report.match(/```json\n([\s\S]*?)\n```/)[1]).allowScripts);
-  // keep the committed sample report in sync with what the tool really emits
-  const golden = path.join(ROOT, 'fixtures', 'demo-report.md');
-  if (fs.readFileSync(golden, 'utf8') !== report) fs.writeFileSync(golden, report);
+  assert.strictEqual(JSON.parse(report.match(/```json\n([\s\S]*?)\n```/)[1]).allowScripts['sharp@0.33.5'], false);
 });
 
 test('audit --json emits machine-readable output with per-package risk', async () => {
