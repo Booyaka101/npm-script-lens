@@ -69,7 +69,7 @@ const readIfPresent = (cwd, file) => {
 };
 
 // Re-audit the workspace that `doc` belongs to and repaint EVERY open allowlist
-// file in it — not just the one that was touched. The two files are one
+// file in it, not just the one that was touched. The two files are one
 // decision surface: denying a package in pnpm-workspace.yaml clears its warning
 // over in package.json, so refreshing only the saved document would leave the
 // other one asserting something that is no longer true. One audit, all views.
@@ -113,14 +113,14 @@ async function refresh(doc) {
   const sum = core.summarize(results, opts);
   status.text = `$(shield) ${sum.text}`;
   status.tooltip = sum.undecided
-    ? `npm-script-lens — ${sum.undecided} install script(s) awaiting a decision; click to re-audit`
-    : 'npm-script-lens — click to audit install scripts';
+    ? `npm-script-lens: ${sum.undecided} install script(s) awaiting a decision; click to re-audit`
+    : 'npm-script-lens: click to audit install scripts';
   status.show();
 }
 
 // Diagnostics on the open-time surfaces themselves. When a .vscode/tasks.json
 // or .claude/settings.json is opened or saved, run `hooks --json` (CLI 1.8.0)
-// and paint the findings on their real lines — every open hooks file in the
+// and paint the findings on their real lines. Every open hooks file in the
 // workspace repaints from the one scan, same discipline as refresh(). On a CLI
 // too old to know `hooks`, parseHooks returns null and nothing is painted.
 async function refreshHooks(doc) {
@@ -130,7 +130,7 @@ async function refreshHooks(doc) {
   const { stdout, stderr, code } = await runCli(['hooks', '--json'], cwd);
   const parsed = core.parseHooks(stdout);
   if (!parsed) {
-    channel.appendLine(`hooks scan failed (exit ${code}): ${stderr.trim() || stdout.trim() || 'no output'} — CLI >= 1.8.0 required`);
+    channel.appendLine(`hooks scan failed (exit ${code}): ${stderr.trim() || stdout.trim() || 'no output'}. CLI >= 1.8.0 required`);
     return;
   }
   const open = new Map([[doc.uri.toString(), doc]]);
@@ -152,7 +152,7 @@ async function refreshHooks(doc) {
 
 // Re-audit after a command that writes an allowlist: the CLI edits the file on
 // disk, so onDidSaveTextDocument never fires and the diagnostics would still be
-// demanding a decision that was just made. One tracked document is enough —
+// demanding a decision that was just made. One tracked document is enough,
 // refresh() repaints all of them.
 const refreshOpen = () => {
   const doc = vscode.workspace.textDocuments.find((d) => TRACKED.has(path.basename(d.uri.fsPath)));

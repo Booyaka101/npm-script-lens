@@ -62,7 +62,7 @@ function M.build_diagnostics(lines, results)
           col = 0,
           severity = SEVERITY[risk] or vim.diagnostic.severity.INFO,
           source = "npm-script-lens",
-          message = risk .. " — " .. r.name .. "@" .. r.version .. ": " .. detail,
+          message = risk .. " " .. r.name .. "@" .. r.version .. ": " .. detail,
         }
       end
     end

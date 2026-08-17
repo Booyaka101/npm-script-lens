@@ -5,7 +5,7 @@
 ## How you verified it
 
 <!--
-Be specific, and keep the claims separate — they carry different weight:
+Be specific, and keep the claims separate, since they carry different weight:
   - `node --test` passes
   - ran it against a real project
   - added a test case covering this

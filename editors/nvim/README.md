@@ -14,10 +14,10 @@ Or point your plugin manager at the `editors/nvim` subdirectory of the repo. Zer
 
 ## Commands
 
-- `:NpmScriptLensAudit` — audit the current `package.json` and refresh diagnostics
-- `:NpmScriptLensAllow` — `allow --write` (generate the allowlist), then re-audit
-- `:NpmScriptLensReview` — show pending approvals
-- `:NpmScriptLensDoctor` — npm-compatibility check
+- `:NpmScriptLensAudit`: audit the current `package.json` and refresh diagnostics
+- `:NpmScriptLensAllow`: `allow --write` (generate the allowlist), then re-audit
+- `:NpmScriptLensReview`: show pending approvals
+- `:NpmScriptLensDoctor`: npm-compatibility check
 
 ## Configuration
 

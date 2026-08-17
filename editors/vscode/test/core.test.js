@@ -81,7 +81,7 @@ test('readDecisions understands all four managers', () => {
 
 test('a denial wins over a trust recorded in another manager', () => {
   // a repo that has used two managers keeps two allowlists, and they can
-  // disagree — resolving to "allowed" would re-enable a deliberately blocked
+  // disagree. Resolving to "allowed" would re-enable a deliberately blocked
   // script, so the safe direction has to stick regardless of read order
   const bunLifts = readDecisions(JSON.stringify({ allowScripts: { sharp: false }, trustedDependencies: ['sharp'] }));
   assert.strictEqual(decisionFor(bunLifts, 'sharp', '0.33.5'), false);
@@ -89,7 +89,7 @@ test('a denial wins over a trust recorded in another manager', () => {
   const pnpmLifts = readDecisions(JSON.stringify({ allowScripts: { sharp: false } }), 'allowBuilds:\n  sharp: true\n');
   assert.strictEqual(decisionFor(pnpmLifts, 'sharp', '0.33.5'), false);
 
-  // and in the other order — pnpm denies what package.json trusted
+  // and in the other order: pnpm denies what package.json trusted
   const pnpmDenies = readDecisions(JSON.stringify({ trustedDependencies: ['sharp'] }), 'allowBuilds:\n  sharp: false\n');
   assert.strictEqual(decisionFor(pnpmDenies, 'sharp', '0.33.5'), false);
 });
@@ -121,11 +121,11 @@ test('stateFor crosses behavioral risk with the recorded decision', () => {
   assert.strictEqual(stateFor(safe, map({ 'noop-hooks@1.0.0': true }), RECOMMENDED), 'settled');
   assert.strictEqual(stateFor(safe, new Map(), RECOMMENDED), 'quiet', 'a clean script is not a question');
   assert.strictEqual(stateFor(RESULTS[2], new Map(), RECOMMENDED), 'quiet', 'no install script at all');
-  // an allowlist entry predates the advisory — it can never silence OSV
+  // an allowlist entry predates the advisory, so it can never silence OSV
   assert.strictEqual(stateFor(evil, map({ 'evilpkg@9.9.9': true }), RECOMMENDED), 'alarm');
 });
 
-test('an allowlisted package produces no warning — only an override marker', () => {
+test('an allowlisted package produces no warning, only an override marker', () => {
   const decided = withAllow({ 'sharp@0.33.5': true, 'esbuild@0.17.19': true });
   const diags = byName(diagnosticsForPackageJson(decided, RESULTS, { recommended: RECOMMENDED }));
   assert.strictEqual(diags.sharp.state, 'override');
@@ -134,7 +134,7 @@ test('an allowlisted package produces no warning — only an override marker', (
   assert.ok(diags.sharp.message.includes('node-gyp'), 'the evidence is still shown');
 });
 
-test('denying a package silences it entirely — the script never runs', () => {
+test('denying a package silences it entirely: the script never runs', () => {
   const denied = withAllow({ 'sharp@0.33.5': false, 'esbuild@0.17.19': false });
   assert.deepStrictEqual(diagnosticsForPackageJson(denied, RESULTS, { recommended: RECOMMENDED }), []);
 });
@@ -157,7 +157,7 @@ test('decisions default to the document itself when none are passed', () => {
   assert.deepStrictEqual(states, ['override', 'override']);
 });
 
-test('diagnostics carry no source suffix — extension.js sets diag.source', () => {
+test('diagnostics carry no source suffix, because extension.js sets diag.source', () => {
   for (const d of diagnosticsForPackageJson(PKG, RESULTS, { recommended: RECOMMENDED })) {
     assert.ok(!d.message.includes('(npm-script-lens)'), `${d.name} duplicates the diagnostic source`);
   }
@@ -182,7 +182,7 @@ test('a package that could not be analyzed still surfaces, at any risk label', (
   assert.ok(one('ERROR').message.includes('could not be analyzed: tarball 404'));
   // ...and the SAFE-drop rule must never swallow a fetch failure. "we could not
   // find out what this does" must not render as a Hint just because the risk
-  // field defaulted to SAFE — a Hint is a dotted underline nobody reads.
+  // field defaulted to SAFE. A Hint is a dotted underline nobody reads.
   assert.strictEqual(one('SAFE').severity, 'information',
     'an un-analyzable package is an open question, not a near-invisible hint');
 });
@@ -302,7 +302,7 @@ test('summarize goes quiet once every scripted dep is decided', () => {
   assert.strictEqual(sum.text, '🟢 3 scripted deps, none to review (2 overrides)');
 });
 
-test('summarize counts SAFE scripted deps — they never get a diagnostic', () => {
+test('summarize counts SAFE scripted deps, which never get a diagnostic', () => {
   const safeScripted = [
     { name: 'a', version: '1', risk: 'SAFE', rows: [{ signals: [] }] },
     { name: 'b', version: '1', risk: 'SAFE', rows: [{ signals: [] }] },
@@ -378,7 +378,7 @@ test('diagnosticsForHooksFile: HIGH is a warning on the 0-based line, only for i
 
 test('diagnosticsForHooksFile: a partial file gets one note, warning when rawHit', () => {
   const partials = [
-    { file: '.vscode/tasks.json', note: 'did not parse — raw text mentions "folderOpen"', rawHit: true },
+    { file: '.vscode/tasks.json', note: 'did not parse, raw text mentions "folderOpen"', rawHit: true },
     { file: '.claude/settings.json', note: 'did not parse as JSON/JSONC', rawHit: false },
   ];
   const vs = diagnosticsForHooksFile('.vscode/tasks.json', [], partials);
