@@ -1,8 +1,26 @@
 # ▶️ RESUME: npm-script-lens
 
-_Updated 2026-08-14 after shipping v1.10.0._
+_Updated 2026-08-17 after shipping v1.11.2._
 
-## v1.10.0 RELEASED (2026-08-14): release gates in `publish` ⬅️ start here
+## v1.11.2 RELEASED (2026-08-17): the CLI runs on the Node it advertises again ⬅️ start here
+
+**What it fixes: the CLI could not start on Node 18, or on Node 20.0 through 20.18, in every version from 1.4.0 to 1.11.1.** Dependabot PR #2 took commander from 12 straight to 15, and commander 15 is ESM-only with `engines.node >= 22.12` while this package advertises `>= 20`. `require('commander')` from a CommonJS entrypoint only resolves an ESM module where `require(esm)` is unflagged, so users got `ERR_REQUIRE_ESM` and a stack trace into `node_modules`. npm and npx only warn on an engines mismatch, so nothing stopped the install. Reported against `npx npm-script-lens audit` on Node 18.19.1.
+
+**Blast radius was every surface, not just npx.** `src/action.js` requires `src/cli.js`, so the GitHub Action failed identically on a runner pinned below 20.19; the pre-commit hook, the VS Code extension and the Neovim plugin all reach the CLI too.
+
+**Why CI missed it for seven releases**: the matrix used a floating `node: 20`, which setup-node resolves to the newest 20.x. That always carries `require(esm)`, so 368 passing tests said nothing about a CLI that could not start. The matrix now pins `20.18`, a Node without it.
+
+**Fix**: commander pinned back to 14.0.3 (CommonJS, same `>= 20` floor). No commander 15 API was in use. `engines.node` stays `>= 20`, verified by running the CLI on a downloaded Node 20.0.0 rather than by assertion. Three guards added: `test/engines.test.js` (fails when a runtime dep declares a Node floor above ours or is ESM-only under a CJS entrypoint, verified by reinstalling commander 15 and watching it go red), the pinned CI matrix, and a floor check in `cli.js` above the requires that prints which Node is needed. Also fixed the pre-commit example rev, stale at `v1.0.0`.
+
+**Shipped**: PRs [#13](https://github.com/Booyaka101/npm-script-lens/pull/13) (fix), [#14](https://github.com/Booyaka101/npm-script-lens/pull/14) and [#15](https://github.com/Booyaka101/npm-script-lens/pull/15) (house style) rebase-merged, CI green on the exact main commit `6a10088` BEFORE publishing, `v1.11.2` tagged, `v1` moved, [GitHub Release](https://github.com/Booyaka101/npm-script-lens/releases/tag/v1.11.2), `npm publish` as **booyaka**. npm `latest` = **1.11.2**. Clean-room install from the live registry re-verified, and the published tarball runs on Node 20.0.0 and 20.18.3, the versions that were broken. 368 tests.
+
+**Note on the self-audit gate**: the version bump alone made `manifest --check` fail (`tool 1.11.1 → 1.11.2, detector changed, re-review`), which is the gate working as designed. Re-baselined in `6a10088`; only the version stamp moved, `packages` is still empty.
+
+**Still owner-gated**: the VS Code extension is at 1.8.2 in the repo but the Marketplace still shows 1.8.1. The change is cosmetic (em dash removal in diagnostics and the listing), so extension users are not blocked; the CLI fix reaches them through `npx` regardless. The `:9223` automation browser is not currently running, only `:9222`.
+
+**Also this session**: em dashes swept out of `editors/` and the two notes files, the last places carrying them after the 1.11.0 pass covered `src/`. The empty-cell markers in `reporter.js` and the READMEs stay, being table typography.
+
+## v1.10.0 RELEASED (2026-08-14): release gates in `publish`
 
 **What it adds**: `publish` now answers *who can trigger a publish today*, not just whether the path survives the January 2027 cliff. Two facts per resolved path, `trigger` (the `on:` events reaching the job, with file:line, inherited through reusable workflows and composite actions) and `gate` (DANGEROUS / REVIEWABLE / MANUAL / TAG / AUTO / UNKNOWN). Prompted by ChainDrop (2026-08-04, 2,234 poisoned versions across 444 names published through legitimate OIDC workflows after an account takeover) and by crates.io removing `pull_request_target` / `workflow_run` from Trusted Publishing. ⚠️ `--check` and the Action's `publish-check` now exit 1 on DANGEROUS; `--require-gate <none|tag|manual|environment>` raises the bar further.
 
