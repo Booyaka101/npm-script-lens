@@ -6,29 +6,67 @@ This extension is a thin UI over the [`npm-script-lens`](https://github.com/Booy
 
 ## Preview
 
-Open a `package.json` and *undecided* install scripts are flagged inline, with the evidence in the message:
+Open a `package.json` and every dependency that runs code at install time is
+flagged on its own line, in words rather than in analyzer output:
 
 ```text
   "dependencies": {
-    "sharp": "^0.33.5",     ⚠  🔴 HIGH sharp@0.33.5: exec: node-gyp rebuild · exec: require('child_process')
-                                 · undecided, run “npm-script-lens: Generate allowlist”
+    "vite": "^7.2.6",       ⚠  esbuild@0.27.3 (pulled in by vite) runs code when you install it:
+                               runs other programs, uses the network and reads and writes files.
+                               You have not approved or blocked it yet.
     "chalk": "^5.3.0"       ·  (no install script, quiet)
   }
 ```
 
-Status bar: `🛡 🔴 1 install script to review`. Click to re-audit.
-
-Run **Generate allowlist**, and the warning goes away, because you answered it:
+Hover it for the evidence, with the decision it is asking for right there:
 
 ```text
-  "dependencies": {
-    "sharp": "^0.33.5",     ℹ  🔴 HIGH sharp@0.33.5: exec: node-gyp rebuild · exec: require('child_process')
-                                 · allowed in your allowlist, overriding the recommendation
-  },
-  "allowScripts": { "sharp@0.33.5": true }
+  esbuild@0.27.3 — waiting on your decision
+
+  vite pulls it in. Installing it runs postinstall → node install.js on this machine.
+
+  ✓ Approve · ⊘ Block · ☰ Show every finding
+
+  - runs other programs — child_process.execFileSync(), npm install --no-audit …, +2 more
+  - uses the network — https.get
+  - reads and writes files — fs2.chmodSync, +1 more
+  - reads your environment variables — process.env
+
+  Rated HIGH: it runs other programs, and anything your own shell could do, it can do.
+
+  Who published it — 61,234,567 downloads a week · published 12 days ago ·
+  built from github.com/evanw/esbuild by .github/workflows/release.yml.
+
+  What to do — approve and it installs as normal, block and the script never runs.
 ```
 
-Status bar: `🛡 🟢 1 scripted dep, none to review (1 override)`.
+The buttons sit under the opening line rather than at the end for a reason: a
+hover caps its height, and in a real editor there are only about six lines
+before the rest is scrolled out of sight. Summary, decide, then detail.
+
+Click **Approve**, and the decision is written into your own package manager's
+allowlist as a normal edit: it lands in the undo stack, it shows up in the diff,
+and it is byte for byte what the CLI would have written.
+
+```json
+  "allowScripts": { "esbuild@0.27.3": true }
+```
+
+The same two buttons are on <kbd>Ctrl</kbd>+<kbd>.</kbd>, and in the **Install
+scripts** panel in the activity bar, which lists every scripted dependency in
+the project grouped by what is left to do:
+
+```text
+  ⚠ Needs a decision (4)
+      @prisma/engines@5.22.0   runs other programs, uses the network and reads and writes files · via prisma
+      sharp@0.33.5             runs other programs, assembles code while it runs, reads your environment
+      core-js@3.38.1           reads and writes files and reads your environment variables
+      prisma@5.22.0            reads your environment variables
+  ✓ Approved (12)
+  ⊘ Blocked (1)
+```
+
+Status bar: `🛡 4 install scripts to review`. Click it to open the panel.
 
 A first-run **walkthrough** (Get Started → *Get started with npm-script-lens*) walks you from audit → allowlist → CI.
 
@@ -48,11 +86,15 @@ An allowlist entry is older than any advisory published after it, so approving a
 
 ## What it does
 
-- **Inline diagnostics** on `package.json` (and on `pnpm-workspace.yaml`, the one place a decision lives outside `package.json`): every undecided dependency whose install script spawns processes, reaches the network, or is flagged malicious gets a squiggle on its line, with the evidence in the message. Decided and clean packages stay quiet.
+- **Inline diagnostics** on `package.json` (and on `pnpm-workspace.yaml`, the one place a decision lives outside `package.json`): every undecided dependency whose install script spawns processes, reaches the network, or is flagged malicious gets a squiggle on its line. The message says what the script can do in plain words; the hover carries the lifecycle command, the raw signals behind each claim, and the publisher. Decided and clean packages stay quiet.
+- **Approve or block one package, from the finding**: on the hover, on <kbd>Ctrl</kbd>+<kbd>.</kbd>, or from the panel. The edit goes into whichever allowlist your package manager actually reads (npm `allowScripts`, pnpm `allowBuilds`, yarn `dependenciesMeta`, bun `trustedDependencies`), through the normal editor edit path so it is undoable and reviewable. A test in this repo diffs it against the CLI's own writer to keep the two byte-identical.
+- **The Install scripts panel** (activity bar): every scripted dependency in the project, not just the ones with a line in your `package.json`, grouped into needs-a-decision / approved / approved-against-advice / blocked, worst risk first. Inline approve and block on each row, and clicking one jumps to the dependency that pulled it in.
+- **Re-audits when the lockfile changes.** `npm install` rewriting `package-lock.json` is the moment new install scripts arrive, and it happens without any document of yours being saved.
 - **Inline diagnostics on the open-time surface**: `.vscode/tasks.json` and `.claude/settings.json`, the two files the 2026-08-04 keyv worm used for persistence (Wiz: *"Persistence is attempted via Claude Code hooks and VS Code `tasks.json`"*). A task with `"runOn": "folderOpen"` or an auto-firing `SessionStart`/`Setup`/`InstructionsLoaded` command hook gets a warning on its own line, classified through the same risk ladder as the audit; agent-triggered hooks and non-command hook types show as information. Needs CLI ≥ 1.8.0 (degrades to a note in the output channel on older CLIs).
 - **Status bar** summary, leading with how many packages still need a ruling.
 - **Commands** (Command Palette):
   - **npm-script-lens: Audit install scripts**
+  - **npm-script-lens: Approve everything still undecided** / **Block everything still undecided**: the bulk answer, after showing you exactly what it covers
   - **npm-script-lens: Generate allowlist (write)**: runs `allow --write` for your detected package manager
   - **npm-script-lens: Sync allowlist with the lockfile**: reconciles the native allowlist, dropping stale entries
   - **npm-script-lens: Review pending approvals**
@@ -82,7 +124,8 @@ The `npm-script-lens` CLI. By default the extension runs it via `npx npm-script-
 ## Settings
 
 - `npmScriptLens.command`: how to invoke the CLI (default `npx npm-script-lens`).
-- `npmScriptLens.trust`: enable OSV/trust enrichment in the editor (slower; network). Off by default for snappy audits.
+- `npmScriptLens.trust`: check OSV for known-malicious versions and fetch publisher signals, so a hover can tell you the version you are about to approve was published yesterday by a package with no provenance attestation. On by default, one registry request per flagged package, cached for 24h.
+- `npmScriptLens.auditOnOpen`: audit a project as soon as one of its `package.json` files is opened. On by default.
 
 ## License
 

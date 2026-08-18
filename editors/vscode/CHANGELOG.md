@@ -1,5 +1,90 @@
 # Changelog
 
+## 1.10.0
+
+**You can now answer the question the extension asks you.** Until this release
+a finding was a dead end: it told you `esbuild` was undecided and pointed at a
+palette command that decided your entire project by policy. Approving or
+blocking the one package you were looking at is now on the hover, on
+<kbd>Ctrl</kbd>+<kbd>.</kbd>, and on every row of the new panel.
+
+The decision is written into whichever allowlist your package manager actually
+reads: npm `allowScripts`, pnpm `allowBuilds`, yarn `dependenciesMeta`, bun
+`trustedDependencies`. It goes through the editor's own edit path, so it is
+undoable, it shows in the diff, and an unsaved buffer is not clobbered by a
+process rewriting the file underneath it. `test/parity.test.js` runs the
+extension's writer and the CLI's writer over the same seven file shapes and
+asserts the bytes match, because two spellings of the same allowlist would make
+`sync --check` fail CI over whitespace.
+
+bun is the exception, and says so: `trustedDependencies` is presence-only, so a
+denial can only be an absence, and defining the field at all replaces bun's
+built-in trusted list. Both facts arrive as a warning rather than being quietly
+absorbed.
+
+pnpm's `pnpm-workspace.yaml` is the one allowlist that may not exist yet, and a
+file VS Code creates takes the platform's default line ending. On Windows that
+meant the editor wrote CRLF where the CLI writes LF, so the same allowlist got
+spelled two ways depending on which end recorded the decision and every
+alternating write was a whole-file diff. New files are now pinned to LF.
+Editing an existing allowlist keeps that file's own endings, as before.
+
+**The messages are written for the person reading them.** A finding used to be
+a dump of analyzer output, `🔴 HIGH esbuild@0.27.3 (via vite): env: process.env
+· exec: child_process.execFileSync() · exec: npm install --loglevel=error
+--prefer-offline --no-audit ... · +4 more · undecided, run "npm-script-lens:
+Generate allowlist"`. Risk is scored from the *kinds* of signal, so the kinds
+are also the honest summary:
+
+> esbuild@0.27.3 (pulled in by vite) runs code when you install it: runs other
+> programs, uses the network and reads and writes files. You have not approved
+> or blocked it yet.
+
+The raw signals are not gone, they moved to the hover, along with three things
+the CLI has always returned and the editor used to throw away: which lifecycle
+script runs and its command (`postinstall → node install.js`), why that risk
+level and not another one, and who published the version you are about to
+approve. The hover is deliberately short and puts Approve/Block under its first
+sentence: a hover caps its height, and running the extension in a real editor
+showed everything past roughly the sixth line clipped, buttons included. A package published two days ago with no provenance attestation is the
+exact shape of a hijacked release, and the hover now says so, and says that
+waiting costs you nothing.
+
+**New: the Install scripts panel** (activity bar). Squiggles only cover
+packages with a line in a file you have open, which is a minority of install-time
+risk. The panel lists every scripted dependency in the project, grouped into
+needs-a-decision, approved, approved-against-advice and blocked, worst risk
+first, with approve and block on each row. Clicking one jumps to the direct
+dependency that pulled it in.
+
+Also:
+
+- **Re-audits when the lockfile changes.** `npm install` is when new install
+  scripts arrive, and it rewrites `package-lock.json` without saving any
+  document of yours. Previously nothing noticed until you next touched
+  `package.json`.
+- **One audit per project, coalesced.** Rapid saves used to start overlapping
+  CLI runs that raced to paint the same file. Requests now debounce and never
+  overlap, with a spinner while one is running.
+- **A failed audit is visible.** It used to be one line in an output channel
+  nobody had open; the status bar now says so and clicking it opens the log.
+- **A CodeLens** over the dependency block with the count still outstanding.
+- **A dependency's own `package.json` is no longer audited as a project.**
+  Every package under `node_modules` ships one, and opening a few of them
+  queued a CLI run each, answering a question about code the reader does not
+  own.
+- **Bulk decisions report once.** bun hands back a caveat for every denial it
+  cannot spell, so blocking twenty packages meant twenty identical warnings.
+  yarn's `enableScripts: false` reminder is now dropped entirely once
+  `.yarnrc.yml` already sets it.
+- `npmScriptLens.trust` defaults to **on**. The audit already fetches tarballs
+  from the registry, so this was never the difference between offline and
+  online, and publisher signals are most of what makes a decision decidable.
+  One request per flagged package, cached for 24h. Set it to `false` for
+  behavior-only audits.
+- `npmScriptLens.auditOnOpen` (default on) for anyone who would rather audit
+  only when they ask.
+
 ## 1.9.0
 
 **The audit follows the `package.json` you opened, not the workspace root.** In
