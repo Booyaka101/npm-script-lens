@@ -2,7 +2,7 @@
   "name": "npm-script-lens",
   "displayName": "npm-script-lens",
   "description": "See what install scripts actually do before you approve them: inline risk in package.json for npm/pnpm/yarn/bun allowlists, provenance identity, and npm 12 migration checks.",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "publisher": "booyaka101",
   "license": "MIT",
   "engines": {
@@ -45,13 +45,138 @@
   "activationEvents": [
     "workspaceContains:**/package.json",
     "workspaceContains:.vscode/tasks.json",
-    "workspaceContains:.claude/settings.json"
+    "workspaceContains:.claude/settings.json",
+    "onView:npmScriptLens.packages"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "npmScriptLens",
+          "title": "Install scripts",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "npmScriptLens": [
+        {
+          "id": "npmScriptLens.packages",
+          "name": "Install scripts",
+          "contextualTitle": "npm-script-lens"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "npmScriptLens.packages",
+        "contents": "Nothing audited yet.\n\nOpen a package.json, or run an audit to see every dependency that runs code when you install it.\n[Audit install scripts](command:npmScriptLens.audit)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "npmScriptLens.audit",
+          "when": "view == npmScriptLens.packages",
+          "group": "navigation@1"
+        },
+        {
+          "command": "npmScriptLens.approveAll",
+          "when": "view == npmScriptLens.packages",
+          "group": "navigation@2"
+        },
+        {
+          "command": "npmScriptLens.blockAll",
+          "when": "view == npmScriptLens.packages",
+          "group": "1_decide@1"
+        },
+        {
+          "command": "npmScriptLens.review",
+          "when": "view == npmScriptLens.packages",
+          "group": "2_report@1"
+        },
+        {
+          "command": "npmScriptLens.showLog",
+          "when": "view == npmScriptLens.packages",
+          "group": "2_report@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "npmScriptLens.approve",
+          "when": "view == npmScriptLens.packages && viewItem =~ /^pkg:(decide|clean|blocked)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "npmScriptLens.block",
+          "when": "view == npmScriptLens.packages && viewItem =~ /^pkg:(decide|clean|override|settled|alarm)$/",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "npmScriptLens.approve",
+          "when": "false"
+        },
+        {
+          "command": "npmScriptLens.block",
+          "when": "false"
+        },
+        {
+          "command": "npmScriptLens.decide",
+          "when": "false"
+        },
+        {
+          "command": "npmScriptLens.reveal",
+          "when": "false"
+        },
+        {
+          "command": "npmScriptLens.focusPanel",
+          "when": "false"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "npmScriptLens.audit",
-        "title": "npm-script-lens: Audit install scripts"
+        "title": "npm-script-lens: Audit install scripts",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "npmScriptLens.approve",
+        "title": "Approve this package",
+        "icon": "$(check)"
+      },
+      {
+        "command": "npmScriptLens.block",
+        "title": "Block this package",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "npmScriptLens.decide",
+        "title": "npm-script-lens: Record a decision for one package"
+      },
+      {
+        "command": "npmScriptLens.reveal",
+        "title": "npm-script-lens: Go to the dependency"
+      },
+      {
+        "command": "npmScriptLens.focusPanel",
+        "title": "npm-script-lens: Show the install scripts panel"
+      },
+      {
+        "command": "npmScriptLens.showLog",
+        "title": "npm-script-lens: Show the log",
+        "icon": "$(output)"
+      },
+      {
+        "command": "npmScriptLens.approveAll",
+        "title": "npm-script-lens: Approve everything still undecided",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "npmScriptLens.blockAll",
+        "title": "npm-script-lens: Block everything still undecided"
       },
       {
         "command": "npmScriptLens.allowWrite",
@@ -96,8 +221,13 @@
         },
         "npmScriptLens.trust": {
           "type": "boolean",
-          "default": false,
-          "description": "Enable OSV malware + publisher-trust enrichment when auditing from the editor (slower; hits the network)."
+          "default": true,
+          "description": "Check OSV for known-malicious versions and fetch publisher signals (publish age, weekly downloads, maintainer count, provenance attestation) so hovers can show who published a package and when. Adds a registry request per flagged package, cached for 24h. Turn off to audit behavior only."
+        },
+        "npmScriptLens.auditOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Audit a project as soon as one of its package.json files is opened. Turn off to audit only when you ask."
         }
       }
     },
@@ -138,6 +268,7 @@
   "scripts": {
     "test": "node --test",
     "preflight": "node scripts/preflight.mjs",
-    "vscode:publish": "node scripts/preflight.mjs && vsce publish"
+    "vscode:publish": "node scripts/preflight.mjs && vsce publish",
+    "test:vscode": "node e2e/run.js"
   }
 }

