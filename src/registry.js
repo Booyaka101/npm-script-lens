@@ -59,6 +59,14 @@ async function downloadTarball(url) {
   });
 }
 
+// The whole packument for one name: every version doc plus per-version publish
+// times. One GET, shared by trust enrichment (fetchTrust) and the
+// trust-downgrade check, which both read versions[v].dist and time[v].
+async function fetchPackument(name) {
+  const res = await fetchOk(`${REGISTRY}/${name.replace('/', '%2f')}`, 30000);
+  return res.json();
+}
+
 // Fetch one package version: its lifecycle scripts plus the tarball file index
 // needed for deep analysis. Packages with no install-time behavior skip the
 // tarball download entirely (the registry's hasInstallScript flag covers
@@ -139,4 +147,4 @@ function loadLocalPackage(name, version, projectDir, lockKey, { forceFiles = fal
   return { name, version, scripts, allScripts, bin, files, implicitGyp };
 }
 
-module.exports = { fetchPackage, loadLocalPackage, LIFECYCLE, REGISTRY };
+module.exports = { fetchPackage, fetchPackument, loadLocalPackage, LIFECYCLE, REGISTRY };

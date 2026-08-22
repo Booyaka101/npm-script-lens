@@ -1,5 +1,5 @@
 'use strict';
-const { REGISTRY } = require('./registry');
+const { REGISTRY, fetchPackument } = require('./registry');
 const { trustGet, trustSet } = require('./cache');
 
 const OSV_API = process.env.NPM_SCRIPT_LENS_OSV_API || 'https://api.osv.dev';
@@ -101,7 +101,7 @@ async function fetchTrust(name, version) {
   if (cached !== null && cached.provenance !== true) return cached;
   try {
     const [packument, dl] = await Promise.all([
-      getJson(`${REGISTRY}/${name.replace('/', '%2f')}`, { headers: { accept: 'application/json' } }),
+      fetchPackument(name),
       getJson(`${DL_API}/downloads/point/last-week/${name}`).catch(() => null),
     ]);
     const publishedAt = packument.time && packument.time[version];

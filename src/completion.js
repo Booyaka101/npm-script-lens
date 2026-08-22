@@ -2,12 +2,12 @@
 // Shell completion scripts for the CLI. `npm-script-lens completion <shell>`
 // prints a sourceable script for bash / zsh / fish.
 
-const COMMANDS = ['audit', 'allow', 'review', 'diff', 'sync', 'sources', 'publish', 'hooks', 'approve', 'manifest', 'doctor', 'init', 'mcp', 'completion'];
+const COMMANDS = ['audit', 'allow', 'review', 'diff', 'sync', 'sources', 'publish', 'hooks', 'trust', 'approve', 'manifest', 'doctor', 'init', 'mcp', 'completion'];
 const FLAGS = [
   '--path', '--json', '--manager', '--policy', '--write', '--check', '--html', '--sarif',
   '--no-trust', '--no-cache', '--offline', '--deep', '--fail-on-high', '--ci-check', '--sync-check',
   '--diff', '--since', '--output-allowscripts', '--input', '--auto-fix', '--force', '--out', '--help',
-  '--fail-on', '--deps', '--require-gate',
+  '--fail-on', '--deps', '--require-gate', '--fail-on-downgrade', '--exclude', '--ignore-after',
 ];
 
 const bash = () => `# npm-script-lens bash completion. Add to ~/.bashrc:
