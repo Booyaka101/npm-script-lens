@@ -20,9 +20,15 @@ name: Release
 # setup-node is pinned to v7 on purpose. Up to v6 it answers registry-url: by
 # writing a dummy _authToken into .npmrc, which makes npm skip the OIDC
 # exchange entirely. The npm trusted-publishers docs still show v6.
+#
+# The pattern needs both dots so it matches a release tag (v1.14.0) and not the
+# moving major tag (v1). Every release force-moves v1 seconds after publishing,
+# and under 'v*' that second push raced the registry: the already-published
+# guard below called npm view before 1.14.0 had propagated, took the publish
+# branch anyway, and left a red E403 run on a release that had in fact worked.
 on:
   push:
-    tags: ['v*']
+    tags: ['v*.*.*']
   workflow_dispatch:
 
 permissions:
