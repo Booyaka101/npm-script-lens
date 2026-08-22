@@ -39,8 +39,9 @@ before(async () => {
       '/commander/13.1.0': () => versionDoc('commander', '13.1.0'),
       '/sigstore/3.1.0': () => versionDoc('sigstore', '3.1.0'),
     };
-    const hit = routes[decodeURIComponent(req.url)];
-    if (!hit) { res.statusCode = 404; return res.end('{"error":"Not found"}'); }
+    const route = decodeURIComponent(req.url);
+    if (!Object.hasOwn(routes, route)) { res.statusCode = 404; return res.end('{"error":"Not found"}'); }
+    const hit = routes[route];
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(hit()));
   });

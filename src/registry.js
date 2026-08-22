@@ -63,7 +63,7 @@ async function downloadTarball(url) {
 // times. One GET, shared by trust enrichment (fetchTrust) and the
 // trust-downgrade check, which both read versions[v].dist and time[v].
 async function fetchPackument(name) {
-  const res = await fetchOk(`${REGISTRY}/${name.replace('/', '%2f')}`, 30000);
+  const res = await fetchOk(`${REGISTRY}/${name.replace(/\//g, '%2f')}`, 30000);
   return res.json();
 }
 
