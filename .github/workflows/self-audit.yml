@@ -15,3 +15,4 @@ jobs:
           fail-on-high: 'true'
           comment-on-pr: 'true'
           manifest-check: 'true'
+          trust-policy-check: 'true'

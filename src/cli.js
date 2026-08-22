@@ -43,7 +43,7 @@ const { analyzeSources, sourcesJson, renderSources, rootWarnings, checkSourceCon
 const { mergeNpmrc } = require('./npmrc');
 const { SOURCES } = require('./npm-contract');
 const { managerFor, managerById } = require('./pm-contract');
-const { loadPolicy, evaluate: evaluatePolicy } = require('./policy');
+const { loadPolicy, evaluate: evaluatePolicy, trustPolicyConfig } = require('./policy');
 const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./diff');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
@@ -263,6 +263,81 @@ function baseLockfileFromGit(target, ref) {
   return path.join(tmpDir, base);
 }
 
+// --- trust downgrade: the ratchet from npm/cli#9242 -----------------------
+
+// Names resolved from git/remote sources must not be compared against a
+// same-named registry history; sources.js already classifies them per
+// lockfile dialect.
+async function nonRegistryNames(target) {
+  try {
+    const analysis = await analyzeSources(target, { probeNpm: false });
+    return new Set([...analysis.git.deps, ...analysis.remote.deps].map((d) => d.name));
+  } catch { return new Set(); }
+}
+
+// Attach r.trustDowngrade to audit results when the check is opted in, via
+// policy trustPolicy: "no-downgrade" or --fail-on-downgrade. Returns the
+// check result, or null when it did not run.
+async function applyTrustDowngrade(results, target, opts) {
+  const { policy } = loadPolicy(dirOf(target), opts.policy);
+  const tp = trustPolicyConfig(policy);
+  if (!opts.failOnDowngrade && tp.mode !== 'no-downgrade') return null;
+  if (opts.offline) {
+    process.stderr.write('trust downgrade check skipped: --offline (it needs the registry)\n');
+    return null;
+  }
+  const { checkDowngrades } = require('./downgrade');
+  const result = await checkDowngrades(results.map((r) => ({ name: r.name, version: r.version })), {
+    cache: opts.cache, exclude: tp.exclude, ignoreAfter: tp.ignoreAfter,
+    skipNames: await nonRegistryNames(target), log: (m) => process.stderr.write(`${m}\n`),
+  });
+  const byKey = new Map(result.downgrades.map((d) => [`${d.name}@${d.version}`, d]));
+  for (const r of results) {
+    const d = byKey.get(`${r.name}@${r.version}`);
+    if (d) r.trustDowngrade = d;
+  }
+  if (result.unreachable.length > 0) {
+    process.stderr.write(`warning: registry unreachable for ${result.unreachable.length} package(s) during the trust downgrade check; not treated as a downgrade\n`);
+  }
+  return result;
+}
+
+const downgradeFail = (n) => {
+  process.stderr.write(`FAIL: ${n} package(s) resolve below the highest trust tier their package previously reached (npm/cli#9242)\n`);
+  process.exitCode = 1;
+};
+
+async function trustAction(opts) {
+  if (opts.offline) {
+    process.stderr.write('trust: nothing to check under --offline, the tier history lives in the registry\n');
+    return;
+  }
+  const { checkDowngrades, renderTrustReport, trustSarifFindings } = require('./downgrade');
+  const { deps } = loadDeps(opts.path);
+  const { policy, source } = loadPolicy(dirOf(opts.path), opts.policy);
+  if (source) process.stderr.write(`using policy: ${source}\n`);
+  const tp = trustPolicyConfig(policy);
+  let ignoreAfter = tp.ignoreAfter;
+  if (opts.ignoreAfter !== undefined) {
+    ignoreAfter = Number(opts.ignoreAfter);
+    if (!Number.isFinite(ignoreAfter) || ignoreAfter < 0) throw new Error(`--ignore-after expects minutes, got: ${opts.ignoreAfter}`);
+  }
+  const result = await checkDowngrades(deps, {
+    cache: opts.cache, exclude: [...tp.exclude, ...(opts.exclude || [])], ignoreAfter,
+    skipNames: await nonRegistryNames(opts.path), log: (m) => process.stderr.write(`${m}\n`),
+  });
+  if (opts.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  else writeReport(renderTrustReport(result));
+  if (result.unreachable.length > 0) {
+    process.stderr.write(`warning: registry unreachable for ${result.unreachable.length} package(s); not treated as a downgrade\n`);
+  }
+  if (opts.sarif) {
+    writeSarif([], opts.path, opts.sarif, trustSarifFindings(result.downgrades));
+    process.stderr.write(`SARIF written to ${opts.sarif}\n`);
+  }
+  if (opts.failOnDowngrade && result.downgrades.length > 0) downgradeFail(result.downgrades.length);
+}
+
 // Artifacts and modes that describe exactly one project. Producing a merged
 // one across several would be a guess, so say which flag to drop instead.
 const SINGLE_PROJECT_ONLY = [['sarif', '--sarif'], ['html', '--html'], ['diff', '--diff'], ['since', '--since']];
@@ -282,8 +357,12 @@ async function auditAction(opts) {
   process.stderr.write(`no lockfile in ${base}, auditing ${found.lockfiles.length} projects found under it\n`);
 
   const projects = [];
+  let downgrades = 0;
   for (const { path: lockPath } of found.lockfiles) {
-    projects.push({ rel: rel(lockPath), results: await runAudit(lockPath, auditRunOpts(opts)) });
+    const results = await runAudit(lockPath, auditRunOpts(opts));
+    const dg = await applyTrustDowngrade(results, lockPath, opts);
+    if (dg) downgrades += dg.downgrades.length;
+    projects.push({ rel: rel(lockPath), results });
   }
   const output = opts.json
     ? JSON.stringify({
@@ -303,6 +382,7 @@ async function auditAction(opts) {
     process.stderr.write(`FAIL: ${bad} package(s) with HIGH risk or known-malicious install scripts across ${projects.length} projects\n`);
     process.exitCode = 1;
   }
+  if (opts.failOnDowngrade && downgrades > 0) downgradeFail(downgrades);
   if (opts.cooldown !== undefined) {
     const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
     if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
@@ -334,6 +414,7 @@ async function auditProject(target, opts) {
   }
   try {
     const results = await runAudit(target, auditRunOpts(opts, diffBase));
+    const downgradeResult = await applyTrustDowngrade(results, target, opts);
     const note = opts.since
       ? `_Diff mode: only packages added or upgraded relative to git ref \`${opts.since}\` were audited._`
       : opts.diff
@@ -348,7 +429,9 @@ async function auditProject(target, opts) {
     if (opts.out) fs.writeFileSync(opts.out, output);
     else writeReport(output);
     if (opts.sarif) {
-      writeSarif(results, target, opts.sarif);
+      const { trustSarifFindings } = require('./downgrade');
+      writeSarif(results, target, opts.sarif,
+        trustSarifFindings(results.filter((r) => r.trustDowngrade).map((r) => r.trustDowngrade)));
       process.stderr.write(`SARIF written to ${opts.sarif}\n`);
     }
     if (opts.html) {
@@ -359,6 +442,9 @@ async function auditProject(target, opts) {
     if (opts.failOnHigh && bad > 0) {
       process.stderr.write(`FAIL: ${bad} package(s) with HIGH risk or known-malicious install scripts\n`);
       process.exitCode = 1;
+    }
+    if (opts.failOnDowngrade && downgradeResult && downgradeResult.downgrades.length > 0) {
+      downgradeFail(downgradeResult.downgrades.length);
     }
     // Cooldown is orthogonal to every other check here: it judges the version's
     // AGE, not its behaviour, so a package can be clean and still fail it.
@@ -1297,6 +1383,8 @@ if (require.main === module) {
     .option('--cooldown [hours]', `exit 1 if any dependency version was published less than N hours ago (default ${COOLDOWN_HOURS}). npm worms are typically caught within hours, so declining to install first sits out the event`)
     .option('--cooldown-allow <pkg...>', 'exempt packages from --cooldown, by name or name@version')
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
+    .option('--fail-on-downgrade', 'exit 1 if any package resolves below the highest trust tier it previously reached (trusted publisher > provenance > none, npm/cli#9242); policy trustPolicy: "no-downgrade" runs the same check without changing the exit code')
+    .option('--policy <file>', 'governance policy file holding trustPolicy / trustPolicyExclude / trustPolicyIgnoreAfter (default: script-lens.policy.json if present)')
     .action(auditAction);
   common(program.command('sync'))
     .description('reconcile your package manager\'s native allowlist (npm allowScripts / pnpm allowBuilds / yarn dependenciesMeta / bun trustedDependencies) with the lockfile')
@@ -1362,6 +1450,15 @@ if (require.main === module) {
     .option('--deps', 'also scan every locked dependency\'s registry tarball for shipped .vscode/tasks.json / .claude/settings.json. A folderOpen task inside a package is a payload, not a team convention (tiered HIGH regardless of command)')
     .option('--no-cache', 'disable the on-disk result cache for --deps')
     .action(hooksAction);
+  common(program.command('trust'))
+    .description('compare every locked version against the HIGHEST trust tier its package previously reached (trusted publisher > provenance > none, npm/cli#9242). A resolved version below that ratchet is the fingerprint of a publish from a stolen token that cannot run the maintainer\'s CI, the shape of the axios 1.14.1 attack. pnpm >= 10.21 refuses these installs under trust-policy=no-downgrade; npm and Yarn have no native equivalent yet')
+    .option('--json', 'emit the structured result ({ downgrades, checked, skipped, excluded, ignored, unreachable, unlisted }) as JSON')
+    .option('--sarif <file>', 'also write SARIF 2.1.0 (rule trust-downgrade, anchored to the package\'s lockfile line)')
+    .option('--fail-on-downgrade', 'exit 1 when any resolved version sits below its package\'s historical-max trust tier (for CI). Registry unreachable never fails')
+    .option('--policy <file>', 'governance policy file holding trustPolicy / trustPolicyExclude / trustPolicyIgnoreAfter (default: script-lens.policy.json if present)')
+    .option('--exclude <pkg@version...>', 'allow specific versions despite a downgrade, npm/cli#9242\'s trust-policy-exclude (also read from policy trustPolicyExclude)')
+    .option('--ignore-after <minutes>', 'ignore a downgrade whose prior trust evidence is older than this many minutes, npm/cli#9242\'s trust-policy-ignore-after (also read from policy trustPolicyIgnoreAfter)')
+    .action(trustAction);
   program.command('doctor')
     .description('check whether this build still understands your local npm (contract probe + parser self-test + live dry-run shape check). Exits 1 on drift')
     .option('--path <path>', 'project dir or lockfile to probe live', '.')

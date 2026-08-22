@@ -93,6 +93,17 @@ inputs:
       lingers). Works for npm, pnpm, yarn, and bun, auto-detected. 'true' to
       enable (opt-in).
     default: 'false'
+  trust-policy-check:
+    description: >-
+      Fail the job (exit 1) when a locked version resolves BELOW the highest
+      trust tier its package previously reached (trusted publisher >
+      provenance > none, npm/cli#9242), the fingerprint of a publish from a
+      stolen maintainer token, how the malicious axios releases looked. pnpm
+      >= 10.21 refuses these under trust-policy=no-downgrade; this is the
+      same gate for npm/yarn/bun lockfiles. Exclusions come from
+      trustPolicyExclude in script-lens.policy.json. Registry unreachable
+      never fails the job. 'true' to enable (opt-in).
+    default: 'false'
   github-token:
     description: Token used to post the PR comment
     default: ${{ github.token }}
@@ -163,6 +174,14 @@ runs:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
       run: node "$GITHUB_ACTION_PATH/src/action.js" hooks-check
+    - name: Check for trust downgrades
+      # opt-in gate: versions below their package's historical-max trust tier
+      if: ${{ always() && inputs.trust-policy-check == 'true' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: node "$GITHUB_ACTION_PATH/src/action.js" trust-policy-check
     - name: Check the install-script allowlist is in sync
       # opt-in cross-ecosystem drift gate (npm/pnpm/yarn/bun, auto-detected)
       if: ${{ always() && inputs.sync-check == 'true' }}

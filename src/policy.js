@@ -25,11 +25,22 @@ const DEFAULT_POLICY = {
   // name -> { allow, reason, expires? }, an explicit human decision that
   // overrides the heuristic until it expires
   waivers: {},
+  // npm/cli#9242's proposed keys, camel-cased like the rest of this file so a
+  // config carries over if npm ever ships trust-policy natively. 'off' by
+  // default: no existing CI changes colour without opting in.
+  trustPolicy: 'off', // 'no-downgrade' | 'off'
+  trustPolicyExclude: [], // ['pkg@version'] allowed despite a downgrade
+  trustPolicyIgnoreAfter: null, // minutes; prior trust older than this no longer anchors a finding
 };
 
+// The trust-policy keys ride through only when the file sets them, so a
+// policy without them keeps the pre-1.14.0 shape.
 const mergeDefaults = (p) => ({
   autoApprove: { ...DEFAULT_POLICY.autoApprove, ...(p.autoApprove || {}) },
   waivers: p.waivers || {},
+  ...(p.trustPolicy !== undefined ? { trustPolicy: p.trustPolicy } : {}),
+  ...(p.trustPolicyExclude !== undefined ? { trustPolicyExclude: p.trustPolicyExclude } : {}),
+  ...(p.trustPolicyIgnoreAfter !== undefined ? { trustPolicyIgnoreAfter: p.trustPolicyIgnoreAfter } : {}),
 });
 
 // Returns { policy, source }. source is null when no file was found (built-in
@@ -42,8 +53,18 @@ function loadPolicy(dir, explicitPath) {
   let parsed;
   try { parsed = JSON.parse(raw); }
   catch (e) { throw new Error(`invalid policy JSON (${file}): ${e.message}`); }
+  if (parsed.trustPolicy !== undefined && !['no-downgrade', 'off'].includes(parsed.trustPolicy)) {
+    throw new Error(`invalid policy (${file}): trustPolicy must be 'no-downgrade' or 'off', got ${JSON.stringify(parsed.trustPolicy)}`);
+  }
   return { policy: mergeDefaults(parsed), source: file };
 }
+
+// The trust-downgrade settings with defaults applied, whatever the file set.
+const trustPolicyConfig = (policy) => ({
+  mode: (policy && policy.trustPolicy) || DEFAULT_POLICY.trustPolicy,
+  exclude: (policy && policy.trustPolicyExclude) || [],
+  ignoreAfter: policy && policy.trustPolicyIgnoreAfter !== undefined ? policy.trustPolicyIgnoreAfter : null,
+});
 
 // the signal KINDS a package's install scripts exercise (exec/net/fs/env/obf/bin)
 function capabilities(r) {
@@ -111,4 +132,4 @@ function expectationMismatch(expected, trust) {
   return null;
 }
 
-module.exports = { loadPolicy, evaluate, capabilities, POLICY_FILE, DEFAULT_POLICY };
+module.exports = { loadPolicy, evaluate, capabilities, trustPolicyConfig, POLICY_FILE, DEFAULT_POLICY };

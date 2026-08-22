@@ -299,7 +299,80 @@ async function hooksCheckMain() {
   process.exitCode = 1;
 }
 
-const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain, 'publish-check': publishCheckMain, 'hooks-check': hooksCheckMain };
+// `node action.js trust-policy-check`, opt-in gate (the `trust-policy-check`
+// input): fails the job when a locked version resolves BELOW the highest
+// trust tier its package previously reached (trusted publisher > provenance >
+// none, npm/cli#9242), the fingerprint of a publish from a stolen token.
+// pnpm >= 10.21 refuses these under trust-policy=no-downgrade; this is the
+// same gate for npm/yarn/bun lockfiles. Registry unreachable never fails.
+async function trustPolicyCheckMain() {
+  const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
+  const target = input('PATH', '.');
+  const { checkDowngrades, renderTrustReport, trustSarifFindings } = require('./downgrade');
+  const { loadDeps } = require('./lockfiles');
+  const { loadPolicy, trustPolicyConfig } = require('./policy');
+  let deps, projectDir;
+  try {
+    const loaded = loadDeps(target);
+    deps = loaded.deps;
+    projectDir = path.dirname(loaded.lockPath);
+  } catch (err) {
+    console.log(`trust downgrade check skipped: ${err.message}`);
+    return;
+  }
+  const tp = trustPolicyConfig(loadPolicy(projectDir).policy);
+  const { analyzeSources } = require('./sources');
+  let skipNames = new Set();
+  try {
+    const analysis = await analyzeSources(target, { probeNpm: false });
+    skipNames = new Set([...analysis.git.deps, ...analysis.remote.deps].map((d) => d.name));
+  } catch { /* no non-registry deps to skip */ }
+  const result = await checkDowngrades(deps, {
+    exclude: tp.exclude, ignoreAfter: tp.ignoreAfter, skipNames, log: console.log,
+  });
+  console.log(renderTrustReport(result));
+  if (result.unreachable.length > 0) {
+    console.log(`::warning::registry unreachable for ${result.unreachable.length} package(s) during the trust downgrade check; not treated as a downgrade`);
+  }
+  if (result.downgrades.length === 0) {
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+        `\n## ✅ trust downgrade check (npm/cli#9242)\n\nPassed: ${result.checked} registry package(s) match or exceed the highest trust their package previously reached.\n`);
+    }
+    return;
+  }
+  for (const d of result.downgrades) {
+    console.log(`::error::trust downgrade: ${d.name}@${d.version} ${d.from} -> ${d.to} (highest prior: ${d.from} at ${d.name}@${d.priorVersion}, published ${d.priorPublishedAt.slice(0, 10)})`);
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `\n## ❌ trust downgrade check (npm/cli#9242)\n\n\`\`\`\n${renderTrustReport(result)}\n\`\`\`\n\nIf a drop is intentional, exclude it with \`trustPolicyExclude: ["pkg@version"]\` in \`script-lens.policy.json\`.\n`);
+  }
+  const sarifFile = input('SARIF_FILE', '');
+  const findings = trustSarifFindings(result.downgrades);
+  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
+    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
+    const run = sarif.runs && sarif.runs[0];
+    if (run) {
+      const { path: lp } = resolveLockfile(target);
+      let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
+      if (rel.startsWith('..')) rel = path.basename(lp);
+      const fresh = buildSarif([], { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8'), findings });
+      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
+      run.tool.driver.rules = run.tool.driver.rules || [];
+      for (const rule of fresh.runs[0].tool.driver.rules) {
+        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
+      }
+      run.results = run.results || [];
+      run.results.push(...fresh.runs[0].results);
+      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
+      console.log(`merged ${findings.length} trust-downgrade finding(s) into ${sarifFile}`);
+    }
+  }
+  process.exitCode = 1;
+}
+
+const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain, 'publish-check': publishCheckMain, 'hooks-check': hooksCheckMain, 'trust-policy-check': trustPolicyCheckMain };
 (MODE[process.argv[2]] || main)().catch((err) => {
   console.log(`::error::${err.message}`);
   process.exitCode = 2;
