@@ -37,7 +37,7 @@ function trimPackument(p, keepVersion) {
 }
 
 async function capture(name, file, keepVersion = () => true) {
-  const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2f')}`);
+  const res = await fetch(`https://registry.npmjs.org/${name.replace(/\//g, '%2f')}`);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${name}`);
   const doc = trimPackument(await res.json(), keepVersion);
   fs.writeFileSync(path.join(OUT, file), `${JSON.stringify(doc, null, 2)}\n`);
