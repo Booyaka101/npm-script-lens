@@ -1,6 +1,10 @@
 # ▶️ RESUME: npm-script-lens
 
-_Updated 2026-08-17 after shipping v1.12.0, with v1.13.0 on a branch._
+_Updated 2026-08-22 with v1.14.0 on a PR._
+
+## v1.14.0 (2026-08-22, branch `feat/trust-downgrade-gate`, PR open): the provenance-downgrade gate ⬅️ start here
+
+New `trust` command + opt-in audit finding: flag a resolved version below the highest trust tier its package previously reached (trusted publisher > provenance > none, npm/cli#9242's ladder and key names). pnpm >= 10.21 has this natively as `trust-policy=no-downgrade`; npm and Yarn do not. The worked example is LIVE: axios@1.13.3 genuinely has no attestations after 1.13.2's provenance. One packument GET per package (trusted-publisher = `_npmUser.trustedPublisher`, verified empirically). Default off everywhere; only `--fail-on-downgrade` flips an exit code. Action input `trust-policy-check` wired into self-audit.yml. 429 tests. Full detail in PROGRESS.md → v1.14.0. **Owner steps: review/merge the PR, then tag v1.14.0 + move v1 + GitHub Release; npm publish rides the tag via trusted publishing.**
 
 ## v1.13.0 (2026-08-17, branch `chore/stop-tests-writing-fixtures`): `--path` finds projects ⬅️ start here
 
