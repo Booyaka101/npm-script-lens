@@ -45,6 +45,9 @@ npx npm-script-lens audit --path ./my-project --fail-on-high
 # --fail-on-high  exit 1 if any package scores HIGH or is known malicious
 # --cooldown [h]  exit 1 if any locked version is younger than N hours (default 72)
 # --cooldown-allow PKG...  exempt from --cooldown, by name or name@version
+# --fail-on-downgrade  exit 1 if any package resolves below the highest trust
+#               tier it previously reached (npm/cli#9242); policy
+#               trustPolicy: "no-downgrade" reports without failing
 ```
 
 Reviewing a PR? Audit only what changed, and see what **upgrades gained**:
@@ -362,6 +365,88 @@ provenance and re-checks the linked source when provenance is viewed, so a
 live mismatch is almost always a repo rename or transfer since publish, not an
 attack. Monorepo subpaths never count as drift. `doctor` reports whether the
 attestation endpoint answered.
+
+## trust: the downgrade a stolen token cannot avoid
+
+The March 2026 axios compromise had a tell that no behavioral scan needed: the
+attacker had the maintainer's npm token but not the maintainer's CI, so where
+every recent legitimate release carried a provenance attestation, the malicious
+`1.14.1` and `0.30.4` carried none. That drop, a version resolving **below the
+highest trust tier its package previously reached**, is what
+[npm/cli#9242](https://github.com/npm/cli/issues/9242) (59 👍, open since
+April 2026) and [yarnpkg/berry#7101](https://github.com/yarnpkg/berry/issues/7101)
+ask their package managers to refuse. **pnpm shipped it natively as
+`trust-policy=no-downgrade` in 10.21. npm and Yarn have not**, and this command
+is that gate for their lockfiles (and pnpm's and bun's too):
+
+```bash
+npx npm-script-lens trust --fail-on-downgrade
+```
+
+```
+npm-script-lens trust: provenance downgrade check (npm/cli#9242, trusted publisher > provenance > none)
+checked 3 registry package(s)
+
+TRUST DOWNGRADE (1)
+  axios@1.13.3  provenance -> none
+    highest prior trust: provenance (axios@1.13.2, published 2025-11-04)
+    resolved version has no attestations
+    pnpm >= 10.21 would refuse this install under trust-policy=no-downgrade
+```
+
+That output is real, not staged: axios `1.13.3` (published 2026-01-25, still on
+the registry today) genuinely carries no attestations while `1.13.2` before it
+carried provenance. Exit code is 1 only under `--fail-on-downgrade`, and only
+when a downgrade is present.
+
+The ladder matches #9242: **trusted publisher > provenance > none**. A
+trusted-publisher (OIDC) publish is recognized by the registry's
+`_npmUser.trustedPublisher` stamp on the version; provenance is
+`dist.attestations` on the version (the SLSA predicate rides along); absent
+attestations is none. One packument request per package answers all three
+tiers for every version at once, cached 24h alongside the other trust data.
+
+What never fires a finding: packages that have never published with
+attestations (there is no ratchet to fall from), a package's first published
+version, versions published *after* the one you resolve (a later provenance
+adoption says nothing about your pin), git/remote-sourced dependencies (their
+history is not the registry's), and an unreachable registry, which warns once
+and exits 0 rather than failing your build on network weather. A previously
+unpublished version leaves a gap that is compared **around**, never counted as
+a downgrade. Deprecated versions still count toward the max.
+
+`audit` runs the same check when you opt in, either with
+`audit --fail-on-downgrade` or with the policy key, and emits the finding in
+the report, `--json` (`results[].trustDowngrade`) and SARIF (rule
+`trust-downgrade`, level error, anchored to the package's lockfile line):
+
+```jsonc
+// script-lens.policy.json, npm/cli#9242's keys so your config carries over
+// if npm ever ships trust-policy natively
+{
+  "trustPolicy": "no-downgrade",          // #9242: trust-policy (default "off")
+  "trustPolicyExclude": ["pkg@1.2.3"],    // #9242: trust-policy-exclude[]
+  "trustPolicyIgnoreAfter": 525600        // #9242: trust-policy-ignore-after (minutes)
+}
+```
+
+`trustPolicy: "no-downgrade"` makes every `audit` surface the finding without
+changing any exit code; the exit only flips under `--fail-on-downgrade`, so no
+existing CI changes colour without opting in. `trustPolicyExclude` allows a
+named version despite its drop (a maintainer who genuinely moved off CI);
+`trustPolicyIgnoreAfter` retires prior evidence older than the window. The
+`trust` command also takes them directly as `--exclude pkg@version` and
+`--ignore-after minutes`.
+
+**Honest limitations.** A package whose 0.x maintenance line is published by
+hand while the 1.x line uses CI will flag the 0.x versions, exactly as pnpm's
+`trust-policy=no-downgrade` refuses them (real example: axios `0.30.x`);
+that is what `trustPolicyExclude` is for. And like the
+[provenance identity check](#provenance-an-identity-not-a-checkbox), this
+reads registry claims over TLS, it does not verify Sigstore signatures. It
+also cannot catch an attacker who compromises the CI itself and publishes
+*with* provenance, the ChainDrop shape; `--cooldown` and the identity diff are
+the tools for that half.
 
 ## publish: will your release workflow survive January 2027?
 
@@ -855,7 +940,7 @@ jobs:
 
 The action writes the report to the job summary, comments on the PR (plain GitHub REST `issues/comments` call using `GITHUB_TOKEN`, the same endpoint octokit uses), and fails the job when `fail-on-high` is true and a HIGH package exists.
 
-Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false`, the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable, the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable, fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover: insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `publish-check` (`'true'` to enable, fails the job when a [CI publish path still authenticates with a long-lived npm token](#publish-will-your-release-workflow-survive-january-2027), which loses direct publish around January 2027, or is BROKEN by setup-node < v7 writing a dummy `_authToken` via `registry-url`; `::error` annotation, a job-summary line naming the verdict, and a `publish-token-cliff`/`publish-oidc-broken` result merged into the audit's SARIF file), `hooks-check` (`'true'` to enable, fails the job when the working tree carries a HIGH [open-time execution entry](#hooks-what-runs-when-the-folder-is-opened): a `.vscode/tasks.json` folderOpen task or an auto-firing `.claude/settings.json` command hook, with an `::error` annotation, a job-summary section, and a `hook-auto-run` result merged into the audit's SARIF file), `sync-check` (`'true'`, fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), and `sarif-file` for code scanning alerts:
+Optional inputs: `diff-base` (audit only packages added/upgraded vs a base lockfile, e.g. one extracted from the PR base branch), `check-v12-gaps` (`auto`/`true`/`false`, the [npm v12 approve-scripts bug check](#npm-v12-approve-scripts-bug-check), auto-enabled when the runner's npm is v12+), `ci-check` (`'true'` to enable, the [allow --ci-check](#ci-guard) gate as a fail-fast Action step: fails the job when the runner's npm is v12+, a workflow runs `npm install`, and `package.json` has no `allowScripts` block, before the missing block silently breaks a downstream install), `sources-check` (`'true'` to enable, fails the job when the lockfile contains [git or remote-URL dependencies](#git-and-remote-dependencies-the-other-two-npm-v12-flips) the committed `.npmrc` `allow-git`/`allow-remote` doesn't correctly cover: insufficient, over-permissive, and invalid values all fail, with an `::error` annotation and a job-summary line), `publish-check` (`'true'` to enable, fails the job when a [CI publish path still authenticates with a long-lived npm token](#publish-will-your-release-workflow-survive-january-2027), which loses direct publish around January 2027, or is BROKEN by setup-node < v7 writing a dummy `_authToken` via `registry-url`; `::error` annotation, a job-summary line naming the verdict, and a `publish-token-cliff`/`publish-oidc-broken` result merged into the audit's SARIF file), `hooks-check` (`'true'` to enable, fails the job when the working tree carries a HIGH [open-time execution entry](#hooks-what-runs-when-the-folder-is-opened): a `.vscode/tasks.json` folderOpen task or an auto-firing `.claude/settings.json` command hook, with an `::error` annotation, a job-summary section, and a `hook-auto-run` result merged into the audit's SARIF file), `sync-check` (`'true'`, fails the job when the install-script allowlist has drifted from the lockfile; cross-ecosystem, auto-detects npm/pnpm/yarn/bun), `trust-policy-check` (`'true'` to enable, fails the job when a locked version resolves [below the highest trust tier its package previously reached](#trust-the-downgrade-a-stolen-token-cannot-avoid), npm/cli#9242's downgrade gate; `::error` per finding, a job-summary section, a `trust-downgrade` result merged into the audit's SARIF file, and exclusions read from `trustPolicyExclude` in `script-lens.policy.json`; registry unreachable never fails the job), and `sarif-file` for code scanning alerts:
 
 ```yaml
       - uses: Booyaka101/npm-script-lens@v1
@@ -900,7 +985,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN or BROKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script or a [changed provenance identity](#provenance-an-identity-not-a-checkbox) |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · [`trust --fail-on-downgrade`](#trust-the-downgrade-a-stolen-token-cannot-avoid) (or `audit --fail-on-downgrade`) found a version below its package's historical-max trust tier · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN or BROKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script or a [changed provenance identity](#provenance-an-identity-not-a-checkbox) |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
@@ -914,6 +999,7 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | `sources` | git + remote-URL deps vs npm v12's `allow-git`/`allow-remote`: ROOT/TRANSITIVE per dep, minimal correct `.npmrc`; `--check`, `--write`, `--json` |
 | [`publish`](#publish-will-your-release-workflow-survive-january-2027) | classify every CI publish path (TRUSTED/STAGED/TOKEN/BROKEN/UNKNOWN) vs npm's January-2027 token cliff and the setup-node < v7 OIDC breakage, with the migration patch + npmjs.com checklist; `--check`, `--json`, `--sarif` |
 | [`hooks`](#hooks-what-runs-when-the-folder-is-opened) | the open-time surface: `.vscode/tasks.json` folderOpen tasks + `.claude/settings.json` hooks, same risk ladder as `audit`; `--check`, `--fail-on`, `--deps` (dependency tarballs, where shipped entries are HIGH regardless), `--json`, `--sarif` |
+| [`trust`](#trust-the-downgrade-a-stolen-token-cannot-avoid) | flag versions below the highest trust tier their package previously reached (trusted publisher > provenance > none, npm/cli#9242), pnpm 10.21's `trust-policy=no-downgrade` for npm/yarn/bun lockfiles; `--fail-on-downgrade`, `--exclude`, `--ignore-after`, `--json`, `--sarif` |
 | `sync` | reconcile the native allowlist with the lockfile (drop stale, add new); `--check` for CI |
 | `doctor` | is this build still in sync with your npm? contract probe + drift alarm |
 | `init` | scaffold policy + CI workflow (`--auto-fix` bot, `--hook` git pre-commit) |

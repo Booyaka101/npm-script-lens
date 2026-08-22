@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.14.0 (2026-08-22)
+
+**New `trust` command and audit finding: the provenance-downgrade gate**
+([npm/cli#9242](https://github.com/npm/cli/issues/9242)). A stolen npm token
+can publish, but it cannot run the maintainer's CI, so the malicious axios
+1.14.1 / 0.30.4 releases of March 2026 carried no attestations where every
+recent legitimate release carried provenance. npm/cli#9242 (59 👍, no
+maintainer response since April) and yarnpkg/berry#7101 ask for exactly this
+refusal; pnpm shipped it as `trust-policy=no-downgrade` in 10.21; npm and Yarn
+have not. `npm-script-lens trust` now computes the highest trust tier every
+locked package ever reached (trusted publisher > provenance > none, #9242's
+ladder) and flags any resolved version sitting below it:
+
+```
+TRUST DOWNGRADE (1)
+  axios@1.13.3  provenance -> none
+    highest prior trust: provenance (axios@1.13.2, published 2025-11-04)
+    resolved version has no attestations
+    pnpm >= 10.21 would refuse this install under trust-policy=no-downgrade
+```
+
+(That finding is live today: axios 1.13.3 really was published without
+attestations after 1.13.2 carried provenance.)
+
+- One packument request per package resolves all three tiers for every
+  version at once: `_npmUser.trustedPublisher` marks an OIDC trusted-publisher
+  publish, `dist.attestations` marks provenance, absence is none. Cached 24h.
+- Only versions published **before** the resolved one count toward the max; a
+  package's first version, never-attested packages, and git/remote-sourced
+  deps never fire; an unpublished version's gap is compared around, never
+  counted as a downgrade; registry unreachable warns once and exits 0.
+- `--fail-on-downgrade` (on `trust` and `audit`) is the only thing that flips
+  an exit code. The policy keys reuse #9242's names so a config carries over
+  if npm ships it: `trustPolicy` (`"no-downgrade"` | `"off"`, **default off**,
+  no existing CI changes colour without opting in), `trustPolicyExclude`
+  (`["pkg@version"]`), `trustPolicyIgnoreAfter` (minutes).
+- Surfaces: audit report section, `--json` (`results[].trustDowngrade`),
+  SARIF rule `trust-downgrade` (error, anchored to the lockfile line), and the
+  Action's opt-in `trust-policy-check` input, exercised on this repo's own PRs.
+- Shared plumbing extracted, not cloned: `registry.fetchPackument()` now
+  serves both the 1.11.0 trust enrichment and this check.
+
 ## 1.13.1 (2026-08-17)
 
 **The first release published by the release workflow rather than by hand, and
