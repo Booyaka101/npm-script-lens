@@ -1,0 +1,415 @@
+{
+  "name": "ms",
+  "dist-tags": {
+    "latest": "2.1.3",
+    "beta": "3.0.0-beta.2",
+    "canary": "3.0.0-canary.202508261828",
+    "nightly": "4.0.0-nightly.202508271359"
+  },
+  "time": {
+    "created": "2011-12-21T19:38:08.664Z",
+    "modified": "2025-09-08T19:56:54.242Z",
+    "0.1.0": "2011-12-21T19:38:26.538Z",
+    "0.2.0": "2012-09-03T20:33:06.093Z",
+    "0.3.0": "2012-09-07T20:36:45.931Z",
+    "0.4.0": "2012-10-22T17:01:26.046Z",
+    "0.5.0": "2012-11-10T00:39:49.944Z",
+    "0.5.1": "2013-02-24T20:27:27.010Z",
+    "0.6.0": "2013-03-15T15:26:35.127Z",
+    "0.6.1": "2013-05-10T15:38:08.059Z",
+    "0.6.2": "2013-12-05T15:57:45.292Z",
+    "0.7.0": "2014-11-24T07:59:08.195Z",
+    "0.7.1": "2015-04-20T23:38:57.957Z",
+    "0.7.2": "2016-10-25T08:16:49.773Z",
+    "0.7.3": "2017-03-08T21:59:28.048Z",
+    "1.0.0": "2017-03-19T21:43:15.128Z",
+    "2.0.0": "2017-05-16T12:26:06.610Z",
+    "2.1.0": "2017-11-30T16:54:16.315Z",
+    "2.1.1": "2017-11-30T18:30:16.876Z",
+    "2.1.2": "2019-06-06T17:31:55.859Z",
+    "2.1.3": "2020-12-08T13:54:35.223Z",
+    "3.0.0-beta.0": "2021-08-20T14:54:07.095Z",
+    "3.0.0-beta.1": "2021-08-20T15:29:19.828Z",
+    "3.0.0-beta.2": "2021-08-25T16:55:32.842Z",
+    "3.0.0-canary.0": "2021-09-15T13:29:00.734Z",
+    "3.0.0-canary.1": "2021-09-15T15:40:43.956Z",
+    "3.0.0-canary.202508252028": "2025-08-25T20:28:46.460Z",
+    "3.0.0-canary.202508252038": "2025-08-25T20:38:35.506Z",
+    "3.0.0-canary.202508261539": "2025-08-26T15:39:38.959Z",
+    "3.0.0-canary.202508261745": "2025-08-26T17:45:38.383Z",
+    "3.0.0-canary.202508261828": "2025-08-26T18:28:57.034Z",
+    "4.0.0-nightly.202508270145": "2025-08-27T01:45:30.567Z",
+    "4.0.0-nightly.202508271358": "2025-08-27T13:58:29.891Z",
+    "4.0.0-nightly.202508271359": "2025-08-27T14:00:01.232Z"
+  },
+  "versions": {
+    "0.1.0": {
+      "name": "ms",
+      "version": "0.1.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.1.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.2.0": {
+      "name": "ms",
+      "version": "0.2.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.2.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.3.0": {
+      "name": "ms",
+      "version": "0.3.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.3.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.4.0": {
+      "name": "ms",
+      "version": "0.4.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.4.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.5.0": {
+      "name": "ms",
+      "version": "0.5.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.5.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.5.1": {
+      "name": "ms",
+      "version": "0.5.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.5.1.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.6.0": {
+      "name": "ms",
+      "version": "0.6.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.6.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.6.1": {
+      "name": "ms",
+      "version": "0.6.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.6.1.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.6.2": {
+      "name": "ms",
+      "version": "0.6.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.6.2.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.7.0": {
+      "name": "ms",
+      "version": "0.7.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.7.0.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.7.1": {
+      "name": "ms",
+      "version": "0.7.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.7.1.tgz"
+      },
+      "_npmUser": {
+        "name": "rauchg"
+      }
+    },
+    "0.7.2": {
+      "name": "ms",
+      "version": "0.7.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.7.2.tgz"
+      },
+      "_npmUser": {
+        "name": "leo"
+      }
+    },
+    "0.7.3": {
+      "name": "ms",
+      "version": "0.7.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-0.7.3.tgz"
+      },
+      "_npmUser": {
+        "name": "leo"
+      }
+    },
+    "1.0.0": {
+      "name": "ms",
+      "version": "1.0.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-1.0.0.tgz"
+      },
+      "_npmUser": {
+        "name": "leo"
+      }
+    },
+    "2.0.0": {
+      "name": "ms",
+      "version": "2.0.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz"
+      },
+      "_npmUser": {
+        "name": "leo"
+      }
+    },
+    "2.1.0": {
+      "name": "ms",
+      "version": "2.1.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.0.tgz"
+      },
+      "_npmUser": {
+        "name": "leo"
+      }
+    },
+    "2.1.1": {
+      "name": "ms",
+      "version": "2.1.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.1.tgz"
+      },
+      "_npmUser": {
+        "name": "leo"
+      }
+    },
+    "2.1.2": {
+      "name": "ms",
+      "version": "2.1.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.2.tgz"
+      },
+      "_npmUser": {
+        "name": "styfle"
+      }
+    },
+    "2.1.3": {
+      "name": "ms",
+      "version": "2.1.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"
+      },
+      "_npmUser": {
+        "name": "styfle"
+      }
+    },
+    "3.0.0-beta.0": {
+      "name": "ms",
+      "version": "3.0.0-beta.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-beta.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mrmckeb"
+      }
+    },
+    "3.0.0-beta.1": {
+      "name": "ms",
+      "version": "3.0.0-beta.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-beta.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mrmckeb"
+      }
+    },
+    "3.0.0-beta.2": {
+      "name": "ms",
+      "version": "3.0.0-beta.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-beta.2.tgz"
+      },
+      "_npmUser": {
+        "name": "mrmckeb"
+      }
+    },
+    "3.0.0-canary.0": {
+      "name": "ms",
+      "version": "3.0.0-canary.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.0.tgz"
+      },
+      "_npmUser": {
+        "name": "leerobinson"
+      }
+    },
+    "3.0.0-canary.1": {
+      "name": "ms",
+      "version": "3.0.0-canary.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.1.tgz"
+      },
+      "_npmUser": {
+        "name": "leerobinson"
+      }
+    },
+    "3.0.0-canary.202508252028": {
+      "name": "ms",
+      "version": "3.0.0-canary.202508252028",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.202508252028.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@3.0.0-canary.202508252028",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "3.0.0-canary.202508252038": {
+      "name": "ms",
+      "version": "3.0.0-canary.202508252038",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.202508252038.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@3.0.0-canary.202508252038",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "3.0.0-canary.202508261539": {
+      "name": "ms",
+      "version": "3.0.0-canary.202508261539",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.202508261539.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@3.0.0-canary.202508261539",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "3.0.0-canary.202508261745": {
+      "name": "ms",
+      "version": "3.0.0-canary.202508261745",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.202508261745.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@3.0.0-canary.202508261745",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "3.0.0-canary.202508261828": {
+      "name": "ms",
+      "version": "3.0.0-canary.202508261828",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-3.0.0-canary.202508261828.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@3.0.0-canary.202508261828",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "4.0.0-nightly.202508270145": {
+      "name": "ms",
+      "version": "4.0.0-nightly.202508270145",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-4.0.0-nightly.202508270145.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@4.0.0-nightly.202508270145",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "4.0.0-nightly.202508271358": {
+      "name": "ms",
+      "version": "4.0.0-nightly.202508271358",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-4.0.0-nightly.202508271358.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@4.0.0-nightly.202508271358",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    },
+    "4.0.0-nightly.202508271359": {
+      "name": "ms",
+      "version": "4.0.0-nightly.202508271359",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/ms/-/ms-4.0.0-nightly.202508271359.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/ms@4.0.0-nightly.202508271359",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "vercel-release-bot"
+      }
+    }
+  }
+}

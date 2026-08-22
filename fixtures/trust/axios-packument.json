@@ -1,0 +1,1982 @@
+{
+  "name": "axios",
+  "dist-tags": {
+    "next": "1.7.0-beta.2",
+    "old-version": "0.30.0",
+    "v0x": "0.33.0",
+    "latest": "1.19.0"
+  },
+  "time": {
+    "created": "2014-08-29T23:08:36.810Z",
+    "modified": "2026-07-29T17:07:55.179Z",
+    "0.1.0": "2014-08-29T23:08:36.810Z",
+    "0.2.0": "2014-09-12T20:06:33.167Z",
+    "0.2.1": "2014-09-12T22:57:28.872Z",
+    "0.2.2": "2014-09-15T03:30:45.994Z",
+    "0.3.0": "2014-09-16T18:20:18.668Z",
+    "0.3.1": "2014-09-17T00:31:29.538Z",
+    "0.4.0": "2014-10-05T23:55:03.069Z",
+    "0.4.1": "2014-10-15T18:19:42.549Z",
+    "0.4.2": "2014-12-11T07:14:52.563Z",
+    "0.5.0": "2015-01-23T10:15:47.657Z",
+    "0.5.1": "2015-03-10T20:47:18.932Z",
+    "0.5.2": "2015-03-13T23:14:22.809Z",
+    "0.5.3": "2015-04-08T03:01:17.936Z",
+    "0.5.4": "2015-04-08T18:49:41.745Z",
+    "0.6.0": "2015-09-21T20:20:20.241Z",
+    "0.7.0": "2015-09-29T06:36:55.850Z",
+    "0.8.0": "2015-12-11T19:09:50.663Z",
+    "0.8.1": "2015-12-15T03:44:16.229Z",
+    "0.9.0": "2016-01-18T18:19:24.356Z",
+    "0.9.1": "2016-01-24T22:19:01.689Z",
+    "0.10.0": "2016-04-21T04:52:22.553Z",
+    "0.11.0": "2016-04-27T04:19:52.831Z",
+    "0.11.1": "2016-05-17T15:59:30.342Z",
+    "0.12.0": "2016-06-01T05:22:58.397Z",
+    "0.13.0": "2016-07-13T19:42:43.558Z",
+    "0.13.1": "2016-07-16T17:13:24.859Z",
+    "0.14.0": "2016-08-27T18:30:22.182Z",
+    "0.15.0": "2016-10-11T04:40:41.633Z",
+    "0.15.1": "2016-10-15T06:39:23.761Z",
+    "0.15.2": "2016-10-18T01:33:20.989Z",
+    "0.15.3": "2016-11-27T21:59:11.250Z",
+    "0.16.0": "2017-04-01T02:31:09.040Z",
+    "0.16.1": "2017-04-08T18:51:59.217Z",
+    "0.16.2": "2017-06-03T19:29:23.765Z",
+    "0.17.0": "2017-10-21T18:01:30.232Z",
+    "0.17.1": "2017-11-11T23:24:40.635Z",
+    "0.18.0": "2018-02-19T23:28:54.151Z",
+    "0.19.0-beta.1": "2018-08-09T18:44:25.247Z",
+    "0.19.0": "2019-05-30T16:13:16.930Z",
+    "0.18.1": "2019-06-01T00:46:36.277Z",
+    "0.19.1": "2020-01-07T17:23:39.782Z",
+    "0.19.2": "2020-01-22T04:25:53.354Z",
+    "0.20.0-0": "2020-07-15T16:07:30.516Z",
+    "0.20.0": "2020-08-21T03:12:48.792Z",
+    "0.21.0": "2020-10-23T16:27:13.883Z",
+    "0.21.1": "2020-12-22T04:20:06.101Z",
+    "0.21.2": "2021-09-04T10:18:50.516Z",
+    "0.21.3": "2021-09-04T19:05:59.101Z",
+    "0.21.4": "2021-09-06T15:35:43.073Z",
+    "0.22.0": "2021-10-01T05:54:01.140Z",
+    "0.23.0": "2021-10-12T15:37:08.278Z",
+    "0.24.0": "2021-10-25T17:51:25.987Z",
+    "0.25.0": "2022-01-18T07:14:06.173Z",
+    "0.26.0": "2022-02-13T14:22:07.992Z",
+    "0.26.1": "2022-03-09T17:13:42.282Z",
+    "0.27.0": "2022-04-25T16:42:10.109Z",
+    "0.27.1": "2022-04-26T07:36:38.268Z",
+    "0.27.2": "2022-04-27T10:00:58.685Z",
+    "1.0.0-alpha.1": "2022-05-31T19:23:57.168Z",
+    "1.0.0": "2022-10-04T19:24:14.051Z",
+    "1.1.0": "2022-10-06T19:19:53.272Z",
+    "1.1.1": "2022-10-07T09:15:00.061Z",
+    "1.1.2": "2022-10-07T10:14:46.118Z",
+    "1.1.3": "2022-10-15T13:42:22.106Z",
+    "1.2.0-alpha.1": "2022-11-10T19:06:10.040Z",
+    "1.2.0": "2022-11-22T19:06:02.018Z",
+    "1.2.1": "2022-12-05T19:39:11.122Z",
+    "1.2.2": "2022-12-29T06:38:42.365Z",
+    "1.2.3": "2023-01-17T17:56:39.473Z",
+    "1.2.4": "2023-01-24T17:21:58.022Z",
+    "1.2.5": "2023-01-26T15:06:37.154Z",
+    "1.2.6": "2023-01-28T16:41:09.114Z",
+    "1.3.0": "2023-01-31T16:55:47.652Z",
+    "1.3.1": "2023-02-01T23:31:00.077Z",
+    "1.3.2": "2023-02-03T18:10:48.275Z",
+    "1.3.3": "2023-02-13T18:47:20.873Z",
+    "1.3.4": "2023-02-22T21:06:23.063Z",
+    "1.3.5": "2023-04-05T18:03:03.807Z",
+    "1.3.6": "2023-04-19T19:38:57.160Z",
+    "1.4.0": "2023-04-27T23:05:52.716Z",
+    "1.5.0": "2023-08-26T19:10:50.109Z",
+    "1.5.1": "2023-09-26T18:22:12.460Z",
+    "1.6.0": "2023-10-26T21:15:55.685Z",
+    "1.6.1": "2023-11-08T15:09:28.450Z",
+    "1.6.2": "2023-11-14T20:36:10.212Z",
+    "1.6.3": "2023-12-26T23:16:17.756Z",
+    "1.6.4": "2024-01-03T22:10:55.605Z",
+    "1.6.5": "2024-01-05T19:52:15.051Z",
+    "1.6.6": "2024-01-24T23:12:19.622Z",
+    "1.6.7": "2024-01-25T19:58:51.338Z",
+    "0.28.0": "2024-02-12T18:38:24.432Z",
+    "1.6.8": "2024-03-15T16:32:47.800Z",
+    "0.28.1": "2024-03-28T17:36:11.007Z",
+    "1.7.0-beta.0": "2024-04-28T19:50:54.466Z",
+    "1.7.0-beta.1": "2024-05-07T18:37:51.489Z",
+    "1.7.0-beta.2": "2024-05-19T18:01:23.901Z",
+    "1.7.0": "2024-05-19T20:25:03.615Z",
+    "1.7.1": "2024-05-20T13:32:52.757Z",
+    "1.7.2": "2024-05-21T16:58:04.163Z",
+    "1.7.3": "2024-08-01T16:16:13.901Z",
+    "1.7.4": "2024-08-13T19:33:11.369Z",
+    "1.7.5": "2024-08-23T13:32:37.145Z",
+    "1.7.6": "2024-08-30T19:56:49.611Z",
+    "1.7.7": "2024-08-31T22:02:08.862Z",
+    "0.29.0": "2024-11-21T13:08:09.760Z",
+    "1.7.8": "2024-11-25T21:13:58.456Z",
+    "1.7.9": "2024-12-04T07:38:16.833Z",
+    "1.8.0": "2025-02-26T06:01:14.385Z",
+    "1.8.1": "2025-02-26T09:07:00.236Z",
+    "1.8.2": "2025-03-07T07:41:11.719Z",
+    "1.8.3": "2025-03-12T07:24:04.212Z",
+    "1.8.4": "2025-03-19T19:27:47.752Z",
+    "0.30.0": "2025-03-26T17:55:30.023Z",
+    "1.9.0": "2025-04-24T20:18:59.701Z",
+    "1.10.0": "2025-06-14T12:11:51.341Z",
+    "1.11.0": "2025-07-23T06:05:16.520Z",
+    "0.30.1": "2025-08-04T18:21:01.791Z",
+    "1.12.0": "2025-09-11T19:33:13.459Z",
+    "1.12.1": "2025-09-12T14:19:34.109Z",
+    "1.12.2": "2025-09-14T12:59:27.346Z",
+    "0.30.2": "2025-09-27T10:29:01.127Z",
+    "1.13.0": "2025-10-27T16:08:14.422Z",
+    "1.13.1": "2025-10-28T18:55:32.544Z",
+    "1.13.2": "2025-11-04T20:01:20.058Z",
+    "1.13.3": "2026-01-25T14:21:38.842Z",
+    "1.13.4": "2026-01-27T18:18:38.613Z",
+    "1.13.5": "2026-02-08T11:05:13.696Z",
+    "0.30.3": "2026-02-18T17:19:20.081Z",
+    "1.13.6": "2026-02-27T15:35:51.983Z",
+    "1.14.0": "2026-03-27T19:01:40.915Z",
+    "1.15.0": "2026-04-08T16:09:38.623Z",
+    "0.31.0": "2026-04-12T09:59:51.437Z",
+    "1.15.1": "2026-04-19T17:07:36.011Z",
+    "0.31.1": "2026-04-19T17:11:34.320Z",
+    "1.15.2": "2026-04-21T17:53:03.731Z",
+    "1.16.0": "2026-05-02T15:04:00.274Z",
+    "0.32.0": "2026-05-04T18:08:25.798Z",
+    "1.16.1": "2026-05-13T16:22:46.037Z",
+    "1.17.0": "2026-06-03T06:58:28.145Z",
+    "0.33.0": "2026-06-14T18:07:21.271Z",
+    "1.18.0": "2026-06-14T18:07:37.143Z",
+    "1.18.1": "2026-06-22T18:28:17.985Z",
+    "1.19.0": "2026-07-29T17:07:54.912Z",
+    "1.14.1": "2026-03-31T00:21:58.168Z",
+    "0.30.4": "2026-03-31T01:00:57.285Z"
+  },
+  "versions": {
+    "0.1.0": {
+      "name": "axios",
+      "version": "0.1.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.1.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.2.0": {
+      "name": "axios",
+      "version": "0.2.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.2.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.2.1": {
+      "name": "axios",
+      "version": "0.2.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.2.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.2.2": {
+      "name": "axios",
+      "version": "0.2.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.2.2.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.3.0": {
+      "name": "axios",
+      "version": "0.3.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.3.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.3.1": {
+      "name": "axios",
+      "version": "0.3.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.3.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.4.0": {
+      "name": "axios",
+      "version": "0.4.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.4.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.4.1": {
+      "name": "axios",
+      "version": "0.4.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.4.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.4.2": {
+      "name": "axios",
+      "version": "0.4.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.4.2.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.5.0": {
+      "name": "axios",
+      "version": "0.5.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.5.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.5.1": {
+      "name": "axios",
+      "version": "0.5.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.5.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.5.2": {
+      "name": "axios",
+      "version": "0.5.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.5.2.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.5.3": {
+      "name": "axios",
+      "version": "0.5.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.5.3.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.5.4": {
+      "name": "axios",
+      "version": "0.5.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.5.4.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.6.0": {
+      "name": "axios",
+      "version": "0.6.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.6.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.7.0": {
+      "name": "axios",
+      "version": "0.7.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.7.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.8.0": {
+      "name": "axios",
+      "version": "0.8.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.8.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.8.1": {
+      "name": "axios",
+      "version": "0.8.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.8.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.9.0": {
+      "name": "axios",
+      "version": "0.9.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.9.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.9.1": {
+      "name": "axios",
+      "version": "0.9.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.9.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.10.0": {
+      "name": "axios",
+      "version": "0.10.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.10.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.11.0": {
+      "name": "axios",
+      "version": "0.11.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.11.0.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.11.1": {
+      "name": "axios",
+      "version": "0.11.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.11.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.12.0": {
+      "name": "axios",
+      "version": "0.12.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.12.0.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.13.0": {
+      "name": "axios",
+      "version": "0.13.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.13.0.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.13.1": {
+      "name": "axios",
+      "version": "0.13.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.13.1.tgz"
+      },
+      "_npmUser": {
+        "name": "mzabriskie"
+      }
+    },
+    "0.14.0": {
+      "name": "axios",
+      "version": "0.14.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.14.0.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.15.0": {
+      "name": "axios",
+      "version": "0.15.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.15.0.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.15.1": {
+      "name": "axios",
+      "version": "0.15.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.15.1.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.15.2": {
+      "name": "axios",
+      "version": "0.15.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.15.2.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.15.3": {
+      "name": "axios",
+      "version": "0.15.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.15.3.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.16.0": {
+      "name": "axios",
+      "version": "0.16.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.16.0.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.16.1": {
+      "name": "axios",
+      "version": "0.16.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.16.1.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.16.2": {
+      "name": "axios",
+      "version": "0.16.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.16.2.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.17.0": {
+      "name": "axios",
+      "version": "0.17.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.17.0.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.17.1": {
+      "name": "axios",
+      "version": "0.17.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.17.1.tgz"
+      },
+      "_npmUser": {
+        "name": "nickuraltsev"
+      }
+    },
+    "0.18.0": {
+      "name": "axios",
+      "version": "0.18.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.18.0.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.19.0-beta.1": {
+      "name": "axios",
+      "version": "0.19.0-beta.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.19.0-beta.1.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.19.0": {
+      "name": "axios",
+      "version": "0.19.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.19.0.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.18.1": {
+      "name": "axios",
+      "version": "0.18.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.18.1.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.19.1": {
+      "name": "axios",
+      "version": "0.19.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.19.1.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.19.2": {
+      "name": "axios",
+      "version": "0.19.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.19.2.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.20.0-0": {
+      "name": "axios",
+      "version": "0.20.0-0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.20.0-0.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.20.0": {
+      "name": "axios",
+      "version": "0.20.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.20.0.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.21.0": {
+      "name": "axios",
+      "version": "0.21.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.21.0.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.21.1": {
+      "name": "axios",
+      "version": "0.21.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.21.1.tgz"
+      },
+      "_npmUser": {
+        "name": "emilyemorehouse"
+      }
+    },
+    "0.21.2": {
+      "name": "axios",
+      "version": "0.21.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.21.2.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.21.3": {
+      "name": "axios",
+      "version": "0.21.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.21.3.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.21.4": {
+      "name": "axios",
+      "version": "0.21.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.21.4.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.22.0": {
+      "name": "axios",
+      "version": "0.22.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.22.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.23.0": {
+      "name": "axios",
+      "version": "0.23.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.23.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.24.0": {
+      "name": "axios",
+      "version": "0.24.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.24.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.25.0": {
+      "name": "axios",
+      "version": "0.25.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.25.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.26.0": {
+      "name": "axios",
+      "version": "0.26.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.26.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.26.1": {
+      "name": "axios",
+      "version": "0.26.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.26.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.27.0": {
+      "name": "axios",
+      "version": "0.27.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.27.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.27.1": {
+      "name": "axios",
+      "version": "0.27.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.27.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.27.2": {
+      "name": "axios",
+      "version": "0.27.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.27.2.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.0.0-alpha.1": {
+      "name": "axios",
+      "version": "1.0.0-alpha.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.0.0-alpha.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.0.0": {
+      "name": "axios",
+      "version": "1.0.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.0.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.1.0": {
+      "name": "axios",
+      "version": "1.1.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.1.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.1.1": {
+      "name": "axios",
+      "version": "1.1.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.1.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.1.2": {
+      "name": "axios",
+      "version": "1.1.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.1.2.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.1.3": {
+      "name": "axios",
+      "version": "1.1.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.1.3.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.0-alpha.1": {
+      "name": "axios",
+      "version": "1.2.0-alpha.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.0-alpha.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.0": {
+      "name": "axios",
+      "version": "1.2.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.1": {
+      "name": "axios",
+      "version": "1.2.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.2": {
+      "name": "axios",
+      "version": "1.2.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.2.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.3": {
+      "name": "axios",
+      "version": "1.2.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.3.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.4": {
+      "name": "axios",
+      "version": "1.2.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.4.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.5": {
+      "name": "axios",
+      "version": "1.2.5",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.5.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.2.6": {
+      "name": "axios",
+      "version": "1.2.6",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.2.6.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.0": {
+      "name": "axios",
+      "version": "1.3.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.1": {
+      "name": "axios",
+      "version": "1.3.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.2": {
+      "name": "axios",
+      "version": "1.3.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.2.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.3": {
+      "name": "axios",
+      "version": "1.3.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.3.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.4": {
+      "name": "axios",
+      "version": "1.3.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.4.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.5": {
+      "name": "axios",
+      "version": "1.3.5",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.5.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.3.6": {
+      "name": "axios",
+      "version": "1.3.6",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.3.6.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.4.0": {
+      "name": "axios",
+      "version": "1.4.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.4.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.5.0": {
+      "name": "axios",
+      "version": "1.5.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.5.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.5.1": {
+      "name": "axios",
+      "version": "1.5.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.5.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.0": {
+      "name": "axios",
+      "version": "1.6.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.1": {
+      "name": "axios",
+      "version": "1.6.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.2": {
+      "name": "axios",
+      "version": "1.6.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.3": {
+      "name": "axios",
+      "version": "1.6.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.3.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.3",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.4": {
+      "name": "axios",
+      "version": "1.6.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.4.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.4",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.5": {
+      "name": "axios",
+      "version": "1.6.5",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.5.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.5",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.6": {
+      "name": "axios",
+      "version": "1.6.6",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.6.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.6",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.7": {
+      "name": "axios",
+      "version": "1.6.7",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.7.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.7",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.28.0": {
+      "name": "axios",
+      "version": "0.28.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.28.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@0.28.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.6.8": {
+      "name": "axios",
+      "version": "1.6.8",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.6.8.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.6.8",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.28.1": {
+      "name": "axios",
+      "version": "0.28.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.28.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@0.28.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.0-beta.0": {
+      "name": "axios",
+      "version": "1.7.0-beta.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.0-beta.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.0-beta.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.0-beta.1": {
+      "name": "axios",
+      "version": "1.7.0-beta.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.0-beta.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.0-beta.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.0-beta.2": {
+      "name": "axios",
+      "version": "1.7.0-beta.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.0-beta.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.0-beta.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.0": {
+      "name": "axios",
+      "version": "1.7.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.1": {
+      "name": "axios",
+      "version": "1.7.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.2": {
+      "name": "axios",
+      "version": "1.7.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.3": {
+      "name": "axios",
+      "version": "1.7.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.3.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.3",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.4": {
+      "name": "axios",
+      "version": "1.7.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.4.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.4",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.5": {
+      "name": "axios",
+      "version": "1.7.5",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.5.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.5",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.6": {
+      "name": "axios",
+      "version": "1.7.6",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.6.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.6",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.7": {
+      "name": "axios",
+      "version": "1.7.7",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.7.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.7",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.29.0": {
+      "name": "axios",
+      "version": "0.29.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.29.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.8": {
+      "name": "axios",
+      "version": "1.7.8",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.8.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.8",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.7.9": {
+      "name": "axios",
+      "version": "1.7.9",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.7.9.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.7.9",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.8.0": {
+      "name": "axios",
+      "version": "1.8.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.8.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.8.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.8.1": {
+      "name": "axios",
+      "version": "1.8.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.8.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.8.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.8.2": {
+      "name": "axios",
+      "version": "1.8.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.8.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.8.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.8.3": {
+      "name": "axios",
+      "version": "1.8.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.8.3.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.8.3",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.8.4": {
+      "name": "axios",
+      "version": "1.8.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.8.4.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.8.4",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.30.0": {
+      "name": "axios",
+      "version": "0.30.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.30.0.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.9.0": {
+      "name": "axios",
+      "version": "1.9.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.9.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.9.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.10.0": {
+      "name": "axios",
+      "version": "1.10.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.10.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.10.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.11.0": {
+      "name": "axios",
+      "version": "1.11.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.11.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.11.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.30.1": {
+      "name": "axios",
+      "version": "0.30.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.30.1.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.12.0": {
+      "name": "axios",
+      "version": "1.12.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.12.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.12.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.12.1": {
+      "name": "axios",
+      "version": "1.12.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.12.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.12.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.12.2": {
+      "name": "axios",
+      "version": "1.12.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.12.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.12.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "0.30.2": {
+      "name": "axios",
+      "version": "0.30.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.30.2.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.13.0": {
+      "name": "axios",
+      "version": "1.13.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.13.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.13.1": {
+      "name": "axios",
+      "version": "1.13.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.13.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.13.2": {
+      "name": "axios",
+      "version": "1.13.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.13.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.13.3": {
+      "name": "axios",
+      "version": "1.13.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.3.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.13.4": {
+      "name": "axios",
+      "version": "1.13.4",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.4.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.13.4",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9061ef30-3132-49f4-b28c-9338d192a1a9"
+        }
+      }
+    },
+    "1.13.5": {
+      "name": "axios",
+      "version": "1.13.5",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.5.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.13.5",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9061ef30-3132-49f4-b28c-9338d192a1a9"
+        }
+      }
+    },
+    "0.30.3": {
+      "name": "axios",
+      "version": "0.30.3",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.30.3.tgz"
+      },
+      "_npmUser": {
+        "name": "jasonsaayman"
+      }
+    },
+    "1.13.6": {
+      "name": "axios",
+      "version": "1.13.6",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.13.6.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.13.6",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9061ef30-3132-49f4-b28c-9338d192a1a9"
+        }
+      }
+    },
+    "1.14.0": {
+      "name": "axios",
+      "version": "1.14.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.14.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.14.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9061ef30-3132-49f4-b28c-9338d192a1a9"
+        }
+      }
+    },
+    "1.15.0": {
+      "name": "axios",
+      "version": "1.15.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.15.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.15.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "0.31.0": {
+      "name": "axios",
+      "version": "0.31.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.31.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@0.31.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "1.15.1": {
+      "name": "axios",
+      "version": "1.15.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.15.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.15.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "0.31.1": {
+      "name": "axios",
+      "version": "0.31.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.31.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@0.31.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "1.15.2": {
+      "name": "axios",
+      "version": "1.15.2",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.15.2.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.15.2",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "1.16.0": {
+      "name": "axios",
+      "version": "1.16.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.16.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.16.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "0.32.0": {
+      "name": "axios",
+      "version": "0.32.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.32.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@0.32.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "1.16.1": {
+      "name": "axios",
+      "version": "1.16.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.16.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.16.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:73ba2d02-681c-4f11-b06c-4c2d914ece20"
+        }
+      }
+    },
+    "1.17.0": {
+      "name": "axios",
+      "version": "1.17.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.17.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.17.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9acc5c94-36dd-4b4c-ba88-84d63a9999fc"
+        }
+      }
+    },
+    "0.33.0": {
+      "name": "axios",
+      "version": "0.33.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-0.33.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@0.33.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9acc5c94-36dd-4b4c-ba88-84d63a9999fc"
+        }
+      }
+    },
+    "1.18.0": {
+      "name": "axios",
+      "version": "1.18.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.18.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9acc5c94-36dd-4b4c-ba88-84d63a9999fc"
+        }
+      }
+    },
+    "1.18.1": {
+      "name": "axios",
+      "version": "1.18.1",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.18.1.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.18.1",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9acc5c94-36dd-4b4c-ba88-84d63a9999fc"
+        }
+      }
+    },
+    "1.19.0": {
+      "name": "axios",
+      "version": "1.19.0",
+      "dist": {
+        "tarball": "https://registry.npmjs.org/axios/-/axios-1.19.0.tgz",
+        "attestations": {
+          "url": "https://registry.npmjs.org/-/npm/v1/attestations/axios@1.19.0",
+          "provenance": {
+            "predicateType": "https://slsa.dev/provenance/v1"
+          }
+        }
+      },
+      "_npmUser": {
+        "name": "GitHub Actions",
+        "trustedPublisher": {
+          "id": "github",
+          "oidcConfigId": "oidc:9acc5c94-36dd-4b4c-ba88-84d63a9999fc"
+        }
+      }
+    }
+  }
+}
