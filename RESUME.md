@@ -8,7 +8,9 @@ Closes the evasion ChainDrop used on 2026-08-04 (Microsoft: 400+ packages). The 
 
 **Shipped end to end**: PR #28 rebase-merged as `1c178cc` → CI green on the exact merged commit via the check-runs API → tag `v1.15.0` → published by trusted publishing with provenance, npm `latest` = 1.15.0 → `v1` moved → GitHub Release → clean-room install from the live registry re-verified. Zero new CodeQL alerts. **Item 0 below is now resolved**: the npmjs.com Trusted Publisher entry works, 1.15.0 published by OIDC with no token.
 
-**The one thing still owner-gated: VS Code extension 1.15.0 is committed but not uploaded to the Marketplace** (needs a signed-in browser for the gallery `PUT`; no VSCE_PAT here). It is not cosmetic this time: a new signal kind meant `capabilitiesOf` silently dropped `bootstrap:`, so a bootstrapping package read as plain "runs other programs" in the editor. Fixed and tested (56 extension tests), just not published.
+**VS Code extension 1.15.0 also PUBLISHED** (2026-08-31, confirmed live via the public `extensionquery`, not by the PUT's 200). It was not cosmetic this time: a new signal kind meant `capabilitiesOf` silently dropped `bootstrap:`, so a bootstrapping package read as plain "runs other programs" in the editor. Runtime bootstrap is now a first-class capability and leads the sentence. 56 extension tests. **Rule this establishes: "the extension shells the CLI so it needs no release" holds for new commands and new findings, but NOT for a new signal KIND, because the kind-to-English map lives in the extension.**
+
+Nothing is outstanding for this release. Next session: the 7 pre-existing CodeQL alerts (cheap), then distribution rather than features (see the 1.11.0 adoption measurement).
 
 ## v1.14.0 (2026-08-22): the provenance-downgrade gate, MERGED + PUBLISHED (1.14.0 live on npm)
 
