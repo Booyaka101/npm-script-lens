@@ -269,10 +269,13 @@ function condenseSignals(rows) {
 // kinds are also the honest summary. Say what each kind lets the script do, keep
 // a couple of raw signals as the evidence, and drop the rest.
 //
-// Listed in the order score() checks them, so the first capability present is
-// literally the one that set the risk level. That is what `why` explains.
-const CAPABILITY_ORDER = ['exec', 'obf', 'gyp', 'net', 'fs', 'env', 'ref'];
+// Listed so the first capability present is one that set the risk level.
+// score() scores bootstrap/exec/obf/gyp identically (all HIGH), so among those
+// the most specific leads: "installs another JavaScript runtime" says far more
+// than "runs other programs" about a package doing both.
+const CAPABILITY_ORDER = ['bootstrap', 'exec', 'obf', 'gyp', 'net', 'fs', 'env', 'ref'];
 const CAPABILITY = {
+  bootstrap: { does: 'installs another JavaScript runtime', why: 'a payload run under a runtime it fetched is one your Node-based tooling never sees' },
   exec: { does: 'runs other programs', why: 'anything your own shell could do, it can do' },
   obf: { does: 'assembles code while it runs', why: 'a script that decodes or builds itself is hiding what it does' },
   gyp: { does: 'compiles native code', why: 'its build file runs shell commands before a line of C is compiled' },

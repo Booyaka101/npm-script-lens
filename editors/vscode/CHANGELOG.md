@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.15.0
+
+**A package that installs another JavaScript runtime now says so.** CLI 1.15.0
+added the `RUNTIME_BOOTSTRAP` finding for the ChainDrop pattern (2026-08-04,
+400+ packages): a lifecycle script that fetches a Bun or Deno release and runs
+its real payload under that fresh interpreter, outside everything a Node-based
+scanner watches.
+
+The extension shells out to the CLI, so the risk level tracked automatically.
+The *explanation* did not: a new signal kind it did not recognise was dropped,
+so a bootstrapping package read as plain "runs other programs" and the one
+detail that mattered went missing. Runtime bootstrap is now a first-class
+capability, and it **leads** the sentence, ahead of the exec such a package
+also does, because "installs another JavaScript runtime" says more than "runs
+other programs" about a package doing both.
+
+Version numbering now tracks the CLI again (1.10.0 to 1.15.0).
+
 ## 1.10.0
 
 **You can now answer the question the extension asks you.** Until this release

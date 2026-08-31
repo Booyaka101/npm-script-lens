@@ -305,6 +305,16 @@ test('capabilitiesOf groups signals by what they let the script do, strongest fi
     'an unrecognised prefix is not invented into a capability');
 });
 
+test('a runtime bootstrap leads the explanation, ahead of the exec it also does', () => {
+  const caps = capabilitiesOf([{ signals: [
+    'bootstrap: bun fetched from oven-sh/bun releases, then runs stage2.js',
+    "exec: require('child_process')", 'net: fetch()', 'env: process.env',
+  ] }]);
+  assert.deepStrictEqual(caps.map((c) => c.kind), ['bootstrap', 'exec', 'net', 'env']);
+  assert.strictEqual(caps[0].does, 'installs another JavaScript runtime');
+  assert.match(caps[0].examples[0], /oven-sh\/bun releases/);
+});
+
 test('messageFor says what the script can do, not which functions it calls', () => {
   const esbuild = {
     name: 'esbuild',
