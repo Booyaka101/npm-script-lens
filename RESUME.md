@@ -1,8 +1,12 @@
 # ▶️ RESUME: npm-script-lens
 
-_Updated 2026-08-22 with v1.14.0 on a PR._
+_Updated 2026-08-31 with v1.15.0 on branch `feat/runtime-bootstrap` (PR to open)._
 
-## v1.14.0 (2026-08-22, branch `feat/trust-downgrade-gate`, PR open): the provenance-downgrade gate ⬅️ start here
+## v1.15.0 (2026-08-31, branch `feat/runtime-bootstrap`, PR to open): RUNTIME_BOOTSTRAP, the ChainDrop alternate-runtime escape ⬅️ start here
+
+Closes the evasion ChainDrop used on 2026-08-04 (Microsoft: 400+ packages). The preinstall `node setup.mjs` was already followed; the escape was inside it: setup.mjs downloaded a signed bun release from oven-sh/bun and ran a bundled stage 2 under bun, a file `walkFiles` never reached because it was spawned, not required. Now the entry-point resolver is a runtime table (node/bun/deno run/tsx/ts-node + npx/bunx/bun x), a download URL matching a runtime distribution is flagged, and a spawn/exec string-literal file arg is queued into the same walk, so the second stage is analyzed and its capabilities merge into a new HIGH finding **RUNTIME_BOOTSTRAP**. `--fail-on-runtime-bootstrap` + policy `runtimeBootstrapPolicy: "fail"` gate it; diff prints `gained vs <base>: runtime bootstrap (bun)`. 449 tests. Fixtures are served from a mock registry (scripts/serve-bootstrap-fixtures.js), never written to node_modules, because Defender quarantines ChainDrop-shaped bytes on disk. Full detail in PROGRESS.md → v1.15.0. **Owner steps: open/merge the PR, then CI green on the exact commit, tag v1.15.0 + move v1 + GitHub Release; publish rides the tag via trusted publishing (see item 0 below if the Trusted Publisher entry still needs creating).**
+
+## v1.14.0 (2026-08-22): the provenance-downgrade gate, MERGED + PUBLISHED (1.14.0 live on npm)
 
 New `trust` command + opt-in audit finding: flag a resolved version below the highest trust tier its package previously reached (trusted publisher > provenance > none, npm/cli#9242's ladder and key names). pnpm >= 10.21 has this natively as `trust-policy=no-downgrade`; npm and Yarn do not. The worked example is LIVE: axios@1.13.3 genuinely has no attestations after 1.13.2's provenance. One packument GET per package (trusted-publisher = `_npmUser.trustedPublisher`, verified empirically). Default off everywhere; only `--fail-on-downgrade` flips an exit code. Action input `trust-policy-check` wired into self-audit.yml. 429 tests. Full detail in PROGRESS.md → v1.14.0. **Owner steps: review/merge the PR, then tag v1.14.0 + move v1 + GitHub Release; npm publish rides the tag via trusted publishing.**
 

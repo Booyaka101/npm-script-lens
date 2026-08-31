@@ -48,6 +48,9 @@ npx npm-script-lens audit --path ./my-project --fail-on-high
 # --fail-on-downgrade  exit 1 if any package resolves below the highest trust
 #               tier it previously reached (npm/cli#9242); policy
 #               trustPolicy: "no-downgrade" reports without failing
+# --fail-on-runtime-bootstrap  exit 1 if any package installs another JS runtime
+#               (bun, deno) at install time; policy runtimeBootstrapPolicy:
+#               "fail" arms the same gate
 ```
 
 Reviewing a PR? Audit only what changed, and see what **upgrades gained**:
@@ -119,6 +122,68 @@ install time is a shell command), appear in `--sarif` under the rule
 > **Upgrading from ≤ 1.2.0?** A `manifest --check` baseline containing native
 > packages may now show a new `gyp` capability, the tool sees something it
 > previously could not. Re-baseline once with `manifest --write` and commit it.
+
+## RUNTIME_BOOTSTRAP: installing a different runtime to step outside the model
+
+Approval tooling models a **Node** payload. It reads the JavaScript that
+`preinstall` runs, follows its `require()` chain, and scores what it does. That
+model has an edge, and on 2026-08-04 the ChainDrop worm walked out of it across
+[more than 400 packages](https://www.microsoft.com/en-us/security/blog/2026/08/04/chaindrop-supply-chain-compromise-anatomy-self-propagating-worm/).
+
+Its preinstall was `node setup.mjs`, a command this tool already followed. The
+escape was inside that JavaScript. The dropper fetched a real, signed Bun
+release from the project's own GitHub releases, unpacked it, and ran a bundled
+second stage under that fresh interpreter. Microsoft's own detections name the
+technique: "Suspicious installation of Bun runtime." Two things about that stage
+defeated a Node-shaped scan: it ran under a different interpreter, and it was
+never `require()`d, it was passed as a file path to a spawn call, so the
+require-walk never reached it.
+
+So the runtime table is no longer one entry long. A file handed to `node`,
+`nodejs`, `bun`, `deno run`, `tsx`, `ts-node`, or the `npx` / `bunx` / `bun x`
+runner forms is opened from the tarball and analyzed with the same acorn pass,
+and its capabilities merge into the package score. Inside that pass, a download
+whose URL points at a JavaScript-runtime distribution is flagged, and a
+`child_process` / `spawn` / `exec` call whose string argument resolves to a file
+in the tarball is queued into the same walk, so the second stage is analyzed
+like any other entry point.
+
+A package that does this gets a `RUNTIME_BOOTSTRAP` finding, scored **HIGH**,
+that names the technique instead of folding it into a generic "spawns
+processes":
+
+```
+🔴 HIGH  RUNTIME_BOOTSTRAP  downloads bun from oven-sh/bun releases, then runs it on the bundled payload
+```
+
+The capabilities of that bundled payload (its network calls, its environment
+reads) are merged into the same finding and attributed to the bootstrapped
+runtime, so a stage that reads a token and phones home reads as exactly that,
+not as a mystery second file. The detector recognises the two runtimes' own
+install scripts, their release archive names, the `oven-sh/bun` release URLs, a
+global install of bun or deno through a package manager, and a shell pipe that
+installs one of them. Both shapes ChainDrop used land here: the `node setup.mjs`
+dropper, and the shell one-liner that installs bun and then runs a bundled
+payload with it.
+
+Installing a runtime is the signal; **using one is not**. A package that runs
+`bun run build` on a script it already ships is not flagged, that is an ordinary
+bun-native build. An alternate-runtime entry point that does not resolve to a
+file in the tarball degrades to the generic HIGH rather than crashing.
+
+In `audit --diff` / `--since`, a version that newly acquires a runtime bootstrap
+gets an explicit line, because ChainDrop republished each hijacked package as an
+ordinary patch bump:
+
+```
+⚠️ gained vs 1.0.0: runtime bootstrap (bun)
+```
+
+`--fail-on-runtime-bootstrap` exits 1 on the pattern, independent of
+`--fail-on-high`, and a checked-in `runtimeBootstrapPolicy: "fail"` in
+`script-lens.policy.json` arms the same gate for a whole team. The finding rides
+`--json` (`results[].runtimeBootstrap`) and SARIF (rule `runtime-bootstrap`,
+level error) alongside every other finding.
 
 ## diff: what did an upgrade change in the install scripts?
 
@@ -812,11 +877,18 @@ By default `allow`/`review`/`sync` auto-approve SAFE/LOW behavioral risk. A `scr
   },
   "waivers": {
     "sharp": { "allow": true, "reason": "vetted native build", "expires": "2027-01-01" }
-  }
+  },
+  "runtimeBootstrapPolicy": "fail" // exit audit 1 on a RUNTIME_BOOTSTRAP finding
 }
 ```
 
 Waivers are explicit human decisions that override the heuristic until they expire, an auditable record of *why* a risky package was trusted. With no policy file present, behavior is exactly the built-in default.
+
+`runtimeBootstrapPolicy: "fail"` is the checked-in form of
+[`--fail-on-runtime-bootstrap`](#runtime_bootstrap-installing-a-different-runtime-to-step-outside-the-model):
+either arms the gate so `audit` exits 1 when a package installs another
+JavaScript runtime at install time. It defaults to `"off"`, so no existing CI
+changes colour without opting in.
 
 Be clear about what `requireProvenance` buys you: **presence alone is not a
 trust signal**. The malicious `keyv@6.0.0` had valid provenance, and requiring
