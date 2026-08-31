@@ -29,7 +29,7 @@ const { execFileSync } = require('node:child_process');
 const { program } = require('commander');
 const { writeReport } = require('./format');
 const { fetchPackage, loadLocalPackage } = require('./registry');
-const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles } = require('./analyzer');
+const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles, runtimeBootstrapFindings } = require('./analyzer');
 const { loadDeps, resolveLockfile, viaChain, findProjects } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel, resolveProvenance, identityChanges, driftNote } = require('./trust');
@@ -207,6 +207,10 @@ async function runAudit(lockPath, {
       }
     }));
   }
+  for (const r of results) {
+    const boots = runtimeBootstrapFindings(r.rows);
+    if (boots.length > 0) r.runtimeBootstrap = boots;
+  }
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -307,6 +311,20 @@ const downgradeFail = (n) => {
   process.exitCode = 1;
 };
 
+// --- runtime bootstrap: the ChainDrop alternate-runtime gate ----------------
+
+// Whether the gate is armed for this project: the flag, or the policy key.
+function runtimeBootstrapArmed(target, opts) {
+  if (opts.failOnRuntimeBootstrap) return true;
+  const { policy } = loadPolicy(dirOf(target), opts.policy);
+  return policy.runtimeBootstrapPolicy === 'fail';
+}
+
+const bootstrapFail = (n) => {
+  process.stderr.write(`FAIL: ${n} package(s) bootstrap another JavaScript runtime at install time (RUNTIME_BOOTSTRAP, the ChainDrop pattern)\n`);
+  process.exitCode = 1;
+};
+
 async function trustAction(opts) {
   if (opts.offline) {
     process.stderr.write('trust: nothing to check under --offline, the tier history lives in the registry\n');
@@ -358,10 +376,12 @@ async function auditAction(opts) {
 
   const projects = [];
   let downgrades = 0;
+  let bootstraps = 0;
   for (const { path: lockPath } of found.lockfiles) {
     const results = await runAudit(lockPath, auditRunOpts(opts));
     const dg = await applyTrustDowngrade(results, lockPath, opts);
     if (dg) downgrades += dg.downgrades.length;
+    if (runtimeBootstrapArmed(lockPath, opts)) bootstraps += results.filter((r) => r.runtimeBootstrap).length;
     projects.push({ rel: rel(lockPath), results });
   }
   const output = opts.json
@@ -383,6 +403,7 @@ async function auditAction(opts) {
     process.exitCode = 1;
   }
   if (opts.failOnDowngrade && downgrades > 0) downgradeFail(downgrades);
+  if (bootstraps > 0) bootstrapFail(bootstraps);
   if (opts.cooldown !== undefined) {
     const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
     if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
@@ -445,6 +466,10 @@ async function auditProject(target, opts) {
     }
     if (opts.failOnDowngrade && downgradeResult && downgradeResult.downgrades.length > 0) {
       downgradeFail(downgradeResult.downgrades.length);
+    }
+    if (runtimeBootstrapArmed(target, opts)) {
+      const boots = results.filter((r) => r.runtimeBootstrap).length;
+      if (boots > 0) bootstrapFail(boots);
     }
     // Cooldown is orthogonal to every other check here: it judges the version's
     // AGE, not its behaviour, so a package can be clean and still fail it.
@@ -1384,7 +1409,8 @@ if (require.main === module) {
     .option('--cooldown-allow <pkg...>', 'exempt packages from --cooldown, by name or name@version')
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .option('--fail-on-downgrade', 'exit 1 if any package resolves below the highest trust tier it previously reached (trusted publisher > provenance > none, npm/cli#9242); policy trustPolicy: "no-downgrade" runs the same check without changing the exit code')
-    .option('--policy <file>', 'governance policy file holding trustPolicy / trustPolicyExclude / trustPolicyIgnoreAfter (default: script-lens.policy.json if present)')
+    .option('--fail-on-runtime-bootstrap', 'exit 1 if any package\'s install-time code fetches or installs another JavaScript runtime (bun, deno), the ChainDrop pattern; policy runtimeBootstrapPolicy: "fail" arms the same gate from the policy file')
+    .option('--policy <file>', 'governance policy file holding trustPolicy / trustPolicyExclude / trustPolicyIgnoreAfter / runtimeBootstrapPolicy (default: script-lens.policy.json if present)')
     .action(auditAction);
   common(program.command('sync'))
     .description('reconcile your package manager\'s native allowlist (npm allowScripts / pnpm allowBuilds / yarn dependenciesMeta / bun trustedDependencies) with the lockfile')

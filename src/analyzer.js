@@ -29,6 +29,39 @@ const NOISE_BINS = new Set(['true', 'echo', 'exit', 'set']);
 const RUNNERS = new Set(['npm', 'yarn', 'pnpm']);
 const MAX_DEPTH = 3, MAX_FILES = 30;
 
+// The runtimes an install script can hand a JS/TS file to. ChainDrop's escape
+// was exactly this table being one entry long: `node setup.mjs` was followed,
+// the bun/deno/tsx equivalents were not.
+const DIRECT_RUNTIMES = new Set(['node', 'nodejs', 'bun', 'tsx', 'ts-node']);
+const RUNTIME_PKGS = new Set(['bun', 'deno', 'tsx', 'ts-node']);
+const BUN_CMDS = new Set(['install', 'i', 'add', 'remove', 'rm', 'update', 'outdated', 'link', 'unlink',
+  'pm', 'test', 'init', 'create', 'upgrade', 'repl', 'build', 'exec']);
+const EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print']);
+
+// Where JavaScript runtimes are distributed. Fetching one of these from a
+// lifecycle script (or the JS it runs) bootstraps an interpreter the approval
+// model never sees: ChainDrop (2026-08-04) pulled a signed bun 1.3.13 release
+// zip from oven-sh/bun and ran its bundled 710 KB payload under it.
+const RUNTIME_DIST = [
+  { re: /github\.com\/oven-sh\/bun\/releases/i, runtime: 'bun', via: 'oven-sh/bun releases' },
+  { re: /\bbun-(?:linux|darwin|windows)-(?:x64|aarch64)(?:-[a-z0-9]+)*\.zip/i, runtime: 'bun', via: 'a bun release archive' },
+  { re: /\bbun\.(?:sh|com)\/install/i, runtime: 'bun', via: 'bun.sh/install' },
+  { re: /\bdeno\.land\/(?:x\/)?install|\bdl\.deno\.land/i, runtime: 'deno', via: 'deno.land/install' },
+];
+
+const binName = (t) => t.split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
+
+// runtime -> "fetched from <where>" for every distribution source named in
+// `text`, first match per runtime wins.
+function bootstrapHits(text) {
+  const hits = new Map();
+  for (const d of RUNTIME_DIST) if (!hits.has(d.runtime) && d.re.test(text)) hits.set(d.runtime, `fetched from ${d.via}`);
+  return hits;
+}
+
+const bootstrapSignal = (runtime, how, runs = []) =>
+  `bootstrap: ${runtime} ${how}${runs.length > 0 ? `, then runs ${runs.slice(0, 3).join(', ')}` : ''}`;
+
 const short = (s) => (s.length > 60 ? `${s.slice(0, 57)}...` : s);
 
 // Best-effort literal text of a call argument ("node-gyp rebuild ..." out of a
@@ -83,7 +116,7 @@ function resolveFile(files, from, spec) {
     else if (part !== '.') base.push(part);
   }
   const p = base.join('/');
-  for (const cand of [p, `${p}.js`, `${p}.cjs`, `${p}.mjs`, `${p}/index.js`, `${p}/index.cjs`]) {
+  for (const cand of [p, `${p}.js`, `${p}.cjs`, `${p}.mjs`, `${p}/index.js`, `${p}/index.cjs`, `${p}.ts`, `${p}/index.ts`]) {
     if (files.has(cand)) return cand;
   }
   return null;
@@ -110,6 +143,29 @@ function looksLikeJs(text) {
 // depth guards decoded-payload recursion (base64 inside base64).
 function analyzeJs(source, signals, follow, depth = 0) {
   if (depth > 2) return;
+  const boots = new Map();
+  const spawnRuns = [];
+  // A string literal handed to an exec call that names a JS/TS source is an
+  // entry point like any other: ChainDrop's stage 2 was spawned under the
+  // downloaded bun, never require()d, so the specifier walk alone missed it.
+  const followSpawnFiles = (text) => {
+    for (const tok of String(text).split(/\s+/)) {
+      const t = tok.replace(/^['"]|['"]$/g, '').replace(/^\.?\//, '');
+      if (!/\.(?:js|cjs|mjs|ts|mts|cts)$/i.test(t)) continue;
+      follow.add(`./${t}`);
+      if (!spawnRuns.includes(t)) spawnRuns.push(t);
+    }
+  };
+  const spawnArgFiles = (args) => {
+    for (const a of args) {
+      const elements = a && a.type === 'ArrayExpression' ? (a.elements || []) : [a];
+      for (const el of elements) {
+        if (!el) continue;
+        if (el.type === 'Literal' && typeof el.value === 'string') followSpawnFiles(el.value);
+        else if (el.type === 'TemplateLiteral') for (const q of el.quasis) followSpawnFiles(q.value.cooked || '');
+      }
+    }
+  };
   const decodeAndAnalyze = (text) => {
     if (looksLikeJs(text)) analyzeJs(text, signals, follow, depth + 1);
   };
@@ -131,6 +187,14 @@ function analyzeJs(source, signals, follow, depth = 0) {
     if (node.type === 'NewExpression' && node.callee.type === 'Identifier' && node.callee.name === 'Function') {
       signals.add('obf: new Function() constructor');
     }
+    if (node.type === 'Literal' && typeof node.value === 'string') {
+      for (const [rt, how] of bootstrapHits(node.value)) if (!boots.has(rt)) boots.set(rt, how);
+    }
+    if (node.type === 'TemplateLiteral') {
+      for (const [rt, how] of bootstrapHits(node.quasis.map((q) => q.value.cooked || '').join(''))) {
+        if (!boots.has(rt)) boots.set(rt, how);
+      }
+    }
     if (node.type !== 'CallExpression') return;
     const spec = requireTarget(node);
     if (spec === DYNAMIC) {
@@ -146,6 +210,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
       if (EXEC_FNS.has(c.name)) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${c.name}()`}`);
+        spawnArgFiles(node.arguments);
       } else if (c.name === 'fetch') signals.add('net: fetch()');
       else if (c.name === 'eval') {
         signals.add('obf: eval()');
@@ -164,7 +229,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
       if (prop === 'join' && recv === 'path' && node.arguments[0] &&
           node.arguments[0].type === 'Identifier' && node.arguments[0].name === '__dirname') {
         const parts = node.arguments.slice(1).map(argText);
-        if (parts.every(Boolean) && /\.(js|cjs|mjs)$/.test(parts[parts.length - 1])) {
+        if (parts.every(Boolean) && /\.(js|cjs|mjs|ts|mts|cts)$/.test(parts[parts.length - 1])) {
           follow.add(`./${parts.join('/')}`);
         }
       }
@@ -180,6 +245,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
       } else if (EXEC_FNS.has(prop) && (!AMBIGUOUS.has(prop) || EXEC_RECV.test(recv))) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${recv || '?'}.${prop}()`}`);
+        spawnArgFiles(node.arguments);
       } else if (NET_RECV.has(recv) && NET_FNS.has(prop)) {
         signals.add(`net: ${recv}.${prop}`);
       } else if (FS_FNS.has(prop) && (!AMBIGUOUS.has(prop) || /^fs/i.test(recv) || recv === 'promises')) {
@@ -187,6 +253,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
       }
     }
   });
+  for (const [rt, how] of boots) signals.add(bootstrapSignal(rt, how, spawnRuns));
 }
 
 // Split a shell line on top-level && || ; |, but not inside quotes, so
@@ -211,43 +278,114 @@ function splitShell(cmd) {
   return parts;
 }
 
+// What a shell part hands to a JavaScript runtime, before tarball resolution.
+// null when the part does not invoke one; otherwise { runtime, kind, wrapper }
+// plus `file` / `body` / `target`, where kind is:
+//   file   a source file argument      eval   an inline -e/--eval/deno eval body
+//   run    `bun run <target>`          other  a runtime subcommand with no file
+//   none   a bare runtime (REPL), nothing to open
+function runtimeInvocation(part, tokens) {
+  let bin = binName(tokens[0]);
+  let rest = tokens.slice(1);
+  let wrapper = null;
+  if (bin === 'npx' || bin === 'bunx' || (bin === 'bun' && rest[0] === 'x')) {
+    wrapper = bin === 'npx' ? 'npx' : 'bunx';
+    if (bin === 'bun') rest = rest.slice(1);
+    const i = rest.findIndex((t) => !t.startsWith('-'));
+    if (i < 0) return null;
+    bin = binName(rest[i]).replace(/@.*$/, '');
+    rest = rest.slice(i + 1);
+    if (!DIRECT_RUNTIMES.has(bin) && bin !== 'deno') return null;
+  }
+  if (bin === 'deno') {
+    if (rest[0] === 'eval' && rest[1]) return { runtime: 'deno', kind: 'eval', body: evalBody(part, true), wrapper };
+    if (rest[0] !== 'run') return { runtime: 'deno', kind: 'other', wrapper };
+    const file = rest.slice(1).find((t) => !t.startsWith('-'));
+    return { runtime: 'deno', kind: file ? 'file' : 'other', file, wrapper };
+  }
+  if (!DIRECT_RUNTIMES.has(bin)) return null;
+  const runtime = bin === 'nodejs' ? 'node' : bin;
+  const evalIdx = rest.findIndex((t) => EVAL_FLAGS.has(t));
+  if (evalIdx >= 0 && rest[evalIdx + 1]) return { runtime, kind: 'eval', body: evalBody(part, false), wrapper };
+  if (bin === 'bun' && rest[0] === 'run') {
+    const target = rest.slice(1).find((t) => !t.startsWith('-'));
+    return { runtime, kind: target ? 'run' : 'other', target, wrapper };
+  }
+  if (bin === 'bun' && BUN_CMDS.has(rest[0])) return { runtime, kind: 'other', wrapper };
+  const file = rest.find((t) => !t.startsWith('-'));
+  return { runtime, kind: file ? 'file' : 'none', file, wrapper };
+}
+
+// The eval body after -e/--eval/-p/--print (or deno's `eval` subcommand),
+// with one layer of shell quoting stripped.
+const evalBody = (part, denoEval) => part.trim()
+  .replace(denoEval ? /^.*?\beval\s+/ : /^.*?(?:-e|--eval|-p|--print)\s+/, '')
+  .replace(/^(['"])([\s\S]*)\1$/, '$2');
+
+// `npm i -g bun`: installing a runtime through the package manager is the
+// same bootstrap as downloading its release archive.
+function globalRuntimeInstalls(bin, tokens) {
+  if (!RUNNERS.has(bin)) return [];
+  const global = tokens.some((t) => t === '-g' || t === '--global') || (bin === 'yarn' && tokens[1] === 'global');
+  const sub = bin === 'yarn' && tokens[1] === 'global' ? tokens[2] : tokens[1];
+  if (!global || !['install', 'i', 'add'].includes(sub)) return [];
+  return tokens.slice(2).map((t) => t.replace(/@.*$/, '')).filter((t) => RUNTIME_PKGS.has(t));
+}
+
 // Analyze one shell command line: known binaries are flagged directly,
-// `npm run x` recurses into the package's own scripts, and `node <file>`
-// scripts are opened from the tarball and walked (following relative requires
-// up to MAX_DEPTH / MAX_FILES).
+// `npm run x` recurses into the package's own scripts, and a file handed to
+// any runtime in the table (node, bun, deno run, tsx, ts-node, and the
+// npx/bunx wrapper forms) is opened from the tarball and walked (following
+// relative requires up to MAX_DEPTH / MAX_FILES).
 function analyzeCommand(cmd, files, signals, scripts = {}, visited = new Set()) {
   const queue = [];
   const evalFollow = new Set();
+  const boots = new Map();
+  const runs = [];
   for (const part of splitShell(cmd)) {
-    let tokens = part.trim().split(/\s+/).filter(Boolean);
+    const tokens = part.trim().split(/\s+/).filter(Boolean);
     // strip FOO=bar prefixes and transparent cross-env wrappers
     while (tokens.length > 0 && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]) || tokens[0] === 'cross-env')) tokens.shift();
     if (tokens.length === 0) continue;
     const clean = tokens.join(' ');
-    const bin = tokens[0].split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
-    if (EXEC_BINS.has(bin)) signals.add(`exec: ${short(clean)}`);
+    const bin = binName(tokens[0]);
+    for (const [rt, how] of bootstrapHits(part)) if (!boots.has(rt)) boots.set(rt, how);
+    const inv = runtimeInvocation(part, tokens);
+    if (inv) {
+      if (inv.wrapper) {
+        signals.add(`exec: ${short(clean)}`);
+        signals.add(`net: ${inv.wrapper} (may download the package it runs)`);
+      }
+      if (inv.kind === 'eval') {
+        analyzeJs(inv.body, signals, evalFollow);
+      } else if (inv.kind === 'run' && typeof scripts[inv.target] === 'string' && !visited.has(inv.target)) {
+        visited.add(inv.target);
+        analyzeCommand(scripts[inv.target], files, signals, scripts, visited);
+      } else if (inv.kind === 'file' || inv.kind === 'run') {
+        const file = inv.kind === 'run' ? inv.target : inv.file;
+        const resolved = resolveFile(files, 'x', `./${file.replace(/^\.\//, '')}`);
+        if (resolved) {
+          queue.push({ path: resolved, depth: 0 });
+          runs.push(resolved);
+        } else if (inv.kind === 'run') {
+          if (!visited.has(inv.target)) signals.add(`exec: ${short(clean)} (script not found)`);
+        } else signals.add(`exec: ${inv.runtime} ${short(file)} (source not in tarball)`);
+      } else if (inv.kind === 'other') {
+        signals.add(`exec: ${short(clean)}`);
+      }
+    } else if (EXEC_BINS.has(bin)) signals.add(`exec: ${short(clean)}`);
     else if (NET_BINS.has(bin)) signals.add(`net: ${short(clean)}`);
-    else if (bin === 'npx') {
+    else if (bin === 'npx' || bin === 'bunx') {
       signals.add(`exec: ${short(clean)}`);
-      signals.add('net: npx (may download the package it runs)');
+      signals.add(`net: ${bin} (may download the package it runs)`);
     } else if (RUNNERS.has(bin) && (tokens[1] === 'run' || tokens[1] === 'run-script') && tokens[2]) {
       const target = tokens[2];
       if (typeof scripts[target] === 'string' && !visited.has(target)) {
         visited.add(target);
         analyzeCommand(scripts[target], files, signals, scripts, visited);
       } else if (!visited.has(target)) signals.add(`exec: ${short(clean)} (script not found)`);
-    } else if (bin === 'node' || bin === 'nodejs') {
-      const evalIdx = tokens.findIndex((t) => ['-e', '--eval', '-p', '--print'].includes(t));
-      if (evalIdx > 0 && tokens[evalIdx + 1]) {
-        analyzeJs(part.trim().replace(/^.*?(?:-e|--eval|-p|--print)\s+/, '').replace(/^(['"])([\s\S]*)\1$/, '$2'),
-          signals, evalFollow);
-      } else {
-        const file = tokens.slice(1).find((t) => !t.startsWith('-'));
-        const resolved = file && resolveFile(files, 'x', `./${file.replace(/^\.\//, '')}`);
-        if (resolved) queue.push({ path: resolved, depth: 0 });
-        else if (file) signals.add(`exec: node ${short(file)} (source not in tarball)`);
-      }
     } else if (!NOISE_BINS.has(bin)) {
+      for (const rt of globalRuntimeInstalls(bin, tokens)) if (!boots.has(rt)) boots.set(rt, `installed via ${bin} -g`);
       signals.add(`exec: ${short(clean)} (unresolved binary)`);
     }
   }
@@ -255,23 +393,24 @@ function analyzeCommand(cmd, files, signals, scripts = {}, visited = new Set()) 
     const resolved = resolveFile(files, 'x', spec);
     if (resolved) queue.push({ path: resolved, depth: 0 });
   }
+  for (const [rt, how] of boots) signals.add(bootstrapSignal(rt, how, [...new Set(runs)]));
   walkFiles(files, queue.map((q) => q.path), signals);
 }
 
-// The local files a shell line directly executes via `node <file>`, the
-// "what does node install.js actually contain" surface the review command
-// displays. Mirrors analyzeCommand's resolution without collecting signals.
+// The local files a shell line directly hands to a runtime, the "what does
+// `node install.js` actually contain" surface the review command displays.
+// Same runtime table as analyzeCommand (via runtimeInvocation), without
+// collecting signals.
 function commandEntryFiles(cmd, files) {
   const out = [];
   for (const part of splitShell(cmd)) {
     const tokens = part.trim().split(/\s+/).filter(Boolean);
     while (tokens.length > 0 && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]) || tokens[0] === 'cross-env')) tokens.shift();
     if (tokens.length === 0) continue;
-    const bin = tokens[0].split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
-    if (bin !== 'node' && bin !== 'nodejs') continue;
-    if (tokens.some((t) => ['-e', '--eval', '-p', '--print'].includes(t))) continue;
-    const file = tokens.slice(1).find((t) => !t.startsWith('-'));
-    const resolved = file && resolveFile(files, 'x', `./${file.replace(/^\.\//, '')}`);
+    const inv = runtimeInvocation(part, tokens);
+    if (!inv || (inv.kind !== 'file' && inv.kind !== 'run')) continue;
+    const file = inv.kind === 'run' ? inv.target : inv.file;
+    const resolved = resolveFile(files, 'x', `./${file.replace(/^\.\//, '')}`);
     if (resolved && !out.includes(resolved)) out.push(resolved);
   }
   return out;
@@ -303,8 +442,10 @@ function score(signals) {
   // obf ranks with exec: code that decodes/constructs itself at install time
   // can do anything once it runs, and hiding is itself the signal. gyp joins
   // them: a binding.gyp command expansion is a shell command node-gyp runs
-  // during configure, before a single line of C is compiled.
-  if (kinds.has('exec') || kinds.has('obf') || kinds.has('gyp')) return 'HIGH';
+  // during configure, before a single line of C is compiled. bootstrap too:
+  // installing another JS runtime at install time is how ChainDrop stepped
+  // outside every Node-focused monitor.
+  if (kinds.has('exec') || kinds.has('obf') || kinds.has('gyp') || kinds.has('bootstrap')) return 'HIGH';
   if (kinds.has('net')) return 'MEDIUM';
   if (kinds.has('fs') || kinds.has('env')) return 'LOW';
   return 'SAFE';
@@ -324,6 +465,9 @@ function analyzePackage(pkg) {
   if (pkg.files && pkg.files.has('binding.gyp')) {
     const { findings, partial, notes } = collectGypFindings(pkg.files);
     gypSignals = findings.map((f) => `gyp: ${f.channel} ${short(String(f.command).trim())}`);
+    for (const f of findings) {
+      for (const [rt, how] of bootstrapHits(String(f.command))) gypSignals.push(bootstrapSignal(rt, how));
+    }
     if (partial) gypSignals.push('gyp: binding.gyp did not parse, scanned as raw text');
     for (const n of notes) if (/not scanned/.test(n)) gypSignals.push(`gyp: ${short(n)}`);
   }
@@ -335,4 +479,25 @@ function analyzePackage(pkg) {
   });
 }
 
-module.exports = { analyzePackage, analyzeCommand, analyzeJs, walkFiles, resolveFile, splitShell, score, commandEntryFiles };
+// RUNTIME_BOOTSTRAP findings for one package's rows: one entry per runtime,
+// detail carrying every distinct way it is obtained (and what it then runs).
+function runtimeBootstrapFindings(rows) {
+  const byRuntime = new Map();
+  for (const row of rows || []) {
+    for (const s of row.signals || []) {
+      if (!s.startsWith('bootstrap: ')) continue;
+      const rest = s.slice('bootstrap: '.length);
+      const runtime = rest.split(/\s+/)[0];
+      const detail = rest.slice(runtime.length + 1);
+      const prev = byRuntime.get(runtime);
+      if (!prev) byRuntime.set(runtime, [detail]);
+      else if (!prev.includes(detail)) prev.push(detail);
+    }
+  }
+  return [...byRuntime].map(([runtime, details]) => ({ runtime, detail: details.join('; ') }));
+}
+
+module.exports = {
+  analyzePackage, analyzeCommand, analyzeJs, walkFiles, resolveFile, splitShell, score,
+  commandEntryFiles, runtimeInvocation, runtimeBootstrapFindings,
+};

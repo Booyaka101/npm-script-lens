@@ -8,6 +8,7 @@ const FLAGS = [
   '--no-trust', '--no-cache', '--offline', '--deep', '--fail-on-high', '--ci-check', '--sync-check',
   '--diff', '--since', '--output-allowscripts', '--input', '--auto-fix', '--force', '--out', '--help',
   '--fail-on', '--deps', '--require-gate', '--fail-on-downgrade', '--exclude', '--ignore-after',
+  '--fail-on-runtime-bootstrap',
 ];
 
 const bash = () => `# npm-script-lens bash completion. Add to ~/.bashrc:

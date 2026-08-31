@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.15.0 (2026-08-31)
+
+**Follow the payload into an alternate runtime: the ChainDrop escape.** On
+2026-08-04 the ChainDrop worm compromised more than 400 npm packages
+([Microsoft Security, 2026-08-04](https://www.microsoft.com/en-us/security/blog/2026/08/04/chaindrop-supply-chain-compromise-anatomy-self-propagating-worm/)).
+Its preinstall was plain `node setup.mjs`, a command this tool already follows.
+The escape was inside that JavaScript: `setup.mjs` downloaded a real signed Bun
+1.3.13 release zip from `oven-sh/bun`, extracted it, and ran a bundled 710 KB
+second stage under Bun, a runtime no Node-focused scanner was watching (the
+Microsoft detections are literally "Suspicious installation of Bun runtime").
+That second stage never appeared in a `require()` chain, so the walk that models
+a Node payload never reached it.
+
+Two half-fixes, because the bug was in two halves:
+
+- **The entry-point resolver is now a runtime table, not hardcoded `node`.** A
+  file handed to `node`, `nodejs`, `bun`, `deno run`, `tsx`, `ts-node`, or the
+  `npx`/`bunx`/`bun x` runner forms is opened from the tarball and analyzed with
+  the same acorn pass, capabilities merged into the package score. `review`
+  previews the same file. The shared walker (depth budget, cycle guard) is
+  reused, not cloned; `.ts` sources are now indexed for the TypeScript runtimes.
+- **The acorn pass follows the escape.** A `fetch`/download whose URL matches a
+  JS-runtime distribution is flagged, and a `child_process`/`spawn`/`exec` call
+  whose string argument resolves to a file in the tarball is queued into the
+  same walk, so the Bun-spawned stage 2 is analyzed like any other entry point.
+
+- **New finding `RUNTIME_BOOTSTRAP` (HIGH).** A lifecycle script, an analyzed JS
+  file, or a `binding.gyp` command expansion that fetches or installs a
+  JavaScript runtime. Covers `bun.sh/install`, `deno.land/install` and
+  `dl.deno.land`, `oven-sh/bun` release URLs and the platform archive names
+  (`bun-linux-x64-baseline.zip`, `bun-darwin-aarch64.zip`,
+  `bun-windows-x64-baseline.zip`, and the rest), `npm i -g bun|deno|tsx`, and a
+  `curl`/`wget`/`Invoke-WebRequest` piped into a shell. The report names the
+  technique instead of folding it into a generic "spawns processes":
+  `🔴 HIGH  RUNTIME_BOOTSTRAP  bun fetched from oven-sh/bun releases, then runs
+  stage2.js (net: fetch(); env: process.env)`.
+- **Diff mode** prints an explicit `⚠️ gained vs <base>: runtime bootstrap (bun)`
+  line. ChainDrop republished each hijacked package as an ordinary patch bump,
+  so this is the fingerprint a reviewer scans for.
+- **New flag `--fail-on-runtime-bootstrap`** and policy key
+  `runtimeBootstrapPolicy: "fail"`, so CI can block the pattern independently of
+  `--fail-on-high`. Emitted in `--json` (`results[].runtimeBootstrap`) and SARIF
+  (rule `runtime-bootstrap`, level error) alongside existing findings.
+- Installing a runtime is the signal; **using one is not**. A package that runs
+  `bun run build` on an existing local script stays clean. An alternate-runtime
+  entry point that does not resolve to a file in the tarball degrades to today's
+  generic HIGH rather than crashing, and cross-runtime cycles terminate. The
+  on-disk cache key already includes the tool version, so 1.14.0 results are not
+  reused for this analysis.
+
 ## 1.14.0 (2026-08-22)
 
 **New `trust` command and audit finding: the provenance-downgrade gate**

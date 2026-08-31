@@ -31,6 +31,10 @@ const DEFAULT_POLICY = {
   trustPolicy: 'off', // 'no-downgrade' | 'off'
   trustPolicyExclude: [], // ['pkg@version'] allowed despite a downgrade
   trustPolicyIgnoreAfter: null, // minutes; prior trust older than this no longer anchors a finding
+  // 'fail' exits audit 1 when install-time code fetches or installs another
+  // JS runtime (RUNTIME_BOOTSTRAP, the ChainDrop pattern), same gate as
+  // --fail-on-runtime-bootstrap but checked into the repo.
+  runtimeBootstrapPolicy: 'off', // 'fail' | 'off'
 };
 
 // The trust-policy keys ride through only when the file sets them, so a
@@ -41,6 +45,7 @@ const mergeDefaults = (p) => ({
   ...(p.trustPolicy !== undefined ? { trustPolicy: p.trustPolicy } : {}),
   ...(p.trustPolicyExclude !== undefined ? { trustPolicyExclude: p.trustPolicyExclude } : {}),
   ...(p.trustPolicyIgnoreAfter !== undefined ? { trustPolicyIgnoreAfter: p.trustPolicyIgnoreAfter } : {}),
+  ...(p.runtimeBootstrapPolicy !== undefined ? { runtimeBootstrapPolicy: p.runtimeBootstrapPolicy } : {}),
 });
 
 // Returns { policy, source }. source is null when no file was found (built-in
@@ -55,6 +60,9 @@ function loadPolicy(dir, explicitPath) {
   catch (e) { throw new Error(`invalid policy JSON (${file}): ${e.message}`); }
   if (parsed.trustPolicy !== undefined && !['no-downgrade', 'off'].includes(parsed.trustPolicy)) {
     throw new Error(`invalid policy (${file}): trustPolicy must be 'no-downgrade' or 'off', got ${JSON.stringify(parsed.trustPolicy)}`);
+  }
+  if (parsed.runtimeBootstrapPolicy !== undefined && !['fail', 'off'].includes(parsed.runtimeBootstrapPolicy)) {
+    throw new Error(`invalid policy (${file}): runtimeBootstrapPolicy must be 'fail' or 'off', got ${JSON.stringify(parsed.runtimeBootstrapPolicy)}`);
   }
   return { policy: mergeDefaults(parsed), source: file };
 }
