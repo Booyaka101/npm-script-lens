@@ -6,3 +6,7 @@ fixtures/demo/node_modules/
 *.vsix
 editors/**/node_modules/
 .vscode-test/
+
+# Local build notes, not for the public repo
+PROGRESS.md
+RESUME.md
