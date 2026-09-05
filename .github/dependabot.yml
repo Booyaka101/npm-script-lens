@@ -16,6 +16,14 @@ updates:
       all-minor-patch:
         patterns: ['*']
         update-types: ['minor', 'patch']
+    ignore:
+      # commander 15 needs Node >=22.12.0 and is ESM-only; this CLI is CommonJS
+      # and advertises engines.node ">=18". Adopting it is a deliberate major
+      # for this package (raise the floor AND convert to ESM), not a bump, and
+      # test/engines.test.js fails the PR every time. Revisit when we choose to
+      # do that; until then the weekly PR is pure noise.
+      - dependency-name: commander
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
