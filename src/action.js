@@ -202,7 +202,7 @@ async function sourcesCheckMain() {
 async function cooldownCheckMain() {
   const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
   const target = input('PATH', '.');
-  const { readCooldownConfig, renderCooldownConfig, cooldownFindings } = require('./cooldown');
+  const { readCooldownConfig, renderCooldownConfig, cooldownFindings, isFailing } = require('./cooldown');
   const { findProjects } = require('./lockfiles');
   let found;
   try {
@@ -226,7 +226,11 @@ async function cooldownCheckMain() {
     return;
   }
   for (const { rel, report } of failed) {
-    for (const st of report.statuses) console.log(`::error::${st.id} (${rel}): ${st.message}`);
+    // an ::error:: per status the check actually fails on; the rest are in
+    // the step summary, where they read as context rather than as breakage
+    for (const st of report.statuses.filter((x) => isFailing(x.id))) {
+      console.log(`::error::${st.id} (${rel}): ${st.message}`);
+    }
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
     const bodies = failed.map(({ rel, report }) => `### \`${rel}\`\n\n\`\`\`\n${renderCooldownConfig(report)}\n\`\`\``).join('\n\n');

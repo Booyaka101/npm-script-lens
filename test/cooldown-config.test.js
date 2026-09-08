@@ -690,3 +690,32 @@ test('the unpinned-Yarn note is the OK line, not a second one', () => {
   const text = renderCooldownConfig(report);
   assert.strictEqual(text.split('\n').filter((l) => l.includes('OK ')).length, 1, text);
 });
+
+test('doctor warns only on statuses that fail, and never says it twice', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-doc-'));
+  fs.writeFileSync(path.join(dir, '.yarnrc.yml'), 'npmMinimalAgeGate: 3d\n');
+  fs.writeFileSync(path.join(dir, 'yarn.lock'), '__metadata:\n  version: 8\n');
+  const note = JSON.parse((await runCli(['doctor', '--no-live', '--json', '--path', dir])).stdout);
+  const lines = note.checks.filter((c) => c.name === 'cooldown config');
+  assert.strictEqual(lines.length, 1, 'the note IS the summary, not a second line');
+  assert.strictEqual(lines[0].status, 'info', 'an unpinned Yarn is context, not a warning');
+
+  const bad = JSON.parse((await runCli(['doctor', '--no-live', '--json', '--path', FIX('cooldown-pnpm-suspect')])).stdout);
+  const badLines = bad.checks.filter((c) => c.name === 'cooldown config');
+  assert.deepStrictEqual(badLines.map((c) => c.status), ['warn', 'warn']);
+  assert.ok(bad.checks.some((c) => c.name === 'cooldown config fix'));
+});
+
+test('the Action emits ::error:: only for statuses the check fails on', async () => {
+  const action = path.join(ROOT, 'src', 'action.js');
+  const out = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [action, 'cooldown-check'], {
+      cwd: ROOT, env: { ...process.env, INPUT_PATH: FIX('cooldown-bun-missing') }, timeout: 60000,
+    });
+    let s = '';
+    child.stdout.on('data', (d) => { s += d; });
+    child.on('exit', () => resolve(s));
+  });
+  const errors = out.split('\n').filter((l) => l.startsWith('::error::'));
+  assert.deepStrictEqual(errors.map((l) => l.slice(9).split(' ')[0]), ['MISSING']);
+});

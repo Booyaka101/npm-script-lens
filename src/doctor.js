@@ -143,7 +143,7 @@ function checkCooldownConfig(add, { target }) {
     add('cooldown config', 'info', 'no lockfile at this path, so there is no package manager whose cooldown setting to read');
     return null;
   }
-  const { readCooldownConfig, cooldownConfigJson, fmtHours } = require('./cooldown');
+  const { readCooldownConfig, cooldownConfigJson, fmtHours, isFailing, STATUS } = require('./cooldown');
   const { COOLDOWN } = require('./pm-contract');
   const report = readCooldownConfig(lock.path, lock.type);
   const row = COOLDOWN[report.manager];
@@ -152,12 +152,17 @@ function checkCooldownConfig(add, { target }) {
     ? 'not set'
     : `${report.raw} (${fmtHours(report.hours)})`;
   const versus = report.enforced ? `; CI enforces --cooldown ${report.enforced.hours}h in ${report.enforced.file}` : '; no --cooldown found in the CI configs';
-  if (report.statuses.length === 0) {
+  // …unless a status is already saying it, which is how the unpinned-Yarn note
+  // arrives: two lines with the same content would just be noise.
+  if (report.ok && !report.statuses.some((st) => st.id === STATUS.OK)) {
     add('cooldown config', 'ok', `${where}: ${value}${versus}`);
-  } else {
-    for (const st of report.statuses) {
-      add('cooldown config', 'warn', `${where}: ${value}. ${st.id}: ${st.message}`);
-    }
+  }
+  // A status the check does not fail on is context, not a warning, the same
+  // split the report and --check draw.
+  for (const st of report.statuses) {
+    add('cooldown config', isFailing(st.id) ? 'warn' : 'info', `${where}: ${value}. ${st.id}: ${st.message}`);
+  }
+  if (!report.ok) {
     add('cooldown config fix', 'info', 'run `npm-script-lens cooldown` for the full reconciliation, `cooldown --write` to commit the matching value');
   }
   return cooldownConfigJson(report);

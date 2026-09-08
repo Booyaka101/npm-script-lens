@@ -38,7 +38,7 @@ const { checkV12Gaps, workflowFiles } = require('./v12gaps');
 const {
   evaluateCooldown, cooldownReport, DEFAULT_HOURS: COOLDOWN_HOURS,
   readCooldownConfig, renderCooldownConfig, cooldownConfigJson, cooldownFindings,
-  writeTarget, splitExclude, isFailing,
+  writeTarget, splitExclude, isFailing, STATUS: COOLDOWN_STATUS,
 } = require('./cooldown');
 const { collectGypFindings, KIND_LABEL: GYP_KIND_LABEL } = require('./gyp');
 const { npmDryRunPending, npmMajorVersion, isCovered } = require('./review');
@@ -1257,7 +1257,7 @@ function cooldownReports(target, opts) {
 // a monorepo half-updated.
 function assertWritable(reports) {
   for (const { report } of reports) {
-    const unreadable = report.statuses.find((s) => s.id === 'PARTIAL');
+    const unreadable = report.statuses.find((s) => s.id === COOLDOWN_STATUS.PARTIAL);
     if (unreadable) {
       throw new Error(`${unreadable.message}. Fix the file by hand, then re-run \`cooldown --write\`; nothing was written`);
     }
