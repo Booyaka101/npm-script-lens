@@ -11,12 +11,36 @@ name: Release (VS Code)
 # AUTH, in order of preference:
 #
 #   1. Microsoft Entra ID over GitHub OIDC (`vsce publish --azure-credential`).
-#      Nothing stored, nothing to rotate. One-time setup: an Entra app
-#      registration, a GitHub federated credential on it for this repo, and
-#      that identity added as a member of the `booyaka101` Marketplace
-#      publisher. Then set the repo variables AZURE_CLIENT_ID and
-#      AZURE_TENANT_ID. This leg is written but has never run: there is no
-#      Entra identity yet, so the first tag after setup is its first exercise.
+#      Nothing stored, nothing to rotate. Microsoft's own guidance: "We
+#      recommend that extension publishing use Microsoft Entra ID-based
+#      authentication with workload identity federation and managed
+#      identities."
+#
+#      One-time setup, in this order:
+#
+#        a. Azure portal, Managed Identities, create a user-assigned identity.
+#        b. On it: Settings > Federated credentials > "GitHub Actions deploying
+#           Azure resources". Entity type **Environment**, environment name
+#           `marketplace-publish`. That entity type is why the job below
+#           declares `environment:` at all: it puts
+#           `repo:Booyaka101/npm-script-lens:environment:marketplace-publish`
+#           in the OIDC subject, and the credential only matches if the job
+#           actually runs in that environment.
+#        c. Get the Azure DevOps profile id for that identity. This is the step
+#           people get wrong, because the id the Marketplace wants is NOT the
+#           client id and is not shown in the portal:
+#
+#             az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+#               --resource 499b84ac-1321-427f-aa17-267ca6975798
+#
+#           (run it while signed in AS the identity) and take the `id` field.
+#        d. marketplace.visualstudio.com/manage > the `booyaka101` publisher >
+#           add that id as a member with the Contributor role.
+#        e. Set repo variables AZURE_CLIENT_ID and AZURE_TENANT_ID from the
+#           identity's Properties blade.
+#
+#      This leg has never run: there is no identity yet, so the first tag after
+#      setup is its first exercise.
 #
 #   2. A VSCE_PAT secret. The documented CI path today, and a stopgap.
 #      Azure DevOps decommissions GLOBAL personal access tokens on 2026-12-01
@@ -40,6 +64,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # The federated credential is scoped to this environment, so the job has to
+    # run in it or the OIDC subject will not match. It is also the place to hang
+    # required reviewers if you ever want a human gate on a publish, which is
+    # the thing `npm-script-lens publish --require-gate` exists to ask for.
+    environment: marketplace-publish
     permissions:
       contents: read
       id-token: write # the OIDC leg; unused by the PAT leg
@@ -118,11 +147,25 @@ jobs:
             echo
             echo "The .vsix built and every gate passed, but no marketplace credential is configured, so nothing was uploaded."
             echo
-            echo "Preferred, no stored secret: register an Entra app, add a GitHub federated credential for this repo, add that identity to the \`booyaka101\` publisher, then set the repo variables \`AZURE_CLIENT_ID\` and \`AZURE_TENANT_ID\`."
+            echo "### Preferred: Entra ID, nothing stored"
             echo
-            echo "Stopgap: add a \`VSCE_PAT\` secret. Scope it to one organization; Azure DevOps decommissions global PATs on 2026-12-01."
+            echo "1. Azure portal > Managed Identities > create a user-assigned identity."
+            echo "2. On it: Federated credentials > \"GitHub Actions deploying Azure resources\". Entity type **Environment**, name \`marketplace-publish\` (this job already runs in that environment, and the credential only matches if it does)."
+            echo "3. Signed in as that identity, get the id the Marketplace wants. It is **not** the client id and the portal does not show it:"
             echo
-            echo "Then re-run this workflow. The .vsix is attached to this run."
+            echo '   ```'
+            echo "   az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \\"
+            echo "     --resource 499b84ac-1321-427f-aa17-267ca6975798"
+            echo '   ```'
+            echo
+            echo "4. marketplace.visualstudio.com/manage > \`booyaka101\` > add that id as a member, Contributor role."
+            echo "5. Set repo variables \`AZURE_CLIENT_ID\` and \`AZURE_TENANT_ID\`."
+            echo
+            echo "### Stopgap: a PAT"
+            echo
+            echo "Add a \`VSCE_PAT\` secret, scoped to one organization. Azure DevOps decommissions **global** PATs on 2026-12-01; organization-scoped ones keep working."
+            echo
+            echo "Then re-run this workflow. The .vsix built by this run is attached to it."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # So a maintainer can install or upload the exact artifact the gates
