@@ -359,6 +359,14 @@ function readBunfig(dir) {
 }
 
 const tomlString = (s) => JSON.stringify(String(s));
+
+// TOML allows underscores between digits for readability (`259_200`), so a
+// value written that way is valid and must not read as garbage. Every other
+// numeric form TOML accepts (a leading sign, an exponent, hex) Number()
+// already handles.
+const tomlNumber = (raw) => (/^[+-]?\d+(_\d+)+$/.test(String(raw).trim())
+  ? String(raw).trim().replace(/_/g, '')
+  : raw);
 const parseTomlArray = (raw) => {
   const m = String(raw).trim().match(/^\[(.*)\]$/s);
   if (!m) return null;
@@ -535,7 +543,7 @@ const COOLDOWN_IO = {
       const cfg = readBunfig(dir);
       if (!cfg.exists) return configRecord(row, dir);
       const gate = cfg.entries[row.key];
-      const n = gate ? Number(gate.raw) : null;
+      const n = gate ? Number(tomlNumber(gate.raw)) : null;
       const ex = cfg.entries[row.excludeKey];
       const list = ex ? parseTomlArray(ex.raw) : null;
       return configRecord(row, dir, {

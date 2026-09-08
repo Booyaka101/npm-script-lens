@@ -770,3 +770,30 @@ test('a comment is not invented where there was none', () => {
   MANAGERS.pnpm.writeCooldown(dir, { hours: 72, exclude: [] });
   assert.strictEqual(read(dir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 4320\n');
 });
+
+test('TOML digit separators are a valid number, not garbage', () => {
+  // TOML: "you may use underscores between digits to enhance readability. Each
+  // underscore must be surrounded by at least one digit on each side."
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-sep-'));
+  const at = (v) => {
+    fs.writeFileSync(path.join(dir, 'bunfig.toml'), `[install]\nminimumReleaseAge = ${v}\n`);
+    return MANAGERS.bun.readCooldown(dir);
+  };
+  for (const v of ['259_200', '259200', '2_592_00', '+259200', '2.592e5']) {
+    assert.strictEqual(at(v).hours, 72, v);
+    assert.strictEqual(at(v).unparseable, null, v);
+  }
+  // and an underscore that is not between digits is still not a number
+  for (const v of ['_2592', '259_', 'not_a_number']) {
+    assert.strictEqual(at(v).hours, null, v);
+    assert.strictEqual(at(v).unparseable, v);
+  }
+});
+
+test('a quoted value reads the same as a bare one', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-q-'));
+  fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: "1440"\n');
+  assert.strictEqual(MANAGERS.pnpm.readCooldown(dir).hours, 24);
+  fs.writeFileSync(path.join(dir, '.yarnrc.yml'), "npmMinimalAgeGate: '3d'\n");
+  assert.strictEqual(MANAGERS.yarn.readCooldown(dir).hours, 72);
+});
