@@ -81,6 +81,13 @@ exit 1
   `pnpm-workspace.yaml`"*. A `minimumReleaseAge` left in `.npmrc` is therefore
   dead, and reading `MISSING` with no explanation would send you looking in the
   wrong file. The finding anchors to the dead line and says to move it.
+- **An inline comment on the managed line survives the write**, with its
+  original spacing, in all four files. It is often the only record of why the
+  value is what it is. Relatedly, `.npmrc` values now have their inline comment
+  split off before parsing, because npm's own ini does that: verified against
+  npm 11.19.1, `min-release-age=3 # note` reads as 3, and so does `3#note`.
+  Folding the comment into the value would have reported a perfectly good
+  setting as unreadable.
 - **`bunfig.toml` got a tolerant line-preserving reader**, in the same spirit
   as `src/gyp.js` and the hooks JSONC reader. A file it cannot round-trip (a
   multi-line array, say) is reported `PARTIAL` and `--write` refuses it rather

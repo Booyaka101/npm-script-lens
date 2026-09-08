@@ -10,8 +10,14 @@ const path = require('node:path');
 const { SOURCES } = require('./npm-contract');
 
 // Line-preserving parse: [{type: 'blank'|'comment'|'pair', key?, value?,
-// bare?, raw}]. A pair's value keeps npm's semantics (bare key ⇒ 'true');
-// no unescaping, these keys only ever hold plain enum words.
+// comment?, bare?, raw}]. A pair's value keeps npm's semantics (bare key ⇒
+// 'true'); no unescaping, these keys only ever hold plain enum words.
+//
+// An inline comment is split off the value because npm's own ini does that,
+// verified against npm 11.19.1: `min-release-age=3 # note` reads as 3, and so
+// does `3#note`. Treating the comment as part of the value would report a
+// perfectly good setting as unreadable. `comment` keeps the original text so a
+// rewrite can put it back.
 function parseNpmrc(text) {
   return String(text).split(/\r?\n/).map((raw) => {
     const t = raw.trim();
@@ -19,7 +25,18 @@ function parseNpmrc(text) {
     if (t.startsWith('#') || t.startsWith(';')) return { type: 'comment', raw };
     const eq = raw.indexOf('=');
     if (eq === -1) return { type: 'pair', key: t, value: 'true', bare: true, raw };
-    return { type: 'pair', key: raw.slice(0, eq).trim(), value: raw.slice(eq + 1).trim(), raw };
+    const rest = raw.slice(eq + 1);
+    const hash = rest.search(/[#;]/);
+    const pair = {
+      type: 'pair',
+      key: raw.slice(0, eq).trim(),
+      value: (hash === -1 ? rest : rest.slice(0, hash)).trim(),
+      raw,
+    };
+    // present only when there is one, so a plain pair parses to exactly the
+    // shape it always has
+    if (hash !== -1) pair.comment = rest.slice(hash).replace(/\r?\n$/, '');
+    return pair;
   });
 }
 
@@ -83,9 +100,12 @@ function mergeNpmrc(text, updates) {
     const set = byKey.get(key);
     if (!set) return part;
     missing.delete(key);
-    if (!set.multi) return `${key}=${set.queue[0]}${eol || '\n'}`;
+    // whatever the author wrote after the value is theirs, and it may be the
+    // only record of WHY the value is what it is
+    const trailing = eq === -1 ? '' : (body.slice(eq + 1).match(/\s*[#;].*$/) || [''])[0];
+    if (!set.multi) return `${key}=${set.queue[0]}${trailing}${eol || '\n'}`;
     if (set.queue.length === 0) return '';
-    return `${key}=${set.queue.shift()}${eol || '\n'}`;
+    return `${key}=${set.queue.shift()}${trailing}${eol || '\n'}`;
   });
   let result = out.join('');
   const leftovers = sets.flatMap(([key]) => {

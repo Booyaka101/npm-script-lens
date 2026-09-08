@@ -70,11 +70,19 @@ function mergeYamlBlocks(text, blocks) {
   const replaced = [];
   for (const { key, lines } of blocks) {
     const span = yamlBlockSpan(parts, key);
-    const rendered = lines.map((l) => l + eol);
+    // A one-line key replacing a one-line key keeps its trailing comment: that
+    // comment may be the only record of why the value is what it is. A block
+    // replacing a block has no single line to carry one.
+    const kept = span && lines.length === 1 && span.end - span.start === 1
+      ? (yamlBody(parts[span.start]).match(/\s+#.*$/) || [''])[0]
+      : '';
+    const body = [...lines];
+    body[body.length - 1] += kept;
+    const rendered = body.map((l) => l + eol);
     if (span) {
       // the replaced block's last line keeps the EOL it had, so a file with no
       // trailing newline does not silently gain one
-      rendered[rendered.length - 1] = lines[lines.length - 1] + eolOf(parts[span.end - 1]);
+      rendered[rendered.length - 1] = body[body.length - 1] + eolOf(parts[span.end - 1]);
       parts.splice(span.start, span.end - span.start, ...rendered);
       replaced.push(key);
     } else {
@@ -395,8 +403,10 @@ function writeBunfig(dir, updates) {
       insertAt++;
       continue;
     }
-    const indent = (yamlBody(parts[at]).match(/^\s*/) || [''])[0];
-    parts[at] = `${indent}${render(k, v)}${eolOf(parts[at]) || eol}`;
+    const old = yamlBody(parts[at]);
+    const indent = (old.match(/^\s*/) || [''])[0];
+    const had = (old.match(/\s+#.*$/) || [''])[0];
+    parts[at] = `${indent}${render(k, v)}${had}${eolOf(parts[at]) || eol}`;
   }
   const text = parts.join('');
   if (text !== before) fs.writeFileSync(file, text);

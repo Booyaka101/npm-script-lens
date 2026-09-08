@@ -719,3 +719,54 @@ test('the Action emits ::error:: only for statuses the check fails on', async ()
   const errors = out.split('\n').filter((l) => l.startsWith('::error::'));
   assert.deepStrictEqual(errors.map((l) => l.slice(9).split(' ')[0]), ['MISSING']);
 });
+
+// --- inline comments -------------------------------------------------------
+
+test("npm's own ini strips an inline comment, so the value is readable", () => {
+  // Verified against npm 11.19.1: `min-release-age=3 # note` reads as 3, and
+  // so does `3#note`. Folding the comment into the value would report a good
+  // setting as unreadable.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-ic-'));
+  fs.writeFileSync(path.join(dir, '.npmrc'), 'min-release-age=3 # required by policy 1234\n');
+  const cfg = MANAGERS.npm.readCooldown(dir);
+  assert.strictEqual(cfg.raw, '3');
+  assert.strictEqual(cfg.hours, 72);
+  assert.strictEqual(cfg.unparseable, null, 'never a false UNIT-SUSPECT on a valid setting');
+  fs.writeFileSync(path.join(dir, '.npmrc'), 'min-release-age=3;semi\n');
+  assert.strictEqual(MANAGERS.npm.readCooldown(dir).raw, '3');
+});
+
+test('a trailing comment on the managed line survives --write', async () => {
+  const cases = [
+    ['pnpm', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
+      'packages:\n  - "a/*"\nminimumReleaseAge: 3   # copied from the npm docs, oops\n',
+      'minimumReleaseAge: 4320   # copied from the npm docs, oops'],
+    ['yarn', 'yarn.lock', '.yarnrc.yml',
+      'nodeLinker: node-modules\nnpmMinimalAgeGate: 3    # SOC2 control 7.4\n',
+      'npmMinimalAgeGate: 3d    # SOC2 control 7.4'],
+    ['bun', 'bun.lock', 'bunfig.toml',
+      '[install]\nminimumReleaseAge = 3    # SOC2 control 7.4\n',
+      'minimumReleaseAge = 259200    # SOC2 control 7.4'],
+    ['npm', 'package-lock.json', '.npmrc',
+      'min-release-age=4320 # was minutes, in the wrong file\n',
+      'min-release-age=3 # was minutes, in the wrong file'],
+  ];
+  for (const [manager, lock, config, before, expected] of cases) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `lens-tc-${manager}-`));
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"p","version":"1.0.0"}');
+    fs.copyFileSync(path.join(FIX(`cooldown-${manager}-ok`), lock), path.join(dir, lock));
+    fs.writeFileSync(path.join(dir, config), before);
+    const res = await runCli(['cooldown', '--path', dir, '--write', '--cooldown', '72']);
+    assert.strictEqual(res.status, 0, `${manager}: ${res.stderr}`);
+    const after = read(dir, config);
+    assert.ok(after.includes(expected), `${manager} wrote:\n${after}`);
+    assert.strictEqual(after.split('\n').length, before.split('\n').length, `${manager}: line count moved`);
+  }
+});
+
+test('a comment is not invented where there was none', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-nc-'));
+  fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 3\n');
+  MANAGERS.pnpm.writeCooldown(dir, { hours: 72, exclude: [] });
+  assert.strictEqual(read(dir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 4320\n');
+});
