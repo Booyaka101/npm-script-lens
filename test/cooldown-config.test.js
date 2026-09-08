@@ -836,3 +836,18 @@ test('a stale exemption list is replaced, not appended to', () => {
     mergeNpmrc('min-release-age-exclude=stale\nregistry=https://r/\n', { 'min-release-age-exclude': ['a', 'b'] }),
     'min-release-age-exclude[]=a\nmin-release-age-exclude[]=b\nregistry=https://r/\n');
 });
+
+test('every manager round-trips the exemption forms it accepts', () => {
+  const { excludeForm } = require('../src/pm-contract');
+  const LOCK = { npm: 'package-lock.json', pnpm: 'pnpm-lock.yaml', yarn: 'yarn.lock', bun: 'bun.lock' };
+  const list = ['left-pad', '@scope/name', '@myorg/*', 'pkg@1.2.3', 'a@1 || a@2'];
+  for (const id of Object.keys(LOCK)) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `lens-rt-${id}-`));
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"1.0.0"}');
+    const accepted = list.filter((e) => MANAGERS[id].cooldown.excludeForms.includes(excludeForm(e)));
+    MANAGERS[id].writeCooldown(dir, { hours: 72, exclude: accepted });
+    const back = MANAGERS[id].readCooldown(dir);
+    assert.deepStrictEqual(back.exclude, accepted, `${id}: ${read(dir, MANAGERS[id].cooldown.file)}`);
+    assert.strictEqual(back.hours, 72, id);
+  }
+});
