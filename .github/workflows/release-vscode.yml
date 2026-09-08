@@ -1,0 +1,134 @@
+name: Release (VS Code)
+
+# Publishes editors/vscode to the VS Code Marketplace on the same v*.*.* tag
+# that publishes the npm package, so one tag ships both halves of a release.
+#
+# Until now the extension was published by hand with `vsce publish` from a
+# maintainer's machine, which needs a marketplace token sitting on that machine.
+# release.yml refuses to do that for npm, on the grounds that a token in CI is
+# the credential an account takeover reuses; the same argument applies here.
+#
+# AUTH, in order of preference:
+#
+#   1. Microsoft Entra ID over GitHub OIDC (`vsce publish --azure-credential`).
+#      Nothing stored, nothing to rotate. One-time setup: an Entra app
+#      registration, a GitHub federated credential on it for this repo, and
+#      that identity added as a member of the `booyaka101` Marketplace
+#      publisher. Then set the repo variables AZURE_CLIENT_ID and
+#      AZURE_TENANT_ID. This leg is written but has never run: there is no
+#      Entra identity yet, so the first tag after setup is its first exercise.
+#
+#   2. A VSCE_PAT secret. The documented CI path today, and a stopgap.
+#      Azure DevOps decommissions GLOBAL personal access tokens on 2026-12-01
+#      (organization-scoped ones keep working), and marketplace publishing is
+#      exactly the "all accessible organizations" shape being retired. If you
+#      use this leg, scope the token to one organization.
+#
+# With neither configured the job explains itself and exits 0. The npm package
+# has already published by the time this runs, so failing here would put a red
+# X on a release that genuinely shipped, and a red X people learn to ignore is
+# worse than no check at all.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the OIDC leg; unused by the PAT leg
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # The extension has no dependencies of its own, so there is nothing to
+      # install and nothing to restore from a cache into a publishing job.
+      - name: Extension tests
+        run: npm test
+
+      # test/commands.test.js already asserts the extension version equals the
+      # CLI's. This asserts both equal the tag, which is the thing that decides
+      # what actually reaches the gallery.
+      - name: The tag, the CLI and the extension must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          EXT=$(node -p "require('./package.json').version")
+          CLI=$(node -p "require('../../package.json').version")
+          echo "tag=$TAG extension=$EXT cli=$CLI"
+          [ "$TAG" = "$EXT" ] || { echo "::error::tag $TAG does not match extension $EXT"; exit 1; }
+          [ "$TAG" = "$CLI" ] || { echo "::error::tag $TAG does not match CLI $CLI"; exit 1; }
+
+      # Hits the public gallery API. vsce reports DONE and exits 0 even when the
+      # publisher is not set up and the extension never appears, which is why
+      # this exists at all (see the comment at the top of the script).
+      - name: Publish preflight
+        run: node scripts/preflight.mjs
+
+      - name: Package
+        run: npx --yes @vscode/vsce@3.9.2 package --out extension.vsix
+
+      - name: Which auth is configured
+        id: auth
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          HAS_PAT: ${{ secrets.VSCE_PAT != '' }}
+        run: |
+          if [ -n "${AZURE_CLIENT_ID:-}" ]; then echo "mode=entra" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_PAT" = "true" ]; then echo "mode=pat" >> "$GITHUB_OUTPUT"
+          else echo "mode=none" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Sign in to Entra ID
+        if: steps.auth.outputs.mode == 'entra'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # --skip-duplicate so a re-run, or a tag pushed twice, is a no-op instead
+      # of a failure. The marketplace has no unpublish-and-retry for a version.
+      - name: Publish (Entra ID, no stored secret)
+        if: steps.auth.outputs.mode == 'entra'
+        run: npx --yes @vscode/vsce@3.9.2 publish --packagePath extension.vsix --skip-duplicate --azure-credential
+
+      - name: Publish (VSCE_PAT)
+        if: steps.auth.outputs.mode == 'pat'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce@3.9.2 publish --packagePath extension.vsix --skip-duplicate
+
+      - name: Not configured yet
+        if: steps.auth.outputs.mode == 'none'
+        run: |
+          {
+            echo "## VS Code extension not published"
+            echo
+            echo "The .vsix built and every gate passed, but no marketplace credential is configured, so nothing was uploaded."
+            echo
+            echo "Preferred, no stored secret: register an Entra app, add a GitHub federated credential for this repo, add that identity to the \`booyaka101\` publisher, then set the repo variables \`AZURE_CLIENT_ID\` and \`AZURE_TENANT_ID\`."
+            echo
+            echo "Stopgap: add a \`VSCE_PAT\` secret. Scope it to one organization; Azure DevOps decommissions global PATs on 2026-12-01."
+            echo
+            echo "Then re-run this workflow. The .vsix is attached to this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # So a maintainer can install or upload the exact artifact the gates
+      # passed on, rather than rebuilding it somewhere else.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-script-lens-vsix
+          path: editors/vscode/extension.vsix
+          if-no-files-found: error
