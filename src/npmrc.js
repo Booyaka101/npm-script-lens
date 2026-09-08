@@ -41,10 +41,22 @@ function parseNpmrc(text) {
 }
 
 // Raw values for `keys` from <dir>/.npmrc: { file, exists, values, multi,
-// lines }. `values` is last-occurrence-wins, like npm's ini; `multi` keeps
-// every occurrence in order, which is how npm reads a repeatable key such as
-// min-release-age-exclude; `lines` is the 1-based line of the occurrence that
-// wins, for anchoring a finding.
+// lines }. `lines` is the 1-based line of the occurrence that wins.
+//
+// npm's repeat semantics are not what they look like, and getting them wrong
+// silently drops entries. Verified against npm 11.19.1:
+//
+//   key=alpha            key=beta        -> beta          (last wins, scalar)
+//   key[]=alpha          key[]=beta      -> alpha,beta    (appends)
+//   key=alpha            key[]=beta      -> alpha,beta
+//   key[]=alpha          key=beta        -> alpha,beta
+//
+// So repeating a PLAIN key does not build a list, it overwrites. Once any
+// occurrence uses the `[]` form, every occurrence accumulates in source order.
+// `multi` follows that rule exactly; `values` is the scalar reading.
+const ARRAY_SUFFIX = '[]';
+const baseKey = (k) => (k.endsWith(ARRAY_SUFFIX) ? k.slice(0, -ARRAY_SUFFIX.length) : k);
+
 function readNpmrcKeys(dir, keys) {
   const file = path.join(dir, '.npmrc');
   const out = { file, exists: false, values: {}, multi: {}, lines: {} };
@@ -52,12 +64,22 @@ function readNpmrcKeys(dir, keys) {
   try { text = fs.readFileSync(file, 'utf8'); } catch { return out; }
   out.exists = true;
   const want = new Set(keys);
+  const seen = new Map();
   parseNpmrc(text).forEach((line, i) => {
-    if (line.type !== 'pair' || !want.has(line.key)) return;
-    out.values[line.key] = line.value;
-    (out.multi[line.key] = out.multi[line.key] || []).push(line.value);
-    out.lines[line.key] = i + 1;
+    if (line.type !== 'pair') return;
+    const key = baseKey(line.key);
+    if (!want.has(key)) return;
+    const hits = seen.get(key) || [];
+    hits.push({ value: line.value, array: line.key !== key });
+    seen.set(key, hits);
+    out.values[key] = line.value;
+    out.lines[key] = i + 1;
   });
+  for (const [key, hits] of seen) {
+    out.multi[key] = hits.some((h) => h.array)
+      ? hits.map((h) => h.value)
+      : [hits[hits.length - 1].value];
+  }
   return out;
 }
 
@@ -80,9 +102,11 @@ function readSourceConfig(dir) {
 // key is rewritten (npm's ini is last-wins, leaving a stale duplicate behind
 // would silently override the fix); missing keys are appended at the end.
 // updates: { 'allow-git': 'all', … }, null/undefined values are ignored.
-// An ARRAY value marks a repeatable key (npm reads min-release-age-exclude
-// that way): the existing lines are consumed in order and any spare ones are
-// dropped, so the committed list is exactly the list passed in.
+// An ARRAY value marks a repeatable key such as min-release-age-exclude, and
+// is written in npm's `key[]=value` form. Repeating a plain `key=value` would
+// NOT build a list, npm keeps only the last one, so writing it that way would
+// commit an exemption list that silently holds a single entry. Every existing
+// occurrence in either form is replaced by the new list.
 function mergeNpmrc(text, updates) {
   const sets = Object.entries(updates || {}).filter(([, v]) => v !== null && v !== undefined);
   if (sets.length === 0) return text;
@@ -97,21 +121,26 @@ function mergeNpmrc(text, updates) {
     if (t === '' || t.startsWith('#') || t.startsWith(';')) return part;
     const eq = body.indexOf('=');
     const key = eq === -1 ? t : body.slice(0, eq).trim();
-    const set = byKey.get(key);
+    const base = baseKey(key);
+    const set = byKey.get(base);
     if (!set) return part;
-    missing.delete(key);
+    missing.delete(base);
     // whatever the author wrote after the value is theirs, and it may be the
     // only record of WHY the value is what it is
     const trailing = eq === -1 ? '' : (body.slice(eq + 1).match(/\s*[#;].*$/) || [''])[0];
-    if (!set.multi) return `${key}=${set.queue[0]}${trailing}${eol || '\n'}`;
-    if (set.queue.length === 0) return '';
-    return `${key}=${set.queue.shift()}${trailing}${eol || '\n'}`;
+    if (!set.multi) return `${base}=${set.queue[0]}${trailing}${eol || '\n'}`;
+    // the whole list lands at the first occurrence; later ones go away, so a
+    // stale entry cannot survive alongside the new list
+    if (set.done) return '';
+    set.done = true;
+    const nl = eol || '\n';
+    return set.queue.map((v, i) => `${base}[]=${v}${i === 0 ? trailing : ''}${nl}`).join('');
   });
   let result = out.join('');
   const leftovers = sets.flatMap(([key]) => {
     const set = byKey.get(key);
-    if (missing.has(key)) return set.multi ? set.queue.map((v) => [key, v]) : [[key, set.queue[0]]];
-    return set.multi ? set.queue.map((v) => [key, v]) : [];
+    if (!missing.has(key)) return [];
+    return set.multi ? set.queue.map((v) => [`${key}${ARRAY_SUFFIX}`, v]) : [[key, set.queue[0]]];
   });
   if (leftovers.length > 0) {
     if (result !== '' && !result.endsWith('\n')) result += '\n';

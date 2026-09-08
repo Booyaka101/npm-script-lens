@@ -797,3 +797,42 @@ test('a quoted value reads the same as a bare one', () => {
   fs.writeFileSync(path.join(dir, '.yarnrc.yml'), "npmMinimalAgeGate: '3d'\n");
   assert.strictEqual(MANAGERS.yarn.readCooldown(dir).hours, 72);
 });
+
+test("npm's repeat semantics: a plain key overwrites, only key[] appends", () => {
+  // Verified against npm 11.19.1. Reading a repeated plain key as a list would
+  // report exemptions npm does not actually apply.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-arr-'));
+  const { readNpmrcKeys } = require('../src/npmrc');
+  const K = 'min-release-age-exclude';
+  const at = (body) => {
+    fs.writeFileSync(path.join(dir, '.npmrc'), body);
+    return readNpmrcKeys(dir, [K]).multi[K];
+  };
+  assert.deepStrictEqual(at(`${K}=alpha\n${K}=beta\n`), ['beta'], 'last plain wins, it is not a list');
+  assert.deepStrictEqual(at(`${K}[]=alpha\n${K}[]=beta\n`), ['alpha', 'beta']);
+  assert.deepStrictEqual(at(`${K}=alpha\n${K}[]=beta\n`), ['alpha', 'beta']);
+  assert.deepStrictEqual(at(`${K}[]=alpha\n${K}=beta\n`), ['alpha', 'beta']);
+});
+
+test('--write commits an exemption list npm actually honours', async () => {
+  // The whole list has to survive a round trip. Repeated plain keys would give
+  // npm only the last entry, which is the failure this tool exists to catch.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-arrw-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"1.0.0"}');
+  fs.copyFileSync(path.join(FIX('cooldown-npm-ok'), 'package-lock.json'), path.join(dir, 'package-lock.json'));
+  const res = await runCli(['cooldown', '--path', dir, '--write', '--cooldown', '72',
+    '--cooldown-allow', 'alpha', 'beta', 'gamma']);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(read(dir, '.npmrc'),
+    'min-release-age=3\nmin-release-age-exclude[]=alpha\nmin-release-age-exclude[]=beta\nmin-release-age-exclude[]=gamma\n');
+  const back = MANAGERS.npm.readCooldown(dir);
+  assert.deepStrictEqual(back.exclude, ['alpha', 'beta', 'gamma'], 'and we read back what we wrote');
+  assert.strictEqual(back.hours, 72);
+});
+
+test('a stale exemption list is replaced, not appended to', () => {
+  const { mergeNpmrc } = require('../src/npmrc');
+  assert.strictEqual(
+    mergeNpmrc('min-release-age-exclude=stale\nregistry=https://r/\n', { 'min-release-age-exclude': ['a', 'b'] }),
+    'min-release-age-exclude[]=a\nmin-release-age-exclude[]=b\nregistry=https://r/\n');
+});

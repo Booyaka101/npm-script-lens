@@ -81,6 +81,12 @@ exit 1
   `pnpm-workspace.yaml`"*. A `minimumReleaseAge` left in `.npmrc` is therefore
   dead, and reading `MISSING` with no explanation would send you looking in the
   wrong file. The finding anchors to the dead line and says to move it.
+- **The npm exemption list is written in the form npm actually honours.**
+  Repeating a plain `min-release-age-exclude=` line does *not* build a list:
+  verified against npm 11.19.1, npm keeps only the last one. Only the
+  `min-release-age-exclude[]=` form appends. The reader follows the same rule,
+  so a repo that repeats the plain key is reported as exempting the one package
+  npm really exempts.
 - **An inline comment on the managed line survives the write**, with its
   original spacing, in all four files. It is often the only record of why the
   value is what it is. Relatedly, `.npmrc` values now have their inline comment
