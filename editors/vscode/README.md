@@ -103,6 +103,8 @@ An allowlist entry is older than any advisory published after it, so approving a
   - **npm-script-lens: Publish readiness (npm token cliff)**: will this repo's release workflow survive npm's January-2027 token change, and is the fix available here (`publish`)
   - **npm-script-lens: Open-time hooks (folderOpen tasks / Claude Code)**: scan the working tree for code that runs when the folder is *opened*, not installed (`hooks`)
   - **npm-script-lens: Open-time hooks in dependency tarballs (--deps)**: also download and scan every locked dependency's tarball; a shipped folderOpen task is HIGH regardless of its command (`hooks --deps`)
+  - **npm-script-lens: Cooldown config (your package manager vs CI)**: the minimum-release-age your package manager applies on every local install, against the `--cooldown` your CI enforces. All four managers ship that setting in a different unit, so a value that looks right can gate nothing (`cooldown`). Needs CLI ≥ 1.16.0
+  - **npm-script-lens: Cooldown config, write the matching value**: commits the threshold in the right file, unit and notation, preserving every other key and comment (`cooldown --write`)
 
 ## It reads inside `binding.gyp`
 
