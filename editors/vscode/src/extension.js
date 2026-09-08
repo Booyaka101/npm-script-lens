@@ -654,6 +654,8 @@ function activate(context) {
     cmd('npmScriptLens.publish', cliCommand('publish readiness', () => ['publish'])),
     cmd('npmScriptLens.hooks', cliCommand('open-time hooks', () => ['hooks'], { wholeWorkspace: true })),
     cmd('npmScriptLens.hooksDeps', cliCommand('open-time hooks (dependency tarballs)', () => ['hooks', '--deps'], { wholeWorkspace: true })),
+    cmd('npmScriptLens.cooldown', cliCommand('cooldown config', () => ['cooldown'])),
+    cmd('npmScriptLens.cooldownWrite', cliCommand('cooldown config (write)', () => ['cooldown', '--write'])),
   );
 
   if (config().auditOnOpen) for (const doc of vscode.workspace.textDocuments) rerun(doc);

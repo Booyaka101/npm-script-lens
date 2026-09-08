@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.16.0
+
+**The cooldown your package manager applies, next to the one your CI enforces.**
+CLI 1.16.0 added the `cooldown` command. All four package managers now ship a
+minimum-release-age setting, in four different units: npm counts DAYS
+(`min-release-age`), pnpm counts MINUTES (`minimumReleaseAge`), yarn takes
+minutes or a duration string (`npmMinimalAgeGate`), bun counts SECONDS under
+`[install]` in `bunfig.toml`. So `3` is three days, three minutes or three
+seconds depending on which file you typed it into, and getting it wrong does
+not fail: the install succeeds and the gate is simply not there.
+
+Two palette commands, following the same shape as the other CLI surfaces here:
+
+- **npm-script-lens: Cooldown config (your package manager vs CI)** runs
+  `cooldown` and streams the report to the output channel. OK, MISSING,
+  UNIT-SUSPECT or DRIFT, per project.
+- **npm-script-lens: Cooldown config, write the matching value** runs
+  `cooldown --write`, which commits the threshold in the right file, unit and
+  notation while preserving every other key, comment and blank line.
+
+Both need CLI >= 1.16.0. An older CLI reports an unknown command in the output
+channel, the same way `sources` and `publish` behave on a CLI that predates
+them.
+
+No change to the audit, the panel, the hovers or the decision writer.
+
+`test/commands.test.js` is new and is why this release exists in this shape: a
+command contributed in `package.json` but never registered shows up in the
+palette and then fails with "command not found" when it is picked, and nothing
+here checked for that. It now diffs both sides, checks that every menu and
+walkthrough link points at a real command, and asserts the version still tracks
+the CLI.
+
 ## 1.15.0
 
 **A package that installs another JavaScript runtime now says so.** CLI 1.15.0
