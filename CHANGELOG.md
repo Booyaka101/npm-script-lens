@@ -54,8 +54,8 @@ exit 1
   value that gates under an hour or over a month *and* reads as a sensible
   cooldown in one of the other managers' units, which is what makes it a unit
   slip rather than a deliberate extreme). `DRIFT` (configured below the
-  enforced threshold, or exempt lists that disagree) — measured against what
-  the manager *actually* gates, so an old Yarn truncating `7d` drifts on seven
+  enforced threshold, or exempt lists that disagree), measured against what the
+  manager *actually* gates: an old Yarn truncating `7d` drifts on seven
   minutes, not on the 168 hours the file implies. `PARTIAL` (a config file that
   cannot be round-tripped). `OK` otherwise, with the converted hours spelled
   out. A value that is merely unusual is never reported as suspect, and an

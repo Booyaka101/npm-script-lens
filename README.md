@@ -388,18 +388,18 @@ the file's EOL style exactly as they were.
 
 The four statuses:
 
-- **OK** — configured, in the right unit, at or above what CI enforces. The
+- **OK**: configured, in the right unit, at or above what CI enforces. The
   converted hours is printed either way, so you can check the arithmetic.
-- **MISSING** — nothing configured while `--cooldown` is enforced in CI. Only
+- **MISSING**: nothing configured while `--cooldown` is enforced in CI. Only
   CI is protected; every local install goes straight through. If a pnpm project
   has `minimumReleaseAge` sitting in `.npmrc`, the finding says so and points at
   that line: pnpm reads only auth and registry settings from `.npmrc`, so the
   value is dead where it is.
-- **UNIT-SUSPECT** — the value gates under an hour or over a month, *and* the
+- **UNIT-SUSPECT**: the value gates under an hour or over a month, *and* the
   same number reads as a sensible cooldown in one of the other managers' units.
   Both halves are required, so a deliberately odd threshold with no plausible
   alternative reading is reported OK, not flagged.
-- **DRIFT** — configured below the enforced threshold, or exempt lists that
+- **DRIFT**: configured below the enforced threshold, or exempt lists that
   disagree with `--cooldown-allow`. The comparison uses what the manager
   *actually* gates, which is not always what the file says: an old Yarn
   truncating `7d` to seven minutes drifts on seven minutes.
@@ -407,8 +407,8 @@ The four statuses:
 Two more lines appear in the report but never fail `--check`, because neither
 is something the project got wrong:
 
-- **PARTIAL** — a config file this tool cannot round-trip. Nothing is rewritten.
-- **UNSUPPORTED** — a `--cooldown-allow` entry this manager cannot express, so
+- **PARTIAL**: a config file this tool cannot round-trip. Nothing is rewritten.
+- **UNSUPPORTED**: a `--cooldown-allow` entry this manager cannot express, so
   it was left out rather than written into a key that would ignore it.
 
 Where the enforced number comes from: `--cooldown <hours>` if you pass it,
