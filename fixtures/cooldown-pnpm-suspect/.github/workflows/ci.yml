@@ -1,0 +1,8 @@
+name: ci
+on: [push]
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx npm-script-lens audit --cooldown 72

@@ -343,6 +343,134 @@ Notes:
   `--cooldown` fetches publish dates for **every** locked package, not just the
   ones with install scripts. That is more registry traffic than a plain audit.
 
+## cooldown config: your package manager has one too, in a different unit
+
+`--cooldown` above is a CI gate. It reads the lockfile and fails the build.
+It says nothing about the cooldown a contributor's own `pnpm install` applies,
+and all four managers now have one:
+
+| manager | file | key | unit | its own default |
+|---|---|---|---|---|
+| npm | `.npmrc` | `min-release-age` | **days** | `null`, no gate |
+| pnpm | `pnpm-workspace.yaml` | `minimumReleaseAge` | **minutes** | `1440` since pnpm 11, `0` before |
+| yarn | `.yarnrc.yml` | `npmMinimalAgeGate` | **minutes**, or a duration string | `1d` since Yarn 4.15.0 |
+| bun | `bunfig.toml` `[install]` | `minimumReleaseAge` | **seconds** | `null`, no gate |
+
+So `3` is three days, three minutes or three seconds depending on the file, and
+getting it wrong does not fail. The install succeeds and the gate is not there.
+[yarnpkg/berry#6991](https://github.com/yarnpkg/berry/issues/6991) is that
+happening to someone: they set `npmMinimalAgeGate: "7d"` from the docs and a
+five-day-old release installed anyway, because their Yarn predated duration
+strings and read it through `parseInt`, giving seven minutes.
+
+```bash
+npm-script-lens cooldown            # report, always exits 0
+npm-script-lens cooldown --check    # exit 1 on MISSING, UNIT-SUSPECT or DRIFT
+npm-script-lens cooldown --write --cooldown 72
+```
+
+A pnpm project with `minimumReleaseAge: 3` and a CI job running
+`npm-script-lens audit --cooldown 72`:
+
+```
+$ npm-script-lens cooldown --check
+cooldown config — pnpm (pnpm-workspace.yaml)
+  UNIT-SUSPECT  minimumReleaseAge: 3  → 3 minutes (pnpm counts MINUTES), not 3 days
+                pnpm's own default is 1440 (1 day); 3 gates essentially nothing
+  DRIFT         configured 0.05h < enforced 72h (--cooldown in .github/workflows/ci.yml)
+                A version this project's own CI would block still installs on a contributor's machine.
+  fix:  npm-script-lens cooldown --write --cooldown 72
+        writes  minimumReleaseAge: 4320
+```
+
+`--write` then puts `4320` in, leaving every other key, comment, blank line and
+the file's EOL style exactly as they were.
+
+The four statuses:
+
+- **OK** — configured, in the right unit, at or above what CI enforces. The
+  converted hours is printed either way, so you can check the arithmetic.
+- **MISSING** — nothing configured while `--cooldown` is enforced in CI. Only
+  CI is protected; every local install goes straight through. If a pnpm project
+  has `minimumReleaseAge` sitting in `.npmrc`, the finding says so and points at
+  that line: pnpm reads only auth and registry settings from `.npmrc`, so the
+  value is dead where it is.
+- **UNIT-SUSPECT** — the value gates under an hour or over a month, *and* the
+  same number reads as a sensible cooldown in one of the other managers' units.
+  Both halves are required, so a deliberately odd threshold with no plausible
+  alternative reading is reported OK, not flagged.
+- **DRIFT** — configured below the enforced threshold, or exempt lists that
+  disagree with `--cooldown-allow`. The comparison uses what the manager
+  *actually* gates, which is not always what the file says: an old Yarn
+  truncating `7d` to seven minutes drifts on seven minutes.
+
+Two more lines appear in the report but never fail `--check`, because neither
+is something the project got wrong:
+
+- **PARTIAL** — a config file this tool cannot round-trip. Nothing is rewritten.
+- **UNSUPPORTED** — a `--cooldown-allow` entry this manager cannot express, so
+  it was left out rather than written into a key that would ignore it.
+
+Where the enforced number comes from: `--cooldown <hours>` if you pass it,
+otherwise the strictest `--cooldown` this repo's own CI configs run
+(`.github/workflows/*.yml`, `.gitlab-ci.yml`, `.circleci/config.yml`, searched
+upward so a monorepo package finds the root's). If nothing enforces a cooldown
+anywhere, there is no MISSING and no DRIFT to report.
+
+Exemptions are translated into the manager's own exclude key, and only in the
+forms that manager accepts:
+
+| manager | exclude key | accepts |
+|---|---|---|
+| npm | `min-release-age-exclude` | names or minimatch globs |
+| pnpm | `minimumReleaseAgeExclude` | names, `@myorg/*` patterns, versions joined with `\|\|` |
+| yarn | `npmPreapprovedPackages` | package descriptors or name globs |
+| bun | `minimumReleaseAgeExcludes` | package names only |
+
+`npm-script-lens cooldown --write --cooldown-allow urgent-fix pkg@1.2.3`
+against a bun project writes `urgent-fix` and skips `pkg@1.2.3` with a note:
+bun matches on names, so writing the descriptor would be a gate you believe in
+and bun ignores. Nothing is ever exempted that you did not pass.
+
+Yarn specifics, because Yarn's gate has moved four times:
+
+- Duration strings (`3d`, `1w`) arrived in **4.11.0**
+  ([#6942](https://github.com/yarnpkg/berry/pull/6942)). Below that the setting
+  is `SettingsType.NUMBER` and a string is silently truncated by `parseInt`.
+  This is reported **against the version your project pins** (`packageManager`,
+  then `yarnPath`), never as a blanket warning: on current Yarn `7d` is exact.
+- `--write` emits Yarn's own `3d` idiom, and bare minutes instead on a project
+  pinned below 4.11.0.
+- A per-scope gate under `npmScopes`
+  ([#7156](https://github.com/yarnpkg/berry/pull/7156), Yarn 4.17.0) is read
+  and reported. It is never rewritten: exempting an internal registry is what
+  that feature is for.
+
+Other surfaces:
+
+```bash
+npm-script-lens audit --cooldown 72 --cooldown-config   # both halves in one run
+npm-script-lens cooldown --json
+npm-script-lens cooldown --check --sarif cooldown.sarif # rule cooldown-config
+npm-script-lens doctor                                  # one line, with the converted hours
+```
+
+In the Action, opt in the same way as `sources-check`:
+
+```yaml
+- uses: Booyaka101/npm-script-lens@v1
+  with:
+    cooldown-check: 'true'
+```
+
+Limits worth knowing: a `bunfig.toml` this tool cannot round-trip (a multi-line
+array, for instance) is reported `PARTIAL` and `--write` refuses it rather than
+reformatting your file. The enforced threshold is found by reading `--cooldown`
+out of CI *files*; a threshold assembled from a shell variable at runtime is not
+visible to it, so pass `--cooldown <hours>` in that case. And this reads
+committed config only, never your global `~/.npmrc`: the point is what everyone
+who clones the repo gets.
+
 ## Provenance: an identity, not a checkbox
 
 The malicious `keyv@6.0.0` of 2026-08-04 carried a **valid** npm attestation

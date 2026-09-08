@@ -1,0 +1,6 @@
+[install]
+minimumReleaseAge = 259200
+minimumReleaseAgeExcludes = [
+  "typescript",
+  "@types/bun",
+]

@@ -66,6 +66,16 @@ inputs:
       insufficient, over-permissive, or invalid. npm v12 refuses to resolve
       uncovered git/remote deps by default. 'true' to enable (opt-in).
     default: 'false'
+  cooldown-check:
+    description: >-
+      Fail the job (exit 1) when the cooldown your package manager applies on
+      every local install does not match the one --cooldown enforces here. All
+      four managers ship the setting in a different unit (npm min-release-age
+      in DAYS, pnpm minimumReleaseAge in MINUTES, yarn npmMinimalAgeGate in
+      minutes or a duration string, bun [install] minimumReleaseAge in
+      SECONDS), so a committed value that looks right can gate nothing.
+      Reports MISSING, UNIT-SUSPECT and DRIFT. 'true' to enable (opt-in).
+    default: 'false'
   publish-check:
     description: >-
       Fail the job (exit 1) when a CI publish step still authenticates with a
@@ -158,6 +168,14 @@ runs:
       env:
         INPUT_PATH: ${{ inputs.path }}
       run: node "$GITHUB_ACTION_PATH/src/action.js" sources-check
+    - name: Check the package manager's own cooldown setting
+      # opt-in gate: the install-time cooldown vs the --cooldown CI enforces
+      if: ${{ always() && inputs.cooldown-check == 'true' }}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: node "$GITHUB_ACTION_PATH/src/action.js" cooldown-check
     - name: Check the release workflow survives the npm token cliff
       # opt-in gate: publish paths that still rely on a long-lived token
       if: ${{ always() && inputs.publish-check == 'true' }}

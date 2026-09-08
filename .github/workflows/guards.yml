@@ -46,6 +46,12 @@ jobs:
       - name: Dependency cooldown
         run: node src/cli.js audit --path . --cooldown
 
+      # The other half of the same gate: the step above judges lockfile ages in
+      # CI, this one checks that a contributor's own `npm install` waits just as
+      # long. Without it only CI is protected.
+      - name: Cooldown config
+        run: node src/cli.js cooldown --path . --check
+
       # Reports without gating, like the other guards, but a BREAKING finding
       # still shows as a failed step rather than being swallowed by '|| true'.
       - name: MCP spec readiness (2026-07-28)

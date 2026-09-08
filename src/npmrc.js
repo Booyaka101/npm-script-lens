@@ -23,21 +23,37 @@ function parseNpmrc(text) {
   });
 }
 
+// Raw values for `keys` from <dir>/.npmrc: { file, exists, values, multi,
+// lines }. `values` is last-occurrence-wins, like npm's ini; `multi` keeps
+// every occurrence in order, which is how npm reads a repeatable key such as
+// min-release-age-exclude; `lines` is the 1-based line of the occurrence that
+// wins, for anchoring a finding.
+function readNpmrcKeys(dir, keys) {
+  const file = path.join(dir, '.npmrc');
+  const out = { file, exists: false, values: {}, multi: {}, lines: {} };
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return out; }
+  out.exists = true;
+  const want = new Set(keys);
+  parseNpmrc(text).forEach((line, i) => {
+    if (line.type !== 'pair' || !want.has(line.key)) return;
+    out.values[line.key] = line.value;
+    (out.multi[line.key] = out.multi[line.key] || []).push(line.value);
+    out.lines[line.key] = i + 1;
+  });
+  return out;
+}
+
 // The project's committed allow-git / allow-remote values from <dir>/.npmrc:
 // { file, exists, git, remote }, git/remote are the raw string values (which
 // may be OUT of the enum, e.g. 'true'; the caller validates) or null when the
 // key (or the file) is absent. Last occurrence wins, like npm's ini.
 function readSourceConfig(dir) {
-  const file = path.join(dir, '.npmrc');
-  const out = { file, exists: false, git: null, remote: null };
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return out; }
-  out.exists = true;
-  for (const line of parseNpmrc(text)) {
-    if (line.type !== 'pair') continue;
-    for (const kind of ['git', 'remote']) {
-      if (line.key === SOURCES[kind].key) out[kind] = line.value;
-    }
+  const keys = { git: SOURCES.git.key, remote: SOURCES.remote.key };
+  const cfg = readNpmrcKeys(dir, Object.values(keys));
+  const out = { file: cfg.file, exists: cfg.exists, git: null, remote: null };
+  for (const kind of ['git', 'remote']) {
+    if (cfg.values[keys[kind]] !== undefined) out[kind] = cfg.values[keys[kind]];
   }
   return out;
 }
@@ -47,10 +63,13 @@ function readSourceConfig(dir) {
 // key is rewritten (npm's ini is last-wins, leaving a stale duplicate behind
 // would silently override the fix); missing keys are appended at the end.
 // updates: { 'allow-git': 'all', … }, null/undefined values are ignored.
+// An ARRAY value marks a repeatable key (npm reads min-release-age-exclude
+// that way): the existing lines are consumed in order and any spare ones are
+// dropped, so the committed list is exactly the list passed in.
 function mergeNpmrc(text, updates) {
   const sets = Object.entries(updates || {}).filter(([, v]) => v !== null && v !== undefined);
   if (sets.length === 0) return text;
-  const byKey = new Map(sets);
+  const byKey = new Map(sets.map(([k, v]) => [k, { multi: Array.isArray(v), queue: Array.isArray(v) ? [...v] : [v] }]));
   const missing = new Set(byKey.keys());
   const parts = String(text).length > 0 ? String(text).split(/(?<=\n)/) : [];
   const out = parts.map((part) => {
@@ -61,18 +80,24 @@ function mergeNpmrc(text, updates) {
     if (t === '' || t.startsWith('#') || t.startsWith(';')) return part;
     const eq = body.indexOf('=');
     const key = eq === -1 ? t : body.slice(0, eq).trim();
-    if (!byKey.has(key)) return part;
+    const set = byKey.get(key);
+    if (!set) return part;
     missing.delete(key);
-    return `${key}=${byKey.get(key)}${eol || '\n'}`;
+    if (!set.multi) return `${key}=${set.queue[0]}${eol || '\n'}`;
+    if (set.queue.length === 0) return '';
+    return `${key}=${set.queue.shift()}${eol || '\n'}`;
   });
   let result = out.join('');
-  if (missing.size > 0) {
+  const leftovers = sets.flatMap(([key]) => {
+    const set = byKey.get(key);
+    if (missing.has(key)) return set.multi ? set.queue.map((v) => [key, v]) : [[key, set.queue[0]]];
+    return set.multi ? set.queue.map((v) => [key, v]) : [];
+  });
+  if (leftovers.length > 0) {
     if (result !== '' && !result.endsWith('\n')) result += '\n';
-    for (const [key, value] of sets) {
-      if (missing.has(key)) result += `${key}=${value}\n`;
-    }
+    for (const [key, value] of leftovers) result += `${key}=${value}\n`;
   }
   return result;
 }
 
-module.exports = { parseNpmrc, readSourceConfig, mergeNpmrc };
+module.exports = { parseNpmrc, readSourceConfig, readNpmrcKeys, mergeNpmrc };

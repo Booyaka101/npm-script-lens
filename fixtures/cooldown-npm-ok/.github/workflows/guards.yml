@@ -1,0 +1,8 @@
+name: guards
+on: [push]
+jobs:
+  cooldown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx npm-script-lens audit --cooldown 72 --cooldown-allow urgent-fix

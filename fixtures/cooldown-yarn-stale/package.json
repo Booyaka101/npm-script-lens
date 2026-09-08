@@ -1,0 +1,7 @@
+{
+  "name": "cooldown-yarn-stale",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "yarn@4.10.2",
+  "dependencies": { "left-pad": "^1.3.0" }
+}

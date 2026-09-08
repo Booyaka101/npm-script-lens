@@ -30,19 +30,23 @@ const { program } = require('commander');
 const { writeReport } = require('./format');
 const { fetchPackage, loadLocalPackage } = require('./registry');
 const { analyzePackage, walkFiles, resolveFile, score, commandEntryFiles, runtimeBootstrapFindings } = require('./analyzer');
-const { loadDeps, resolveLockfile, viaChain, findProjects } = require('./lockfiles');
+const { loadDeps, resolveLockfile, viaChain, findProjects, lockfileAnchor, projectLabels } = require('./lockfiles');
 const { cacheGet, cacheSet } = require('./cache');
 const { osvMalicious, fetchTrust, trustLabel, resolveProvenance, identityChanges, driftNote } = require('./trust');
 const { buildReport, buildHtml, buildAllowScripts, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport, BADGE } = require('./reporter');
 const { checkV12Gaps, workflowFiles } = require('./v12gaps');
-const { evaluateCooldown, cooldownReport, DEFAULT_HOURS: COOLDOWN_HOURS } = require('./cooldown');
+const {
+  evaluateCooldown, cooldownReport, DEFAULT_HOURS: COOLDOWN_HOURS,
+  readCooldownConfig, renderCooldownConfig, cooldownConfigJson, cooldownFindings,
+  writeTarget, splitExclude, isFailing,
+} = require('./cooldown');
 const { collectGypFindings, KIND_LABEL: GYP_KIND_LABEL } = require('./gyp');
 const { npmDryRunPending, npmMajorVersion, isCovered } = require('./review');
 const { runDoctor, renderDoctor } = require('./doctor');
 const { analyzeSources, sourcesJson, renderSources, rootWarnings, checkSourceConfig, readSourceConfig } = require('./sources');
 const { mergeNpmrc } = require('./npmrc');
 const { SOURCES } = require('./npm-contract');
-const { managerFor, managerById } = require('./pm-contract');
+const { managerFor, managerById, COOLDOWN } = require('./pm-contract');
 const { loadPolicy, evaluate: evaluatePolicy, trustPolicyConfig } = require('./policy');
 const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./diff');
 
@@ -215,11 +219,9 @@ async function runAudit(lockPath, {
 }
 
 function writeSarif(results, target, file, findings = []) {
-  const { path: lp } = resolveLockfile(target);
-  let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
-  if (rel.startsWith('..')) rel = path.basename(lp);
+  const anchor = lockfileAnchor(target);
   fs.writeFileSync(file,
-    JSON.stringify(buildSarif(results, { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8'), findings }), null, 2));
+    JSON.stringify(buildSarif(results, { lockPath: anchor.path, lockText: anchor.text, findings }), null, 2));
 }
 
 const failCount = (results) => results.filter((r) => r.malicious || packageRisk(r) === 'HIGH').length;
@@ -413,6 +415,7 @@ async function auditAction(opts) {
       if (cd.blocked.length > 0) process.exitCode = 1;
     }
   }
+  cooldownConfigGate(opts.path, opts);
 }
 
 const auditRunOpts = (opts, diffBase = null) => ({
@@ -480,6 +483,7 @@ async function auditProject(target, opts) {
       process.stderr.write(`${cooldownReport(cd)}\n`);
       if (cd.blocked.length > 0) process.exitCode = 1;
     }
+    cooldownConfigGate(target, opts);
   } finally {
     if (sinceDir) fs.rmSync(sinceDir, { recursive: true, force: true });
   }
@@ -1215,6 +1219,131 @@ async function sourcesAction(opts) {
   }
 }
 
+// "npm min-release-age in DAYS, pnpm minimumReleaseAge in MINUTES, ...", built
+// from the contract table so the help can never name a key the code does not.
+const cooldownKeyList = () => Object.values(COOLDOWN)
+  .map((r) => `${r.id} ${r.section ? `[${r.section}] ` : ''}${r.key} in ${r.unit.toUpperCase()}`)
+  .join(', ');
+
+// --- cooldown: the manager's install-time gate against CI's --cooldown -----
+// `audit --cooldown` judges lockfile ages in CI. It says nothing about the
+// cooldown setting the package manager applies on every local install, and all
+// four managers now have one in a different unit. This command reconciles the
+// two: OK, MISSING, UNIT-SUSPECT, DRIFT, per project.
+
+// hours from --cooldown, or null when the flag was not passed (CI is then the
+// source of truth). Shared with audit --cooldown so the parse is identical.
+function cooldownHours(opts) {
+  if (opts.cooldown === undefined) return null;
+  const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
+  if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
+  return hours;
+}
+
+// One report per project the path resolves to, in the same shape audit has
+// used since 1.13.0.
+function cooldownReports(target, opts) {
+  const found = findProjects(target);
+  const labels = projectLabels(target, found.lockfiles);
+  const hours = cooldownHours(opts);
+  const allow = opts.cooldownAllow || null;
+  return found.lockfiles.map(({ path: lockPath, type }, i) => ({
+    rel: labels[i],
+    report: readCooldownConfig(lockPath, type, { hours, allow }),
+  }));
+}
+
+// Refuse the whole write when any target is not writable, rather than leaving
+// a monorepo half-updated.
+function assertWritable(reports) {
+  for (const { report } of reports) {
+    const unreadable = report.statuses.find((s) => s.id === 'PARTIAL');
+    if (unreadable) {
+      throw new Error(`${unreadable.message}. Fix the file by hand, then re-run \`cooldown --write\`; nothing was written`);
+    }
+    const target = fs.existsSync(report.file) ? report.file : path.dirname(report.file);
+    try {
+      fs.accessSync(target, fs.constants.W_OK);
+    } catch {
+      throw new Error(`${report.file} is not writable, so nothing was written. Fix the permissions and run \`cooldown --write\` again`);
+    }
+  }
+}
+
+function cooldownWrite(reports, opts) {
+  assertWritable(reports);
+  const hours = cooldownHours(opts);
+  for (const { rel, report } of reports) {
+    const target = writeTarget(report, { hours });
+    const { accepted, rejected } = splitExclude(target.row, opts.cooldownAllow || []);
+    for (const entry of rejected) {
+      process.stderr.write(`skipped exemption '${entry}': ${report.manager} accepts ${target.row.excludeNote}\n`);
+    }
+    if (target.note) process.stderr.write(`${target.note}\n`);
+    const res = managerById(report.manager).writeCooldown(report.projectDir, { hours: target.hours, value: target.value, exclude: accepted });
+    const where = reports.length > 1 ? `${rel}: ` : '';
+    process.stderr.write(res.changed === false
+      ? `${where}${res.file} already matches (${target.row.key} ${target.value}), nothing to write\n`
+      : `${where}${res.note} (${target.row.key} → ${target.value}, ${target.hours}h)\n`);
+  }
+}
+
+async function cooldownAction(opts) {
+  const reports = cooldownReports(opts.path, opts);
+  if (opts.write) {
+    cooldownWrite(reports, opts);
+    // re-read so the report below describes what is now on disk
+    reports.splice(0, reports.length, ...cooldownReports(opts.path, opts));
+  }
+  const multi = reports.length > 1;
+  if (opts.json) {
+    const body = multi
+      ? { projects: reports.map((r) => ({ project: r.rel, ...cooldownConfigJson(r.report) })) }
+      : cooldownConfigJson(reports[0].report);
+    process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
+  } else {
+    writeReport(reports
+      .map(({ rel, report }) => (multi ? `[${rel}]\n${renderCooldownConfig(report, { hours: cooldownHours(opts) })}` : renderCooldownConfig(report, { hours: cooldownHours(opts) })))
+      .join('\n\n'));
+  }
+  if (opts.sarif) {
+    const file = opts.sarif === true ? 'cooldown.sarif' : opts.sarif;
+    const findings = cooldownFindings(reports.map((r) => r.report), { check: Boolean(opts.check) });
+    fs.writeFileSync(file, JSON.stringify(
+      buildSarif([], { lockPath: 'package.json', lockText: '', findings }), null, 2));
+    process.stderr.write(`SARIF written to ${file}\n`);
+  }
+  // only --check may change the exit code; the plain report is a report
+  if (opts.check) {
+    const failed = reports.filter(({ report }) => !report.ok);
+    if (failed.length === 0) {
+      const enforcing = reports.filter(({ report }) => report.enforced).length;
+      process.stderr.write(`cooldown config check passed: ${reports.length} project(s)`
+        + `${enforcing > 0 ? `, ${enforcing} matching what CI enforces` : ', none of which has a --cooldown enforced in CI'}\n`);
+      return;
+    }
+    for (const { rel, report } of failed) {
+      for (const s of report.statuses.filter((st) => isFailing(st.id))) {
+        process.stderr.write(`FAIL (${s.id})${reports.length > 1 ? ` ${rel}` : ''}: ${s.message}\n`);
+      }
+    }
+    process.stderr.write('Run `npm-script-lens cooldown --write` to commit the matching value.\n');
+    process.exitCode = 1;
+  }
+}
+
+// audit --cooldown-config: the same reconciliation folded into an audit run,
+// on stderr so the report on stdout stays byte-identical without the flag.
+function cooldownConfigGate(target, opts) {
+  if (!opts.cooldownConfig) return;
+  const reports = cooldownReports(target, opts);
+  for (const { rel, report } of reports) {
+    const prefix = reports.length > 1 ? `${rel}: ` : '';
+    process.stderr.write(`${renderCooldownConfig(report, { hours: cooldownHours(opts) }).split('\n').map((l) => `${prefix}${l}`).join('\n')}\n`);
+    if (!report.ok) process.exitCode = 1;
+  }
+}
+
 // --- publish: will the release workflow survive the January-2027 cliff? ----
 // Pure, network-free analysis of the repo's CI configs: finds every publish
 // step, classifies it TRUSTED / STAGED / TOKEN / UNKNOWN, checks the version
@@ -1407,6 +1536,7 @@ if (require.main === module) {
     .option('--fail-on-high', 'exit 1 if any package scores HIGH or is known malicious')
     .option('--cooldown [hours]', `exit 1 if any dependency version was published less than N hours ago (default ${COOLDOWN_HOURS}). npm worms are typically caught within hours, so declining to install first sits out the event`)
     .option('--cooldown-allow <pkg...>', 'exempt packages from --cooldown, by name or name@version')
+    .option('--cooldown-config', `also reconcile the package manager's own cooldown setting (${cooldownKeyList()}) against what --cooldown enforces in CI; exits 1 on MISSING, UNIT-SUSPECT or DRIFT`)
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .option('--fail-on-downgrade', 'exit 1 if any package resolves below the highest trust tier it previously reached (trusted publisher > provenance > none, npm/cli#9242); policy trustPolicy: "no-downgrade" runs the same check without changing the exit code')
     .option('--fail-on-runtime-bootstrap', 'exit 1 if any package\'s install-time code fetches or installs another JavaScript runtime (bun, deno), the ChainDrop pattern; policy runtimeBootstrapPolicy: "fail" arms the same gate from the policy file')
@@ -1457,6 +1587,16 @@ if (require.main === module) {
     .option('--write', 'merge the minimal correct allow-git/allow-remote into .npmrc, preserving every other key and comment (npm lockfiles only)')
     .option('--check', 'exit 1 when the committed .npmrc is insufficient, over-permissive, or holds an invalid value for these keys (for CI)')
     .action(sourcesAction);
+  program.command('cooldown')
+    .description(`reconcile the cooldown your package manager applies on every local install against the one --cooldown enforces in CI. All four ship the setting in a different unit (${cooldownKeyList()}; yarn also takes a duration string), so a value that looks right can gate nothing. Reports OK / MISSING / UNIT-SUSPECT / DRIFT. No scan, no network`)
+    .option('--path <path>', 'project dir or lockfile (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock). A directory with no lockfile searches upward, then reports every project underneath', '.')
+    .option('--cooldown [hours]', `the threshold to reconcile against, in hours (default: whatever --cooldown the repo\'s CI configs enforce, else ${COOLDOWN_HOURS} for --write)`)
+    .option('--cooldown-allow <pkg...>', 'exemptions to reconcile and, with --write, to translate into the manager\'s own exclude key. Entries the manager cannot express are skipped with a note, never rewritten into something it would ignore')
+    .option('--json', 'emit the structured report as JSON ({ projects } when more than one project was found)')
+    .option('--sarif [file]', 'also write SARIF 2.1.0 (rule cooldown-config: error for MISSING/UNIT-SUSPECT under --check, warning otherwise), anchored to the real config line', undefined)
+    .option('--write', 'merge the threshold into the manager\'s own config file, preserving every other key, comment, blank line and EOL')
+    .option('--check', 'exit 1 on MISSING, UNIT-SUSPECT or DRIFT (for CI). Without it the report exits 0')
+    .action(cooldownAction);
   program.command('publish')
     .description('will this repo\'s release workflow survive npm\'s January-2027 token cliff? finds every CI publish step (.github/workflows, .github/actions/**/action.yml, where local composite actions and reusable workflows are followed, .gitlab-ci.yml, .circleci), classifies TRUSTED / STAGED / TOKEN / BROKEN / UNKNOWN (BROKEN = trusted publishing granted but setup-node < v7 with registry-url writes a dummy _authToken that blocks the OIDC exchange), checks the trusted/staged version floors and runner eligibility, and pre-fills the npmjs.com trusted-publisher checklist. No scan, no network')
     .argument('[dir]', 'project dir (the repo root holding the CI configs)')

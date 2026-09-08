@@ -1,0 +1,7 @@
+name: guards
+on: [push]
+jobs:
+  cooldown:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx npm-script-lens audit --cooldown 72

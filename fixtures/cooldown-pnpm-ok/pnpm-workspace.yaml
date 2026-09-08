@@ -1,0 +1,5 @@
+packages:
+  - "packages/*"
+
+# 72 hours, matching the --cooldown the guards workflow enforces
+minimumReleaseAge: 4320
