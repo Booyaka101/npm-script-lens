@@ -283,6 +283,25 @@ function nearestLockfileUp(dir) {
   }
 }
 
+// Per-project labels are relative to the directory being scanned. `path` may
+// be a lockfile rather than a directory, which is how this repo's own
+// self-audit workflow calls it, so the base has to be normalised first.
+function projectLabels(target, lockfiles) {
+  const resolved = path.resolve(target);
+  const base = fs.existsSync(resolved) && fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
+  return lockfiles.map((l) => path.relative(base, path.dirname(l.path)).replace(/\\/g, '/') || '.');
+}
+
+// Where a SARIF finding with no file of its own points: the project's
+// lockfile, relative to the workspace so code scanning resolves it, plus its
+// text so results can be anchored to a package's line.
+function lockfileAnchor(target) {
+  const { path: lockPath } = resolveLockfile(target);
+  let rel = path.relative(process.cwd(), lockPath).replace(/\\/g, '/');
+  if (rel.startsWith('..')) rel = path.basename(lockPath);
+  return { path: rel, text: fs.readFileSync(lockPath, 'utf8') };
+}
+
 const notFound = (p) => {
   const hint = fs.existsSync(path.join(p, 'bun.lockb'))
     ? ', found binary bun.lockb; run `bun install --save-text-lockfile` to get a readable bun.lock'
@@ -696,6 +715,6 @@ function collectNonRegistryDeps(lock, type) {
 
 module.exports = {
   LOCKFILE_NAMES, collectNpmDeps, parseYarnLock, parsePnpmLock, parseBunLock,
-  resolveLockfile, loadDeps, viaChain, classifySourceSpec, collectNonRegistryDeps,
+  resolveLockfile, lockfileAnchor, projectLabels, loadDeps, viaChain, classifySourceSpec, collectNonRegistryDeps,
   findProjects, discoverLockfiles, nearestLockfileUp,
 };

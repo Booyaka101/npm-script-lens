@@ -1,0 +1,6 @@
+telemetry = false
+
+[install]
+# 72 hours, bun's own documented 3-day example value
+minimumReleaseAge = 259200
+minimumReleaseAgeExcludes = ["urgent-fix"]

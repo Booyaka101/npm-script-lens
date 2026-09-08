@@ -1,5 +1,123 @@
 # Changelog
 
+## 1.16.0 (2026-09-08)
+
+**All four package managers now ship a cooldown setting, in four different
+units, and `--cooldown` had no idea any of them existed.** npm calls it
+`min-release-age` and counts DAYS: *"If set, npm will build the npm tree such
+that only versions that were available more than the given number of days ago
+will be installed."* pnpm calls it `minimumReleaseAge` and counts MINUTES:
+*"minimumReleaseAge defines the minimum number of minutes that must pass after
+a version is published before pnpm will install it. This applies to all
+dependencies, including transitive ones"*, default **1440 (since v11)**, 0
+before that. Yarn calls it `npmMinimalAgeGate`, minutes or a duration string.
+bun puts `minimumReleaseAge` under `[install]` in `bunfig.toml` and counts
+SECONDS. So `3` means three days, three minutes and three seconds depending on
+which file you typed it into, and typing the wrong one does not fail: the
+install succeeds and the gate is simply absent.
+
+That is not hypothetical. [yarnpkg/berry#6991](https://github.com/yarnpkg/berry/issues/6991)
+is a user who set `npmMinimalAgeGate: "7d"` from the docs and watched a
+five-day-old release install anyway. Their Yarn predated duration strings
+(`SettingsType.DURATION` landed in [#6942](https://github.com/yarnpkg/berry/pull/6942),
+Yarn 4.11.0; before that the setting was `SettingsType.NUMBER`, so
+`parseInt("7d")` is `7` and the gate was seven minutes). They closed it
+themselves on 2025-11-26: *"Upon further investigation I see that the 'days'
+formatting has been added in a later versions of Yarn, so I'm closing the
+issue."* On current Yarn `7d` is exact. On theirs it silently gated nothing.
+
+Since 1.6.0 `--cooldown` has been **CI-only**: it reads publish dates for the
+versions already in the lockfile and fails the build. It never looked at the
+setting a contributor's own `pnpm install` honours, so a repo could have a hard
+72-hour gate in CI and a 3-minute one on every developer machine and nothing
+would say so.
+
+New `cooldown` command, reconciling the two:
+
+```
+$ npm-script-lens cooldown --check
+cooldown config — pnpm (pnpm-workspace.yaml)
+  UNIT-SUSPECT  minimumReleaseAge: 3  → 3 minutes (pnpm counts MINUTES), not 3 days
+                pnpm's own default is 1440 (1 day); 3 gates essentially nothing
+  DRIFT         configured 0.05h < enforced 72h (--cooldown in .github/workflows/ci.yml)
+  fix:  npm-script-lens cooldown --write --cooldown 72
+        writes  minimumReleaseAge: 4320
+exit 1
+```
+
+- **`COOLDOWN` in `src/pm-contract.js`** is the one place any of those keys,
+  files, units or exclude-key names appears, the way `SOURCES` in
+  `npm-contract.js` already owns npm's allow-git/allow-remote couplings. Each
+  `MANAGERS` adapter gained `readCooldown(dir)` and `writeCooldown(dir, …)`.
+- **Four statuses that fail `--check`.** `MISSING` (nothing configured while
+  `--cooldown` is enforced in CI, so only CI is protected). `UNIT-SUSPECT` (a
+  value that gates under an hour or over a month *and* reads as a sensible
+  cooldown in one of the other managers' units, which is what makes it a unit
+  slip rather than a deliberate extreme). `DRIFT` (configured below the
+  enforced threshold, or exempt lists that disagree), measured against what the
+  manager *actually* gates: an old Yarn truncating `7d` drifts on seven
+  minutes, not on the 168 hours the file implies. `PARTIAL` (a config file that
+  cannot be round-tripped). `OK` otherwise, with the converted hours spelled
+  out. A value that is merely unusual is never reported as suspect, and an
+  `UNSUPPORTED` exemption is reported without failing anything.
+- **The Yarn silent-ignore is reported against the resolved Yarn version**,
+  from `packageManager` or `yarnPath`, never as a blanket "strings are
+  unreliable": on Yarn ≥ 4.11.0 a duration string is exact, and `cooldown
+  --write` emits Yarn's own `3d` idiom there. On a project pinned below 4.11.0
+  it writes bare minutes instead, because `3d` there would commit a
+  three-minute gate.
+- **`cooldown --write`** merges the value into the right file, preserving every
+  other key, comment, blank line and EOL style, and translates
+  `--cooldown-allow` into that manager's exclude key while respecting what each
+  one accepts: npm names or minimatch globs, pnpm names and `@myorg/*` patterns
+  and version descriptors, yarn package descriptors or name globs, bun package
+  names only. An exemption a manager cannot express is skipped with a note
+  rather than written into a key that would ignore it. Yarn's per-scope gate
+  ([berry#7156](https://github.com/yarnpkg/berry/pull/7156), Yarn 4.17.0) is
+  read and reported, and never rewritten.
+- **A pnpm setting parked in `.npmrc` is named rather than counted as absent.**
+  pnpm's docs are explicit: *"Only auth and registry settings are read from
+  `.npmrc` files. All other settings ... must be configured in
+  `pnpm-workspace.yaml`"*. A `minimumReleaseAge` left in `.npmrc` is therefore
+  dead, and reading `MISSING` with no explanation would send you looking in the
+  wrong file. The finding anchors to the dead line and says to move it.
+- **The npm exemption list is written in the form npm actually honours.**
+  Repeating a plain `min-release-age-exclude=` line does *not* build a list:
+  verified against npm 11.19.1, npm keeps only the last one. Only the
+  `min-release-age-exclude[]=` form appends. The reader follows the same rule,
+  so a repo that repeats the plain key is reported as exempting the one package
+  npm really exempts.
+- **An inline comment on the managed line survives the write**, with its
+  original spacing, in all four files. It is often the only record of why the
+  value is what it is. Relatedly, `.npmrc` values now have their inline comment
+  split off before parsing, because npm's own ini does that: verified against
+  npm 11.19.1, `min-release-age=3 # note` reads as 3, and so does `3#note`.
+  Folding the comment into the value would have reported a perfectly good
+  setting as unreadable.
+- **`bunfig.toml` got a tolerant line-preserving reader**, in the same spirit
+  as `src/gyp.js` and the hooks JSONC reader. A file it cannot round-trip (a
+  multi-line array, say) is reported `PARTIAL` and `--write` refuses it rather
+  than mangling it.
+- **Surfaces:** `--cooldown-config` on `audit`, a `doctor` section naming the
+  manager, file, key, raw value and converted hours, `--json`, SARIF rule
+  `cooldown-config` (error for MISSING/UNIT-SUSPECT under `--check`, warning
+  otherwise) anchored to the real config line, the opt-in `cooldown-check`
+  Action input shaped like `sources-check`, and shell completion. A monorepo
+  reports per project and fails if any project fails.
+- Only `--check` and `--cooldown-config` change an exit code; the plain report
+  exits 0. `audit` output without the new flag is byte-identical to 1.15.0.
+- Reuse over cloning: the `pnpm-workspace.yaml` and `.yarnrc.yml` writers now
+  share one top-level-YAML block merge (`writeAllowBuilds` is a caller of it),
+  `.npmrc` goes through `mergeNpmrc`, which learned repeatable keys for
+  `min-release-age-exclude`, and the four copies of the SARIF-merge block in
+  `src/action.js` collapsed into one `mergeIntoSarif`.
+
+`@hikae/pmsec` (npm and uv) and `npcooldown` (all four, set globally) already
+write and check these keys, and if all you want is the setting turned on, use
+either. What is new here is the reconciliation: the committed config, the
+committed lockfile and the threshold CI actually enforces, judged against each
+other, per project.
+
 ## 1.15.0 (2026-08-31)
 
 **Follow the payload into an alternate runtime: the ChainDrop escape.** On

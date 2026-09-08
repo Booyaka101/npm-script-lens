@@ -1,6 +1,6 @@
 {
   "name": "npm-script-lens",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "description": "See what an install script actually does before you approve it: behavioral analysis, binding.gyp inspection and resolved provenance identity for npm 12 allowScripts, pnpm allowBuilds, yarn and bun",
   "license": "MIT",
   "author": "cbosch101 <cbosch101@gmail.com>",
@@ -58,7 +58,12 @@
     "bun",
     "deno",
     "runtime-bootstrap",
-    "chaindrop"
+    "chaindrop",
+    "min-release-age",
+    "minimumReleaseAge",
+    "npmMinimalAgeGate",
+    "cooldown",
+    "minimum-release-age"
   ],
   "dependencies": {
     "acorn": "^8.12.0",

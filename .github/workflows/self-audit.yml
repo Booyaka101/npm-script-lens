@@ -16,3 +16,6 @@ jobs:
           comment-on-pr: 'true'
           manifest-check: 'true'
           trust-policy-check: 'true'
+          # The new 1.16.0 input, exercised on this repo's own PRs. A gate with
+          # no run history is not a gate you can trust.
+          cooldown-check: 'true'

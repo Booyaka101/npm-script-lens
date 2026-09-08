@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { runAudit, ciCheckResult } = require('./cli');
-const { resolveLockfile } = require('./lockfiles');
+const { resolveLockfile, lockfileAnchor, projectLabels } = require('./lockfiles');
 const { buildReport, buildSarif, buildManifest, serializeManifest, diffManifests, packageRisk, buildGapsReport } = require('./reporter');
 const { checkV12Gaps } = require('./v12gaps');
 
@@ -102,26 +102,33 @@ async function v12GapsMain() {
     const at = f.file ? ` (${f.file}:${f.line})` : '';
     console.log(`::warning::${f.id}: ${f.package}${at}: ${f.fix}`);
   }
-  const sarifFile = input('SARIF_FILE', '');
-  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
-    const { path: lp } = resolveLockfile(target);
-    let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
-    if (rel.startsWith('..')) rel = path.basename(lp);
-    const fresh = buildSarif([], { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8'), findings });
-    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
-    const run = sarif.runs && sarif.runs[0];
-    if (run) {
-      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
-      run.tool.driver.rules = run.tool.driver.rules || [];
-      for (const rule of fresh.runs[0].tool.driver.rules) {
-        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
-      }
-      run.results = run.results || [];
-      run.results.push(...fresh.runs[0].results);
-      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
-      console.log(`merged ${findings.length} v12 gap finding(s) into ${sarifFile}`);
-    }
+  mergeIntoSarif(input('SARIF_FILE', ''), findings, { anchor: lockfileAnchor(target), label: 'v12 gap' });
+}
+
+// Merge findings into the SARIF file the audit step already wrote, adding any
+// rule the file has not seen. Every opt-in gate here reports the same way, so
+// this is one function rather than one copy per gate. `anchor` picks what a
+// finding with no file of its own points at: the lockfile for gates that judge
+// dependencies, package.json for gates that judge repo files.
+function mergeIntoSarif(sarifFile, findings, { anchor = null, label }) {
+  if (!sarifFile || findings.length === 0 || !fs.existsSync(sarifFile)) return;
+  const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
+  const run = sarif.runs && sarif.runs[0];
+  if (!run) return;
+  const fresh = buildSarif([], {
+    lockPath: anchor ? anchor.path : 'package.json',
+    lockText: anchor ? anchor.text : '',
+    findings,
+  });
+  const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
+  run.tool.driver.rules = run.tool.driver.rules || [];
+  for (const rule of fresh.runs[0].tool.driver.rules) {
+    if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
   }
+  run.results = run.results || [];
+  run.results.push(...fresh.runs[0].results);
+  fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
+  console.log(`merged ${findings.length} ${label} finding(s) into ${sarifFile}`);
 }
 
 // `node action.js ci-check`, the fail-fast gate step (opt-in via the
@@ -187,6 +194,54 @@ async function sourcesCheckMain() {
   process.exitCode = 1;
 }
 
+// `node action.js cooldown-check`, opt-in gate (the `cooldown-check` input):
+// fails the job when the cooldown the package manager applies on every local
+// install does not match the one --cooldown enforces here. All four managers
+// count in a different unit, so a committed value that looks right can gate
+// nothing at all (yarnpkg/berry#6991).
+async function cooldownCheckMain() {
+  const input = (name, dflt) => process.env[`INPUT_${name}`] || dflt;
+  const target = input('PATH', '.');
+  const { readCooldownConfig, renderCooldownConfig, cooldownFindings, isFailing } = require('./cooldown');
+  const { findProjects } = require('./lockfiles');
+  let found;
+  try {
+    found = findProjects(target);
+  } catch (err) {
+    console.log(`cooldown config check skipped: ${err.message}`);
+    return;
+  }
+  const labels = projectLabels(target, found.lockfiles);
+  const reports = found.lockfiles.map(({ path: lockPath, type }, i) => ({
+    rel: labels[i],
+    report: readCooldownConfig(lockPath, type),
+  }));
+  const failed = reports.filter((r) => !r.report.ok);
+  const counts = reports.map((r) => `${r.rel}: ${r.report.manager} ${r.report.key}=${r.report.raw === null ? 'unset' : r.report.raw}`).join(' · ');
+  if (failed.length === 0) {
+    console.log(`cooldown config check passed: ${counts}`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ✅ cooldown config check\n\n${counts}\n`);
+    }
+    return;
+  }
+  for (const { rel, report } of failed) {
+    // an ::error:: per status the check actually fails on; the rest are in
+    // the step summary, where they read as context rather than as breakage
+    for (const st of report.statuses.filter((x) => isFailing(x.id))) {
+      console.log(`::error::${st.id} (${rel}): ${st.message}`);
+    }
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const bodies = failed.map(({ rel, report }) => `### \`${rel}\`\n\n\`\`\`\n${renderCooldownConfig(report)}\n\`\`\``).join('\n\n');
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `\n## ❌ cooldown config check\n\n${bodies}\n\nRun \`npx npm-script-lens cooldown --write\` and commit the updated config.\n`);
+  }
+  mergeIntoSarif(input('SARIF_FILE', ''), cooldownFindings(failed.map((f) => f.report), { check: true }),
+    { anchor: lockfileAnchor(target), label: 'cooldown-config' });
+  process.exitCode = 1;
+}
+
 // `node action.js publish-check`, opt-in gate (the `publish-check` input):
 // fails the job when a CI publish path still authenticates with a long-lived
 // npm token (which loses direct publish around January 2027), is BROKEN by
@@ -223,24 +278,7 @@ async function publishCheckMain() {
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
       `\n## ❌ npm token-cliff publish check\n\n${intro}\n\n${failures.map((f) => `- **${f.verdict}**: ${f.message}`).join('\n')}\n\nRun \`npx npm-script-lens publish\` for the migration patch and the pre-filled npmjs.com trusted-publisher checklist.\n`);
   }
-  const sarifFile = input('SARIF_FILE', '');
-  const findings = publishFindings(analysis);
-  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
-    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
-    const run = sarif.runs && sarif.runs[0];
-    if (run) {
-      const fresh = buildSarif([], { lockPath: 'package.json', lockText: '', findings });
-      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
-      run.tool.driver.rules = run.tool.driver.rules || [];
-      for (const rule of fresh.runs[0].tool.driver.rules) {
-        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
-      }
-      run.results = run.results || [];
-      run.results.push(...fresh.runs[0].results);
-      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
-      console.log(`merged ${findings.length} publish-token-cliff finding(s) into ${sarifFile}`);
-    }
-  }
+  mergeIntoSarif(input('SARIF_FILE', ''), publishFindings(analysis), { label: 'publish-token-cliff' });
   process.exitCode = 1;
 }
 
@@ -278,24 +316,7 @@ async function hooksCheckMain() {
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
       `\n## ❌ open-time execution check\n\n\`\`\`\n${renderHooks(scan.findings, scan.partials)}\n\`\`\`\n\n${surfaceCaveats(scan.findings).map((c) => `> ${c}`).join('\n')}\n\nInspect with \`npx npm-script-lens hooks\` (add \`--deps\` to also scan dependency tarballs).\n`);
   }
-  const sarifFile = input('SARIF_FILE', '');
-  const findings = hooksFindings(scan.findings);
-  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
-    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
-    const run = sarif.runs && sarif.runs[0];
-    if (run) {
-      const fresh = buildSarif([], { lockPath: 'package.json', lockText: '', findings });
-      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
-      run.tool.driver.rules = run.tool.driver.rules || [];
-      for (const rule of fresh.runs[0].tool.driver.rules) {
-        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
-      }
-      run.results = run.results || [];
-      run.results.push(...fresh.runs[0].results);
-      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
-      console.log(`merged ${findings.length} hook-auto-run finding(s) into ${sarifFile}`);
-    }
-  }
+  mergeIntoSarif(input('SARIF_FILE', ''), hooksFindings(scan.findings), { label: 'hook-auto-run' });
   process.exitCode = 1;
 }
 
@@ -348,31 +369,11 @@ async function trustPolicyCheckMain() {
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
       `\n## ❌ trust downgrade check (npm/cli#9242)\n\n\`\`\`\n${renderTrustReport(result)}\n\`\`\`\n\nIf a drop is intentional, exclude it with \`trustPolicyExclude: ["pkg@version"]\` in \`script-lens.policy.json\`.\n`);
   }
-  const sarifFile = input('SARIF_FILE', '');
-  const findings = trustSarifFindings(result.downgrades);
-  if (sarifFile && findings.length > 0 && fs.existsSync(sarifFile)) {
-    const sarif = JSON.parse(fs.readFileSync(sarifFile, 'utf8'));
-    const run = sarif.runs && sarif.runs[0];
-    if (run) {
-      const { path: lp } = resolveLockfile(target);
-      let rel = path.relative(process.cwd(), lp).replace(/\\/g, '/');
-      if (rel.startsWith('..')) rel = path.basename(lp);
-      const fresh = buildSarif([], { lockPath: rel, lockText: fs.readFileSync(lp, 'utf8'), findings });
-      const have = new Set((run.tool.driver.rules || []).map((r) => r.id));
-      run.tool.driver.rules = run.tool.driver.rules || [];
-      for (const rule of fresh.runs[0].tool.driver.rules) {
-        if (!have.has(rule.id)) run.tool.driver.rules.push(rule);
-      }
-      run.results = run.results || [];
-      run.results.push(...fresh.runs[0].results);
-      fs.writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
-      console.log(`merged ${findings.length} trust-downgrade finding(s) into ${sarifFile}`);
-    }
-  }
+  mergeIntoSarif(input('SARIF_FILE', ''), trustSarifFindings(result.downgrades), { anchor: lockfileAnchor(target), label: 'trust-downgrade' });
   process.exitCode = 1;
 }
 
-const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain, 'publish-check': publishCheckMain, 'hooks-check': hooksCheckMain, 'trust-policy-check': trustPolicyCheckMain };
+const MODE = { 'v12-gaps': v12GapsMain, 'ci-check': ciCheckMain, 'sources-check': sourcesCheckMain, 'cooldown-check': cooldownCheckMain, 'publish-check': publishCheckMain, 'hooks-check': hooksCheckMain, 'trust-policy-check': trustPolicyCheckMain };
 (MODE[process.argv[2]] || main)().catch((err) => {
   console.log(`::error::${err.message}`);
   process.exitCode = 2;

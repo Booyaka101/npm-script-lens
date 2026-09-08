@@ -285,6 +285,15 @@ const HOOK_RULE = {
   text: 'Editor or agent configuration runs a command automatically at open time (.vscode/tasks.json runOn: folderOpen, or a .claude/settings.json hook), so code executes when the folder is opened, with no install step involved',
 };
 
+// The cooldown the package manager applies on every local install (from
+// src/cooldown.js), reconciled against the --cooldown the repo's CI enforces.
+// The four managers count DAYS, MINUTES, minutes-or-duration-string and
+// SECONDS respectively, so a wrong unit gates nothing and says nothing.
+const COOLDOWN_CONFIG_RULE = {
+  id: 'cooldown-config',
+  text: 'The package manager\'s own minimum-release-age setting is missing, written in the wrong unit for that manager, or below the threshold --cooldown enforces in CI, so local installs are not waiting as long as CI believes they are',
+};
+
 // SARIF 2.1.0 for GitHub code scanning: one result per risky package, level
 // mapped from risk, anchored to the package's line in the lockfile so alerts
 // annotate the right place.
@@ -407,7 +416,7 @@ function buildSarif(results, { lockPath = 'package-lock.json', lockText = '', fi
           name: 'npm-script-lens',
           informationUri: 'https://github.com/Booyaka101/npm-script-lens',
           version: require('../package.json').version,
-          rules: [...Object.values(SARIF_RULES), GYP_RULE, RUNTIME_BOOTSTRAP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, PUBLISH_OIDC_RULE, ...Object.values(PUBLISH_GATE_RULES), HOOK_RULE, ...Object.values(PROVENANCE_RULES), TRUST_DOWNGRADE_RULE].map((rule) => ({
+          rules: [...Object.values(SARIF_RULES), GYP_RULE, RUNTIME_BOOTSTRAP_RULE, ...Object.values(GAP_RULES), PUBLISH_RULE, PUBLISH_OIDC_RULE, ...Object.values(PUBLISH_GATE_RULES), HOOK_RULE, ...Object.values(PROVENANCE_RULES), TRUST_DOWNGRADE_RULE, COOLDOWN_CONFIG_RULE].map((rule) => ({
             id: rule.id,
             shortDescription: { text: rule.text },
           })),

@@ -130,6 +130,44 @@ async function checkSources(add, { target, major, fullVersion }) {
   return sources;
 }
 
+// The cooldown the package manager applies on every LOCAL install, next to
+// the --cooldown this repo's CI enforces. Four managers, four units, so the
+// converted hours is the only number the two sides can be compared on.
+// Warn-only: a stale cooldown value is the project's config drifting, not this
+// build losing track of npm, which is what a doctor `fail` means.
+function checkCooldownConfig(add, { target }) {
+  let lock;
+  try {
+    lock = resolveLockfile(target);
+  } catch {
+    add('cooldown config', 'info', 'no lockfile at this path, so there is no package manager whose cooldown setting to read');
+    return null;
+  }
+  const { readCooldownConfig, cooldownConfigJson, fmtHours, isFailing, STATUS } = require('./cooldown');
+  const { COOLDOWN } = require('./pm-contract');
+  const report = readCooldownConfig(lock.path, lock.type);
+  const row = COOLDOWN[report.manager];
+  const where = `${report.manager} reads ${row.key} from ${row.file} in ${row.unit}`;
+  const value = report.raw === null
+    ? 'not set'
+    : `${report.raw} (${fmtHours(report.hours)})`;
+  const versus = report.enforced ? `; CI enforces --cooldown ${report.enforced.hours}h in ${report.enforced.file}` : '; no --cooldown found in the CI configs';
+  // …unless a status is already saying it, which is how the unpinned-Yarn note
+  // arrives: two lines with the same content would just be noise.
+  if (report.ok && !report.statuses.some((st) => st.id === STATUS.OK)) {
+    add('cooldown config', 'ok', `${where}: ${value}${versus}`);
+  }
+  // A status the check does not fail on is context, not a warning, the same
+  // split the report and --check draw.
+  for (const st of report.statuses) {
+    add('cooldown config', isFailing(st.id) ? 'warn' : 'info', `${where}: ${value}. ${st.id}: ${st.message}`);
+  }
+  if (!report.ok) {
+    add('cooldown config fix', 'info', 'run `npm-script-lens cooldown` for the full reconciliation, `cooldown --write` to commit the matching value');
+  }
+  return cooldownConfigJson(report);
+}
+
 // Static CI-config analysis (src/publish.js), so these can only warn, never
 // fail: a TOKEN path is a coming break, not tool drift. Returns the report's
 // `publish` block.
@@ -245,13 +283,14 @@ async function runDoctor({ path: target = '.', offline = false, live = true } = 
   await checkLiveProbe(add, ctx);
   checkProjectAllowlist(add, ctx);
   const sources = await checkSources(add, ctx);
+  const cooldown = checkCooldownConfig(add, ctx);
   const publish = checkPublishReadiness(add, ctx);
   await checkAttestationsEndpoint(add, ctx);
   checkOpenTimeHooks(add, ctx);
   addContractSummary(add);
 
   const failed = checks.some((c) => c.status === 'fail');
-  return { tool: 'npm-script-lens', npmMajor: major, npmVersion: fullVersion, ok: !failed, sources, publish, checks };
+  return { tool: 'npm-script-lens', npmMajor: major, npmVersion: fullVersion, ok: !failed, sources, cooldown, publish, checks };
 }
 
 const ICON = { ok: '✅', warn: '⚠️ ', info: 'ℹ️ ', fail: '❌' };

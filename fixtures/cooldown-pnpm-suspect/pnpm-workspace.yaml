@@ -1,0 +1,5 @@
+# team settings, do not reorder
+packages:
+  - "packages/*"
+
+minimumReleaseAge: 3
