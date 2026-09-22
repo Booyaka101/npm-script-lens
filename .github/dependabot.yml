@@ -2,6 +2,16 @@ version: 2
 
 # Staying current is a standing requirement, so it is automated rather than
 # remembered.
+#
+# Only the root is listed, and Dependabot's security PRs are switched off for
+# this repo (alerts are still on). Everything under fixtures/ is a pinned corpus
+# that the tests assert on, down to `sharp@0.32.6` in test/scale.test.js, so a
+# bump there turns the suite red without making anything safer. None of it is
+# ever installed: no job runs `npm ci` in a fixture, and the auditor reads the
+# lockfiles as text. They have to keep the real `package-lock.json` name, since
+# reading the real thing is what the tests exist to check, so the dependency
+# graph will always see them and the only honest answer is to stop acting on it.
+# Real dependencies still move on the weekly grouped bump below.
 updates:
   - package-ecosystem: npm
     directory: /
