@@ -48,7 +48,8 @@ const { mergeNpmrc } = require('./npmrc');
 const { SOURCES } = require('./npm-contract');
 const { managerFor, managerById, COOLDOWN } = require('./pm-contract');
 const { loadPolicy, evaluate: evaluatePolicy, trustPolicyConfig } = require('./policy');
-const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./diff');
+const { runtimeSignals, runtimePayloadFinding, gainedIocs } = require('./runtime');
+const { parseSpec, fetchScripts, computeScriptDiff, computeRuntimeDiff, renderDiff } = require('./diff');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
@@ -62,9 +63,7 @@ async function crossPackageSignals(dep, entryKind, ctx) {
   if (hit) return hit;
   let out = null;
   try {
-    const pkg = ctx.offline
-      ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, { forceFiles: true })
-      : await fetchPackage(dep.name, dep.version, { forceTarball: true });
+    const pkg = await loadPackage(dep, ctx, { allFiles: true });
     let target = null;
     if (entryKind.startsWith('bin:')) {
       target = pkg.bin[entryKind.slice(4)];
@@ -118,33 +117,76 @@ async function enrichRows(rows, ctx) {
   }
 }
 
+// The package files for one name@version, from node_modules (offline) or the
+// registry. allFiles indexes every file, not only what install scripts reach.
+function loadPackage(dep, ctx, { allFiles = false } = {}) {
+  return ctx.offline
+    ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, allFiles ? { forceFiles: true, maxFiles: 2000 } : {})
+    : fetchPackage(dep.name, dep.version, { forceTarball: allFiles });
+}
+
 // Analysis rows for one name@version: cache, then node_modules (offline) or
-// the registry. Returns { rows } or { error }.
+// the registry. Returns { rows } or { error }. Under audit --runtime a cache
+// miss also returns the package, so its runtime code needs no second fetch.
 async function auditOne(dep, ctx) {
-  const { cache, offline, projectDir, deep } = ctx;
+  const { cache, deep } = ctx;
   const cacheVer = deep ? `${dep.version}+deep` : dep.version;
   const hit = cache ? cacheGet(dep.name, cacheVer) : null;
   if (hit) return { rows: hit, cached: true };
   try {
-    const pkg = offline
-      ? loadLocalPackage(dep.name, dep.version, projectDir, dep.lockKey)
-      : await fetchPackage(dep.name, dep.version);
+    const pkg = await loadPackage(dep, ctx, { allFiles: ctx.runtime });
     const rows = analyzePackage(pkg);
     await enrichRows(rows, ctx);
     if (cache) cacheSet(dep.name, cacheVer, rows);
-    return { rows };
+    return ctx.runtime ? { rows, pkg } : { rows };
   } catch (err) {
     return { error: String(err.message || err).replace(/\|/g, '\\|') };
   }
 }
 
+// runtimeSignals() for one name@version, cached (byFile as entries).
+async function runtimeSummary(dep, ctx, pkg) {
+  const cKey = [`rt~${dep.name.replace('/', '+')}`, dep.version];
+  const hit = ctx.cache ? cacheGet(cKey[0], cKey[1]) : null;
+  if (hit && hit.signals) return { ...hit, byFile: new Map(hit.byFile) };
+  const rt = runtimeSignals(pkg || await loadPackage(dep, ctx, { allFiles: true }));
+  if (ctx.cache) cacheSet(cKey[0], cKey[1], { ...rt, byFile: [...rt.byFile] });
+  return rt;
+}
+
+// audit --runtime for one name@version's main/exports/bin code. Returns
+// { runtimePayload?, runtimeUnread? } or { runtimeError }. Given the base
+// version of an upgrade (--diff/--since), the finding also names the hits
+// that version did not have.
+async function runtimeOne(dep, ctx, pkg, baseVersion) {
+  let rt;
+  try {
+    rt = await runtimeSummary(dep, ctx, pkg);
+  } catch (err) {
+    return { runtimeError: String(err.message || err) };
+  }
+  const out = {};
+  const finding = runtimePayloadFinding(rt);
+  if (finding && baseVersion) {
+    let gained = null;
+    try {
+      gained = gainedIocs(await runtimeSummary({ name: dep.name, version: baseVersion }, ctx), rt);
+    } catch { /* base unreadable: gained stays null */ }
+    finding.base = { version: baseVersion, gained };
+  }
+  if (finding) out.runtimePayload = finding;
+  if (rt.partial || rt.missing.length > 0) out.runtimeUnread = { partial: rt.partial, missing: rt.missing };
+  return out;
+}
+
 async function runAudit(lockPath, {
   concurrency = 8, log = () => {}, cache = true, diffBase = null, offline = false, trust = true, via = true, deep = false, trustAll = false, trustEvery = false,
+  runtime = false,
 } = {}) {
   const { lockPath: p, deps: allDeps, edges } = loadDeps(lockPath);
   const projectDir = path.dirname(p);
   const depsByName = new Map(allDeps.map((d) => [d.name, d]));
-  const ctx = { cache, offline, projectDir, deep, depsByName };
+  const ctx = { cache, offline, projectDir, deep, depsByName, runtime };
   let deps = allDeps;
   const baseVersions = new Map();
   if (diffBase) {
@@ -159,16 +201,19 @@ async function runAudit(lockPath, {
   await Promise.all(Array.from({ length: Math.min(concurrency, deps.length) }, async () => {
     while (i < deps.length) {
       const dep = deps[i++];
-      const r = { name: dep.name, version: dep.version, rows: [], ...await auditOne(dep, ctx) };
+      const { pkg, ...one } = await auditOne(dep, ctx);
+      const r = { name: dep.name, version: dep.version, rows: [], ...one };
       // upgrade: also audit the base version and report capabilities the new
       // version gained, the fingerprint of a hijacked release
       const baseVer = baseVersions.get(dep.name);
       if (baseVer && baseVer !== dep.version && !r.error) {
-        const base = await auditOne({ name: dep.name, version: baseVer }, ctx);
+        // runtimeOne reads the base's runtime code, and only when it has to
+        const base = await auditOne({ name: dep.name, version: baseVer }, { ...ctx, runtime: false });
         r.base = base.error
           ? { version: baseVer, gained: null }
           : { version: baseVer, gained: flatSignals(r.rows).filter((s) => !flatSignals(base.rows).includes(s)) };
       }
+      if (runtime && !r.error) Object.assign(r, await runtimeOne(dep, ctx, pkg, baseVer));
       if (via && edges.size > 0) {
         const chain = viaChain(edges, dep.name);
         if (chain.length > 0) r.via = chain;
@@ -188,7 +233,7 @@ async function runAudit(lockPath, {
     // trustEvery (cooldown) widens it further still: cooldown judges the
     // version's AGE, so a package with no install script at all still needs a
     // publish date, the poisoned code may not be in a lifecycle hook.
-    const wanted = results.filter((r) => trustEvery || r.malicious
+    const wanted = results.filter((r) => trustEvery || r.malicious || r.runtimePayload
       || (trustAll ? r.rows.length > 0 : ['HIGH', 'MEDIUM'].includes(packageRisk(r))));
     let t = 0;
     await Promise.all(Array.from({ length: Math.min(6, wanted.length) }, async () => {
@@ -327,6 +372,14 @@ const bootstrapFail = (n) => {
   process.exitCode = 1;
 };
 
+// --fail-on-runtime-payload gates on HIGH only: a lone RPC host or local
+// spawn (MEDIUM) is what ordinary web3 clients and worker pools look like.
+const payloadCount = (results) => results.filter((r) => r.runtimePayload && r.runtimePayload.risk === 'HIGH').length;
+const payloadFail = (n) => {
+  process.stderr.write(`FAIL: ${n} package(s) carry a HIGH runtime payload in the code they run when required (RUNTIME_PAYLOAD, the btree pattern)\n`);
+  process.exitCode = 1;
+};
+
 async function trustAction(opts) {
   if (opts.offline) {
     process.stderr.write('trust: nothing to check under --offline, the tier history lives in the registry\n');
@@ -379,11 +432,13 @@ async function auditAction(opts) {
   const projects = [];
   let downgrades = 0;
   let bootstraps = 0;
+  let payloads = 0;
   for (const { path: lockPath } of found.lockfiles) {
     const results = await runAudit(lockPath, auditRunOpts(opts));
     const dg = await applyTrustDowngrade(results, lockPath, opts);
     if (dg) downgrades += dg.downgrades.length;
     if (runtimeBootstrapArmed(lockPath, opts)) bootstraps += results.filter((r) => r.runtimeBootstrap).length;
+    payloads += payloadCount(results);
     projects.push({ rel: rel(lockPath), results });
   }
   const output = opts.json
@@ -406,6 +461,7 @@ async function auditAction(opts) {
   }
   if (opts.failOnDowngrade && downgrades > 0) downgradeFail(downgrades);
   if (bootstraps > 0) bootstrapFail(bootstraps);
+  if (opts.failOnRuntimePayload && payloads > 0) payloadFail(payloads);
   if (opts.cooldown !== undefined) {
     const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
     if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
@@ -426,6 +482,7 @@ const auditRunOpts = (opts, diffBase = null) => ({
   deep: opts.deep,
   diffBase,
   trustEvery: opts.cooldown !== undefined && opts.trust,
+  runtime: Boolean(opts.runtime || opts.failOnRuntimePayload),
 });
 
 async function auditProject(target, opts) {
@@ -474,6 +531,7 @@ async function auditProject(target, opts) {
       const boots = results.filter((r) => r.runtimeBootstrap).length;
       if (boots > 0) bootstrapFail(boots);
     }
+    if (opts.failOnRuntimePayload && payloadCount(results) > 0) payloadFail(payloadCount(results));
     // Cooldown is orthogonal to every other check here: it judges the version's
     // AGE, not its behaviour, so a package can be clean and still fail it.
     if (opts.cooldown !== undefined) {
@@ -725,9 +783,7 @@ async function auditSubset(list, { lockDeps, edges, depsByName }, ctx, trust) {
 const CONTENT_LINES = 40;
 async function scriptContent(r, ctx, lockDep) {
   try {
-    const pkg = ctx.offline
-      ? loadLocalPackage(r.name, r.version, ctx.projectDir, lockDep && lockDep.lockKey, { forceFiles: true })
-      : await fetchPackage(r.name, r.version, { forceTarball: true });
+    const pkg = await loadPackage({ name: r.name, version: r.version, lockKey: lockDep && lockDep.lockKey }, ctx, { allFiles: true });
     const out = [];
     for (const [script, command] of Object.entries(pkg.scripts)) {
       const entries = commandEntryFiles(command, pkg.files);
@@ -1498,8 +1554,8 @@ async function diffAction(oldSpec, newSpec, opts) {
   const a = parseSpec(oldSpec);
   const b = parseSpec(newSpec);
   const [oldPkg, newPkg, oldProv, newProv] = await Promise.all([
-    fetchScripts(a.name, a.version),
-    fetchScripts(b.name, b.version),
+    fetchScripts(a.name, a.version, { runtime: opts.runtime }),
+    fetchScripts(b.name, b.version, { runtime: opts.runtime }),
     resolveProvenance(a.name, a.version),
     resolveProvenance(b.name, b.version),
   ]);
@@ -1507,12 +1563,16 @@ async function diffAction(oldSpec, newSpec, opts) {
   oldPkg.provenance = oldProv;
   newPkg.provenance = newProv;
   const result = computeScriptDiff(oldPkg, newPkg);
+  if (opts.runtime) {
+    result.runtime = computeRuntimeDiff(oldPkg.runtime, newPkg.runtime);
+    result.json.runtime = result.runtime.json;
+  }
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(result.json, null, 2)}\n`);
   } else {
     writeReport(renderDiff(oldPkg, newPkg, result));
   }
-  if (result.changed) process.exitCode = 1;
+  if (result.changed || (result.runtime && result.runtime.changed)) process.exitCode = 1;
 }
 
 if (require.main === module) {
@@ -1540,6 +1600,8 @@ if (require.main === module) {
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .option('--fail-on-downgrade', 'exit 1 if any package resolves below the highest trust tier it previously reached (trusted publisher > provenance > none, npm/cli#9242); policy trustPolicy: "no-downgrade" runs the same check without changing the exit code')
     .option('--fail-on-runtime-bootstrap', 'exit 1 if any package\'s install-time code fetches or installs another JavaScript runtime (bun, deno), the ChainDrop pattern; policy runtimeBootstrapPolicy: "fail" arms the same gate from the policy file')
+    .option('--runtime', 'also read the code each package runs when required (main, exports, bin) and report RUNTIME_PAYLOAD: C2 endpoints, exfil endpoints, node started on a bundled file, or an obfuscator.io string-array payload, the btree pattern. Downloads every tarball')
+    .option('--fail-on-runtime-payload', 'exit 1 on any HIGH RUNTIME_PAYLOAD (an exfil endpoint, or two payload kinds together); implies --runtime')
     .option('--policy <file>', 'governance policy file holding trustPolicy / trustPolicyExclude / trustPolicyIgnoreAfter / runtimeBootstrapPolicy (default: script-lens.policy.json if present)')
     .action(auditAction);
   common(program.command('sync'))
@@ -1641,6 +1703,7 @@ if (require.main === module) {
     .argument('<old>', 'baseline spec, e.g. sharp@0.32.6')
     .argument('<new>', 'candidate spec, e.g. sharp@0.33.0')
     .option('--json', 'emit JSON { unchanged, added, removed, modified } instead of colored text')
+    .option('--runtime', 'also diff the capabilities of the code the package runs when required (main, exports, bin). Exits 1 if it gained exec, exec-local, c2, exfil or obf')
     .action(diffAction);
   program.command('mcp')
     .description('run as an MCP server on stdio (tools: audit_package, audit_lockfile, classify_allowscripts)')

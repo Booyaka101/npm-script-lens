@@ -105,6 +105,7 @@ An allowlist entry is older than any advisory published after it, so approving a
   - **npm-script-lens: Open-time hooks in dependency tarballs (--deps)**: also download and scan every locked dependency's tarball; a shipped folderOpen task is HIGH regardless of its command (`hooks --deps`)
   - **npm-script-lens: Cooldown config (your package manager vs CI)**: the minimum-release-age your package manager applies on every local install, against the `--cooldown` your CI enforces. All four managers ship that setting in a different unit, so a value that looks right can gate nothing (`cooldown`). Needs CLI ≥ 1.16.0
   - **npm-script-lens: Cooldown config, write the matching value**: commits the threshold in the right file, unit and notation, preserving every other key and comment (`cooldown --write`)
+  - **npm-script-lens: Audit runtime code for payloads (main/exports/bin)**: reads the code each dependency runs when it is required, not just its install scripts, and reports C2 endpoints, exfil endpoints and node started on a bundled file (`audit --runtime`). Downloads every tarball, so it is a command rather than part of the audit on open. Needs CLI ≥ 1.17.0
 
 ## It reads inside `binding.gyp`
 

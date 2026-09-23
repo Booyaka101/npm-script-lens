@@ -656,6 +656,7 @@ function activate(context) {
     cmd('npmScriptLens.hooksDeps', cliCommand('open-time hooks (dependency tarballs)', () => ['hooks', '--deps'], { wholeWorkspace: true })),
     cmd('npmScriptLens.cooldown', cliCommand('cooldown config', () => ['cooldown'])),
     cmd('npmScriptLens.cooldownWrite', cliCommand('cooldown config (write)', () => ['cooldown', '--write'])),
+    cmd('npmScriptLens.runtimeAudit', cliCommand('runtime payload audit', () => ['audit', '--runtime'])),
   );
 
   if (config().auditOnOpen) for (const doc of vscode.workspace.textDocuments) rerun(doc);

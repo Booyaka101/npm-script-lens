@@ -1,5 +1,83 @@
 # Changelog
 
+## 1.17.0 (2026-09-23)
+
+**The btree campaign had no install script, so there was nothing for this tool
+to read.** [Checkmarx, 2026-09-17](https://checkmarx.com/zero-post/npm-btree-malware-campaign-affects-millions-of-downloads-no-need-for-install-script/):
+`indexed-btree` and ten companion packages shipped a loader inside
+`BTree.prototype.set`. On the hundredth insert it ran
+`spawn("node", [loadPath, String(key)], { detached: true, stdio: "ignore", windowsHide: true })`
+on a bundled `extended/sharedLoad.min.js`, which read its C2 from a Sepolia
+contract and sent what it found to Slack and Telegram. Every approval model,
+this one included, asks what runs at install time. This ran the first time
+your own code used the library.
+
+### Added
+
+- `diff --runtime` reads the code a package runs when it is required or its
+  bin is invoked (`main`, every `exports` target, `bin`), follows its
+  `require`/`import` chain and the local file it spawns, and reports which
+  capabilities each version gained or lost, by file:
+
+  ```
+  $ npm-script-lens diff btree-good@1.0.0 btree-good@1.0.1 --runtime
+  btree-good@1.0.0 → btree-good@1.0.1
+  runtime code (main/exports/bin): index.js
+  GAINED: c2 (extended/sharedLoad.min.js) contract 0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+  GAINED: c2 (extended/sharedLoad.min.js) eth-sepolia.g.alchemy.com
+  GAINED: c2 (extended/sharedLoad.min.js) eth_call
+  GAINED: exec-local (index.js) process.execPath extended/sharedLoad.min.js (detached)
+  GAINED: exec (index.js) child_process.spawn()
+  GAINED: exec (index.js) require('child_process')
+  GAINED: exfil (extended/sharedLoad.min.js) api.telegram.org/bot
+  GAINED: net (extended/sharedLoad.min.js) fetch()
+  ```
+
+  Gaining `exec`, `exec-local`, `c2`, `exfil` or `obf` exits 1. `--json` gets
+  a `runtime` block with both sides' entry points, signals, missing entries and
+  whether the walk was partial. That output is from the inert fixture in
+  `fixtures/runtime`, served by the test registry.
+- `audit --runtime` and `--fail-on-runtime-payload`: a `RUNTIME_PAYLOAD`
+  finding for any locked package whose runtime code names a C2 or exfil
+  endpoint, starts node on a file it ships, or carries the obfuscator.io
+  string-array prelude. Plain exec, network and fs are left out, most
+  libraries have them. In Markdown, JSON, SARIF (rule `runtime-payload`) and
+  HTML, and counted in the summary line. With `--diff` or `--since`, each hit
+  the old version did not have is marked **new since** it. Packages whose
+  runtime code was only partly read (an entry over 2 MB or missing from the
+  tarball, or the file budget spent) are listed, so no finding is not taken
+  for a clean read.
+- The runtime walk reads up to 200 files per package with no `require` depth
+  limit, `main` and its requires first. A web3 lockfile of 746 packages takes
+  20 seconds.
+- Four new analyzer signals, in lifecycle scripts too:
+  - `exec-local`: node (or `process.execPath`, bun, tsx) spawned on a file in
+    the same tarball, with `detached` noted. HIGH in runtime mode only, since a
+    worker pool does this routinely.
+  - `c2`: an Ethereum RPC host (testnets, infura, alchemy, publicnode, ankr),
+    `eth_call`, or a contract address in a file that also names an RPC host.
+  - `exfil`: Telegram bot, Slack and Discord webhook endpoints, including ones
+    split across string concatenation.
+  - `obf: string-array rotation (obfuscator.io)`: the prelude that rotates an
+    encoded string array until a parseInt checksum matches. Checkmarx describe
+    the btree second stage as string-array encoded with a self-checksumming
+    rotation, which is the shape this matches. Run through
+    javascript-obfuscator with string-array encoding, the fixture payload keeps
+    none of its endpoint literals, so this line and the loader are what is left
+    to see.
+- VS Code: **npm-script-lens: Audit runtime code for payloads
+  (main/exports/bin)** runs `audit --runtime`.
+
+### Changed
+
+- A lifecycle script that spawns node on a bundled file now also shows an
+  `exec-local:` line next to the `exec:` one. The score does not change, it was
+  already HIGH for the exec.
+- The tarball and offline indexes keep any file that opens with `#!`, so an
+  extensionless bin (`bin/cli`) or an odd one (`bin/crc32.njs`) is read.
+  Cross-package bin resolution in offline mode indexes up to 2,000 files of
+  the owning package instead of 400.
+
 ## 1.16.0 (2026-09-08)
 
 **All four package managers now ship a cooldown setting, in four different
