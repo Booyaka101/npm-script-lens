@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+**capsurface's evasion corpus found real gaps.** Run against the 27 fixtures
+in [capsurface](https://github.com/VictorMartins3/capsurface)'s
+`test/evasion.test.js`, 1.17.0 named the module in 14. `require(m)` with
+`m = 'child_process'`, `['child','process'].join('_')`, a reversed string and a
+hex `Buffer.from` all came back SAFE, and so did `globalThis['eval']` and
+`(0, eval)`. A payload that reads `~/.npmrc` and `NPM_TOKEN` and POSTs them
+out scored MEDIUM, the same as any binary downloader. This release names the
+module in 25 of 27. The two it still misses are the two that corpus documents
+as out of reach for static reading (a name from `process.env`, a name built in
+a loop).
+
+### Added
+
+- `cred:` signals for credential stores: `.npmrc`, `.yarnrc.yml`, `.netrc`,
+  `.git-credentials`, `.aws/credentials`, `.docker/config.json`,
+  `.kube/config`, `gh`'s `hosts.yml` and `.ssh/id_*` named as a path, and
+  `process.env` reads of other people's credentials (`NPM_TOKEN`,
+  `NODE_AUTH_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, the Actions tokens, AWS and
+  Azure secrets, `GOOGLE_APPLICATION_CREDENTIALS`, OpenAI and Anthropic keys,
+  any `_authToken`), including destructured ones. A vendor's own token, like
+  the `NX_CLOUD_ACCESS_TOKEN` nx's postinstall reads, is not one. On its own a credential read is LOW. Next to network
+  access in an install script it is HIGH, which is the Shai-Hulud and
+  keyv/cacheable shape. Runtime code (`--runtime`) keeps them informational,
+  because every registry client reads `.npmrc` and talks to the network.
+  `denyCapabilities: ["cred"]` works in the policy.
+- `process.binding('spawn_sync')` and `process_wrap` count as `exec`, and the
+  socket bindings as `net`.
+
+### Changed
+
+- A `require()`/`import()` specifier built only from literals is folded to the
+  module it names: concatenation, template literals, a `const` bound once,
+  `[...].join`, `.split('').reverse().join('')`, `String.fromCharCode`,
+  `Buffer.from(…, 'hex' | 'base64').toString()` and `atob`. The row reports the
+  module (`exec: require('child_process')`) next to the existing
+  `obf: require(<string-built specifier>)`, which is now also raised for
+  `import()`. A `const` holding a plain string is classified without the `obf`
+  line, and a relative path held in one is followed like a literal.
+- `eval`, `fetch` and the other global calls are recognised through
+  `globalThis`/`global`/`window`/`self`, computed (`globalThis['ev' + 'al']`)
+  or not, and through `(0, fn)(…)`. Computed member calls such as
+  `cp['execSync'](…)` are checked like dotted ones, and so is the
+  `(0, _cp.execSync)(…)` form TypeScript and Babel emit. Compiled packages
+  show more `exec`/`fs` signals as a result, and `audit --runtime` can raise a
+  MEDIUM `exec-local` it could not see before: nx 23 starts its daemon with a
+  detached `(0, child_process_1.spawn)(process.execPath, […start.js])`.
+
 ## 1.17.0 (2026-09-23)
 
 **The btree campaign had no install script, so there was nothing for this tool

