@@ -15,7 +15,7 @@ const DEFAULT_POLICY = {
   // auto-approve a package only when ALL of these hold
   autoApprove: {
     maxRisk: 'LOW', // approve up to this behavioral risk (SAFE|LOW|MEDIUM|HIGH)
-    denyCapabilities: [], // never auto-approve if a signal of these kinds is present (exec|net|fs|env|obf|bin|gyp)
+    denyCapabilities: [], // never auto-approve if a signal of these kinds is present (exec|net|fs|env|cred|obf|bin|gyp)
     minAgeDays: 0, // require the version to be at least this old (needs trust data)
     requireProvenance: false, // require sigstore provenance to auto-approve (needs trust data)
     // name -> "owner/repo" or "owner/repo:workflow-path", pinning the attested

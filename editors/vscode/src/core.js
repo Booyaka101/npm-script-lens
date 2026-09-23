@@ -273,12 +273,13 @@ function condenseSignals(rows) {
 // score() scores bootstrap/exec/obf/gyp identically (all HIGH), so among those
 // the most specific leads: "installs another JavaScript runtime" says far more
 // than "runs other programs" about a package doing both.
-const CAPABILITY_ORDER = ['bootstrap', 'exec', 'obf', 'gyp', 'net', 'fs', 'env', 'ref'];
+const CAPABILITY_ORDER = ['bootstrap', 'exec', 'obf', 'gyp', 'cred', 'net', 'fs', 'env', 'ref'];
 const CAPABILITY = {
   bootstrap: { does: 'installs another JavaScript runtime', why: 'a payload run under a runtime it fetched is one your Node-based tooling never sees' },
   exec: { does: 'runs other programs', why: 'anything your own shell could do, it can do' },
   obf: { does: 'assembles code while it runs', why: 'a script that decodes or builds itself is hiding what it does' },
   gyp: { does: 'compiles native code', why: 'its build file runs shell commands before a line of C is compiled' },
+  cred: { does: 'reads your stored credentials', why: 'next to network access that is how a worm takes an npm token and publishes itself' },
   net: { does: 'uses the network', why: 'it can fetch what it runs, or send out what it reads' },
   fs: { does: 'reads and writes files', why: 'it reaches your disk beyond its own folder' },
   env: { does: 'reads your environment variables', why: 'tokens, keys and CI secrets live there' },

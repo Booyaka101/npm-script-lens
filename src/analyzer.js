@@ -19,7 +19,6 @@ const NET_PKGS = new Set(['http', 'https', 'http2', 'net', 'tls', 'dgram', 'dns'
 const NET_RECV = new Set(['http', 'https', 'http2']);
 // vm executes arbitrary constructed strings, an eval by another name.
 const OBF_PKGS = new Set(['vm']);
-const DYNAMIC = Symbol('dynamic-require');
 const NET_FNS = new Set(['request', 'get']);
 const FS_FNS = new Set(['writeFile', 'writeFileSync', 'appendFile', 'appendFileSync', 'open', 'openSync',
   'createWriteStream', 'chmodSync', 'chmod']);
@@ -69,8 +68,22 @@ const EXFIL_ENDPOINTS = [
 const URL_HOSTS = /\b(?:https?|wss?):\/\/([a-z0-9.-]+)/gi;
 const CONTRACT = /\b0x[0-9a-fA-F]{40}\b/g;
 
+// Where publish and cloud credentials live. Shai-Hulud and the keyv/cacheable
+// payload read ~/.npmrc and NPM_TOKEN, then sent them out or published with
+// them. A path as a whole literal, not a mention inside a message.
+const CRED_FILES = /(?:^|[\\/~])(\.npmrc|\.yarnrc\.yml|\.netrc|\.git-credentials|\.aws[\\/]credentials|\.docker[\\/]config\.json|\.kube[\\/]config|\.config[\\/]gh[\\/]hosts\.yml|\.ssh[\\/]id_[a-z0-9]+)$/i;
+// Someone else's credentials only: a vendor reading its own NX_CLOUD_ACCESS_TOKEN
+// or FIREBASE_TOKEN is configuration.
+const CRED_ENV = /^(?:NPM_TOKEN|NODE_AUTH_TOKEN|NPM_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN|CI_JOB_TOKEN|ACTIONS_RUNTIME_TOKEN|ACTIONS_ID_TOKEN_REQUEST_TOKEN|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AZURE_CLIENT_SECRET|GOOGLE_APPLICATION_CREDENTIALS|OPENAI_API_KEY|ANTHROPIC_API_KEY)$|_authtoken$/i;
+// process.binding() names that hand out the raw spawn and socket handles.
+const RAW_BINDINGS = new Map([['spawn_sync', 'exec'], ['process_wrap', 'exec'],
+  ['tcp_wrap', 'net'], ['tls_wrap', 'net'], ['udp_wrap', 'net'], ['cares_wrap', 'net']]);
+// Receivers a global function can be called through: globalThis['eval'](s).
+const GLOBAL_OBJECTS = new Set(['globalThis', 'global', 'window', 'self']);
+
 // The payload-ish parts of one string literal: RPC hosts, exfil endpoints,
-// eth_call and 40-hex contract addresses (the last only count next to RPC).
+// eth_call and 40-hex contract addresses (the last only count next to RPC),
+// and credential file paths.
 function literalIocs(text, iocs) {
   for (const m of text.matchAll(URL_HOSTS)) {
     const host = m[1].toLowerCase();
@@ -79,7 +92,12 @@ function literalIocs(text, iocs) {
   for (const e of EXFIL_ENDPOINTS) if (text.includes(e)) iocs.exfil.add(e);
   if (/\beth_call\b/.test(text)) iocs.ethCall = true;
   for (const m of text.matchAll(CONTRACT)) iocs.contracts.add(m[0]);
+  const cred = CRED_FILES.exec(text);
+  if (cred) iocs.cred.add(cred[1].replace(/\\/g, '/'));
 }
+
+const isProcessEnv = (n) => n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' &&
+  n.object.name === 'process' && n.property.name === 'env';
 
 const binName = (t) => t.split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
 
@@ -120,23 +138,36 @@ function classifySpec(spec, kw, signals, follow) {
   else if (!spec.startsWith('.') && !BUILTINS.has(plain) && !spec.startsWith('node:')) signals.add(`ref: ${bare}`);
 }
 
-// The literal specifier of a require() call, DYNAMIC when the specifier is
-// built from strings at runtime (concatenation, template interpolation, the
-// classic way to hide what gets loaded), or null. Plain identifier arguments
-// are NOT flagged: bundler interop and binding-path loaders use them
-// constantly, and the path.join(__dirname, …) case is already followed.
-function requireTarget(node) {
+// The specifier argument of a require() call, or null.
+function requireArg(node) {
   const c = node.callee;
   const isRequire = (c.type === 'Identifier' && c.name === 'require') ||
     (c.type === 'MemberExpression' && !c.computed && c.property.name === 'require');
-  if (!isRequire || node.arguments.length === 0) return null;
-  const arg = node.arguments[0];
+  return isRequire && node.arguments.length > 0 ? node.arguments[0] : null;
+}
+
+// A specifier written out as a plain string, or null.
+function literalSpec(arg) {
   if (arg.type === 'Literal' && typeof arg.value === 'string') return arg.value;
-  if (arg.type === 'TemplateLiteral') {
-    return arg.expressions.length === 0 ? (arg.quasis[0].value.cooked || null) : DYNAMIC;
-  }
-  if (arg.type === 'BinaryExpression') return DYNAMIC;
+  if (arg.type === 'TemplateLiteral' && arg.expressions.length === 0) return arg.quasis[0].value.cooked || null;
   return null;
+}
+
+// A require()/import() specifier that is not a plain string, once the whole
+// file's bindings are known. Folded to a string, it is classified like any
+// other; built by concatenation, interpolation or a decode, that is also the
+// classic way to hide what gets loaded (obf). An unresolved identifier is NOT
+// flagged: bundler interop and binding-path loaders use them constantly, and
+// the path.join(__dirname, …) case is already followed.
+function lateSpec(kw, arg, bindings, signals, follow) {
+  const spec = foldValue(arg, { bindings });
+  let src = arg;
+  for (let h = 0; src && src.type === 'Identifier' && h < 2; h++) src = bindings.get(src.name);
+  const built = (kw === 'require' && (arg.type === 'BinaryExpression' || arg.type === 'TemplateLiteral')) ||
+    (typeof spec === 'string' && src && src.type === 'CallExpression');
+  if (built) signals.add(`obf: ${kw}(<string-built specifier>)`);
+  if (typeof spec === 'string' && spec) classifySpec(spec, kw, signals, follow);
+  else if (kw === 'import' && argText(arg)) classifySpec(argText(arg), kw, signals, follow);
 }
 
 // Resolve "./x" against the tarball file index, trying .js/.cjs/.mjs and
@@ -226,22 +257,87 @@ function localExec(call, bindings, where) {
   return null;
 }
 
-// String concatenation of literals only ('https://api.tele' + 'gram.org/bot'),
-// folded so the IOC checks see the whole string. Anything computed at runtime
-// stays opaque.
-// memo holds the folds of '+' nodes already visited (the walk is post-order).
-function foldConcat(node, memo) {
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type !== 'BinaryExpression' || node.operator !== '+') return null;
-  if (memo.has(node)) return memo.get(node);
-  const l = foldConcat(node.left, memo);
-  const r = l === null ? null : foldConcat(node.right, memo);
-  return r === null || l.length + r.length > 10000 ? null : l + r;
+const MAX_FOLD = 10000;
+
+// The string (or string array) an expression always evaluates to when every
+// input is a literal: concatenation, templates, and the spellings used to hide
+// a specifier or URL from a plain text match ([...].join, .split('').reverse(),
+// String.fromCharCode, Buffer.from(…, 'hex').toString(), atob). Anything
+// computed at runtime stays opaque (null).
+// memo holds the folds of '+' nodes already visited (the walk is post-order);
+// bindings, once the walk is done, lets a name bound once stand for its value.
+function foldValue(node, { memo = null, bindings = null } = {}, hops = 0) {
+  if (!node) return null;
+  const fold = (n, h = hops) => foldValue(n, { memo, bindings }, h);
+  const str = (n) => { const v = fold(n); return typeof v === 'string' ? v : null; };
+  let out = null;
+  if (node.type === 'Literal') out = typeof node.value === 'string' ? node.value : null;
+  else if (node.type === 'TemplateLiteral') {
+    out = node.quasis[0].value.cooked;
+    for (let i = 0; out != null && i < node.expressions.length; i++) {
+      const e = str(node.expressions[i]);
+      const q = node.quasis[i + 1].value.cooked;
+      out = e === null || q == null ? null : out + e + q;
+    }
+  } else if (node.type === 'BinaryExpression' && node.operator === '+') {
+    if (memo && memo.has(node)) return memo.get(node);
+    const l = str(node.left);
+    const r = l === null ? null : str(node.right);
+    out = r === null ? null : l + r;
+  } else if (node.type === 'Identifier' && bindings && bindings.get(node.name) && hops < 2) {
+    return fold(bindings.get(node.name), hops + 1);
+  } else if (node.type === 'ArrayExpression') {
+    const parts = node.elements.map((el) => (el ? str(el) : null));
+    return parts.every((p) => p !== null) ? parts : null;
+  } else if (node.type === 'CallExpression') {
+    out = foldCall(node, fold, str);
+  }
+  if (Array.isArray(out)) return out;
+  return typeof out === 'string' && out.length <= MAX_FOLD ? out : null;
 }
 
-const propName = (m) => (m.type !== 'MemberExpression' ? null
-  : !m.computed ? m.property.name
-  : m.property.type === 'Literal' ? m.property.value : null);
+function foldCall(node, fold, str) {
+  const c = node.callee;
+  const args = node.arguments;
+  if (c.type === 'Identifier' && c.name === 'atob') {
+    const s = str(args[0]);
+    return s === null ? null : Buffer.from(s, 'base64').toString('latin1');
+  }
+  const prop = propName(c);
+  if (!prop) return null;
+  if (prop === 'fromCharCode' && c.object.type === 'Identifier' && c.object.name === 'String') {
+    return args.every((a) => a.type === 'Literal' && typeof a.value === 'number')
+      ? String.fromCharCode(...args.map((a) => a.value)) : null;
+  }
+  // Buffer.from(data, enc).toString([enc])
+  const inner = c.object;
+  if (prop === 'toString' && inner.type === 'CallExpression' && propName(inner.callee) === 'from' &&
+      inner.callee.object.type === 'Identifier' && inner.callee.object.name === 'Buffer') {
+    const data = str(inner.arguments[0]);
+    const from = inner.arguments[1] ? str(inner.arguments[1]) : 'utf8';
+    const to = args[0] ? str(args[0]) : 'utf8';
+    return data !== null && Buffer.isEncoding(from) && Buffer.isEncoding(to) ? Buffer.from(data, from).toString(to) : null;
+  }
+  const recv = fold(inner);
+  if (prop === 'join' && Array.isArray(recv)) {
+    const sep = args[0] ? str(args[0]) : ',';
+    return sep === null ? null : recv.join(sep);
+  }
+  if (prop === 'reverse' && Array.isArray(recv)) return [...recv].reverse();
+  if (prop === 'split' && typeof recv === 'string') {
+    const sep = str(args[0]);
+    return sep === null ? null : recv.split(sep);
+  }
+  return null;
+}
+
+// The property a member expression names: a.b, a['b'], a['ev' + 'al'].
+function propName(m) {
+  if (m.type !== 'MemberExpression') return null;
+  if (!m.computed) return m.property.type === 'Identifier' ? m.property.name : null;
+  const v = foldValue(m.property);
+  return typeof v === 'string' ? v : null;
+}
 
 // obfuscator.io's string-array prelude: a loop that rotates the encoded array
 // (a.push(a.shift())) until a parseInt checksum over decoded entries matches.
@@ -270,7 +366,7 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
   if (depth > 2) return;
   const boots = new Map();
   const spawnRuns = [];
-  const iocs = { rpc: new Set(), exfil: new Set(), contracts: new Set(), ethCall: false };
+  const iocs = { rpc: new Set(), exfil: new Set(), contracts: new Set(), ethCall: false, cred: new Set() };
   // Flat, scope-blind: a name bound twice (or as a parameter) could be either
   // value where it is used, so it resolves to nothing.
   const bindings = new Map();
@@ -281,6 +377,7 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
   const folds = new Map();
   const foldParent = new Map();
   const execCalls = [];
+  const lateSpecs = [];
   // A string literal handed to an exec call that names a JS/TS source is an
   // entry point like any other: ChainDrop's stage 2 was spawned under the
   // downloaded bun, never require()d, so the specifier walk alone missed it.
@@ -313,12 +410,20 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
       classifySpec(node.source.value, 'import', signals, follow);
     }
     if (node.type === 'ImportExpression') {
-      const spec = argText(node.source);
-      if (spec) classifySpec(spec, 'import', signals, follow);
+      const spec = literalSpec(node.source);
+      if (spec !== null) classifySpec(spec, 'import', signals, follow);
+      else lateSpecs.push(['import', node.source]);
     }
-    if (node.type === 'MemberExpression' && !node.computed &&
-        node.object.type === 'Identifier' && node.object.name === 'process' && node.property.name === 'env') {
-      signals.add('env: process.env');
+    if (isProcessEnv(node)) signals.add('env: process.env');
+    if (node.type === 'MemberExpression' && isProcessEnv(node.object)) {
+      const name = propName(node);
+      if (name && CRED_ENV.test(name)) signals.add(`cred: process.env.${name}`);
+    }
+    if (node.type === 'VariableDeclarator' && node.init && isProcessEnv(node.init) && node.id.type === 'ObjectPattern') {
+      for (const p of node.id.properties) {
+        const name = p.key && (p.key.name || p.key.value);
+        if (typeof name === 'string' && CRED_ENV.test(name)) signals.add(`cred: process.env.${name}`);
+      }
     }
     if (node.type === 'NewExpression' && node.callee.type === 'Identifier' && node.callee.name === 'Function') {
       signals.add('obf: new Function() constructor');
@@ -337,42 +442,44 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
       literalIocs(text, iocs);
     }
     if (node.type === 'BinaryExpression' && node.operator === '+') {
-      folds.set(node, foldConcat(node, folds));
+      folds.set(node, foldValue(node, { memo: folds }));
       foldParent.set(node.left, node).set(node.right, node);
     }
     if (node.type === 'VariableDeclarator' && node.init) bind(node.id, node.init);
     if (node.type === 'AssignmentExpression') bind(node.left, node.right);
     if (node.params) for (const param of node.params) bind(param, null);
     if (node.type !== 'CallExpression') return;
-    const spec = requireTarget(node);
-    if (spec === DYNAMIC) {
-      signals.add('obf: require(<string-built specifier>)');
+    const reqArg = requireArg(node);
+    if (reqArg) {
+      const spec = literalSpec(reqArg);
+      if (spec !== null) classifySpec(spec, 'require', signals, follow);
+      else lateSpecs.push(['require', reqArg]);
       return;
     }
-    if (spec !== null) {
-      classifySpec(spec, 'require', signals, follow);
-      return;
-    }
-    const c = node.callee;
-    if (c.type === 'Identifier') {
-      if (EXEC_FNS.has(c.name)) {
+    // (0, eval)(s) and (0, _cp.execSync)(cmd): the sequence only drops `this`
+    const c = node.callee.type === 'SequenceExpression' ? node.callee.expressions.at(-1) : node.callee;
+    const fn = c.type === 'Identifier' ? c.name
+      : c.type === 'MemberExpression' && c.object.type === 'Identifier' && GLOBAL_OBJECTS.has(c.object.name) ? propName(c)
+        : null;
+    if (fn) {
+      if (EXEC_FNS.has(fn)) {
         const cmd = argText(node.arguments[0]);
-        signals.add(`exec: ${short(cmd.trim()) || `${c.name}()`}`);
+        signals.add(`exec: ${short(cmd.trim()) || `${fn}()`}`);
         spawnArgFiles(node.arguments);
         execCalls.push(node);
-      } else if (c.name === 'fetch') signals.add('net: fetch()');
-      else if (c.name === 'eval') {
+      } else if (fn === 'fetch') signals.add('net: fetch()');
+      else if (fn === 'eval') {
         signals.add('obf: eval()');
         const body = argText(node.arguments[0]);
         if (body) decodeAndAnalyze(body);
-      } else if (c.name === 'Function') signals.add('obf: new Function() constructor');
-      else if (c.name === 'atob') {
+      } else if (fn === 'Function') signals.add('obf: new Function() constructor');
+      else if (fn === 'atob') {
         signals.add('obf: atob() base64 decode');
         const arg = argText(node.arguments[0]);
         if (arg) { try { decodeAndAnalyze(Buffer.from(arg, 'base64').toString('utf8')); } catch { /* not base64 */ } }
       }
-    } else if (c.type === 'MemberExpression' && !c.computed && c.property.type === 'Identifier') {
-      const prop = c.property.name;
+    } else if (c.type === 'MemberExpression' && propName(c)) {
+      const prop = propName(c);
       const recv = c.object.type === 'Identifier' ? c.object.name : '';
       // path.join(__dirname, ...) computing a .js path = an indirect local require
       if (prop === 'join' && recv === 'path' && node.arguments[0] &&
@@ -391,6 +498,9 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
         signals.add("obf: Buffer.from(…, 'base64') decode");
         const arg = argText(node.arguments[0]);
         if (arg) { try { decodeAndAnalyze(Buffer.from(arg, 'base64').toString('utf8')); } catch { /* not base64 */ } }
+      } else if (recv === 'process' && (prop === 'binding' || prop === '_linkedBinding')) {
+        const name = foldValue(node.arguments[0]);
+        if (RAW_BINDINGS.has(name)) signals.add(`${RAW_BINDINGS.get(name)}: process.${prop}('${name}')`);
       } else if (EXEC_FNS.has(prop) && (!AMBIGUOUS.has(prop) || EXEC_RECV.test(recv))) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${recv || '?'}.${prop}()`}`);
@@ -403,6 +513,7 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
       }
     }
   });
+  for (const [kw, arg] of lateSpecs) lateSpec(kw, arg, bindings, signals, follow);
   // Only the widest literal chain: its inner links are substrings of it.
   for (const [node, text] of folds) if (text && !folds.get(foldParent.get(node))) literalIocs(text, iocs);
   for (const [rt, how] of boots) signals.add(bootstrapSignal(rt, how, spawnRuns));
@@ -419,6 +530,7 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
   if (iocs.ethCall) signals.add('c2: eth_call');
   if (iocs.rpc.size > 0) for (const addr of iocs.contracts) signals.add(`c2: contract ${addr}`);
   for (const e of iocs.exfil) signals.add(`exfil: ${e}`);
+  for (const f of iocs.cred) signals.add(`cred: ${f}`);
 }
 
 // Split a shell line on top-level && || ; |, but not inside quotes, so
@@ -622,6 +734,10 @@ function score(signals, { runtime = false } = {}) {
   // c2 and exfil are endpoints, not capabilities: a literal Telegram bot URL
   // or Sepolia RPC host in shipped code is the payload's address book.
   if (kinds.has('c2') || kinds.has('exfil') || (runtime && kinds.has('exec-local'))) return 'HIGH';
+  // A credential store read next to network access at install time is the
+  // worm shape (Shai-Hulud, keyv/cacheable). Runtime code is exempt: every
+  // registry client reads .npmrc and talks to the registry.
+  if (!runtime && kinds.has('cred') && kinds.has('net')) return 'HIGH';
   // obf ranks with exec: code that decodes/constructs itself at install time
   // can do anything once it runs, and hiding is itself the signal. gyp joins
   // them: a binding.gyp command expansion is a shell command node-gyp runs
@@ -630,7 +746,7 @@ function score(signals, { runtime = false } = {}) {
   // outside every Node-focused monitor.
   if (kinds.has('exec') || kinds.has('obf') || kinds.has('gyp') || kinds.has('bootstrap')) return 'HIGH';
   if (kinds.has('net')) return 'MEDIUM';
-  if (kinds.has('fs') || kinds.has('env')) return 'LOW';
+  if (kinds.has('fs') || kinds.has('env') || kinds.has('cred')) return 'LOW';
   return 'SAFE';
 }
 
