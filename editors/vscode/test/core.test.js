@@ -315,6 +315,12 @@ test('a runtime bootstrap leads the explanation, ahead of the exec it also does'
   assert.match(caps[0].examples[0], /oven-sh\/bun releases/);
 });
 
+test('a credential read is named, ahead of the network access that makes it HIGH', () => {
+  const caps = capabilitiesOf([{ signals: ['cred: .npmrc', 'cred: process.env.NPM_TOKEN', 'env: process.env', "net: require('https')"] }]);
+  assert.deepStrictEqual(caps.map((c) => c.kind), ['cred', 'net', 'env']);
+  assert.deepStrictEqual(caps[0].examples, ['.npmrc', 'process.env.NPM_TOKEN']);
+});
+
 test('messageFor says what the script can do, not which functions it calls', () => {
   const esbuild = {
     name: 'esbuild',

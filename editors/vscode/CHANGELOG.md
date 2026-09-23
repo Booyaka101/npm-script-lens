@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.18.0
+
+**A credential read gets named.** CLI 1.18.0 added `cred:` signals: a script
+that reads `~/.npmrc`, `NPM_TOKEN` or a cloud secret file, and scores HIGH
+when it also reaches the network. The hover and the Problems panel now say
+"reads your stored credentials" first for those, instead of dropping the kind
+and leaving a HIGH that only says "uses the network". It also folds
+string-built `require()` specifiers and sees `globalThis['eval']` and
+`(0, eval)`, so more of what a script hides shows up here with no extension
+change.
+
 ## 1.17.0
 
 **The code a dependency runs when you require it, not only at install.**

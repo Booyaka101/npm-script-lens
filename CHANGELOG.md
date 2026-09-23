@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.18.0 (2026-09-24)
 
 **capsurface's evasion corpus found real gaps.** Run against the 27 fixtures
 in [capsurface](https://github.com/VictorMartins3/capsurface)'s
