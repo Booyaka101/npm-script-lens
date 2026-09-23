@@ -18,17 +18,24 @@ function pickLifecycle(scripts) {
   return out;
 }
 
-// One retry on transient network failures; hung connections get cut by the
-// abort timeout instead of stalling the whole audit.
+// One retry on transient network failures and on a 429, after its
+// Retry-After (capped); hung connections get cut by the abort timeout instead
+// of stalling the whole audit.
 async function fetchOk(url, timeoutMs, attempt = 0) {
+  let wait = 1000;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
+    if (res.status === 429) {
+      if (attempt > 0) throw Object.assign(new Error(`HTTP 429 (rate limited by the registry) for ${url}`), { final: true });
+      wait = Math.min(Number(res.headers.get('retry-after')) || 1, 30) * 1000;
+      throw new Error('HTTP 429');
+    }
     if (res.status >= 500 && attempt === 0) throw new Error(`HTTP ${res.status}`);
     if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status} for ${url}`), { final: true });
     return res;
   } catch (err) {
     if (err.final || attempt > 0) throw err;
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, wait));
     return fetchOk(url, timeoutMs, 1);
   }
 }

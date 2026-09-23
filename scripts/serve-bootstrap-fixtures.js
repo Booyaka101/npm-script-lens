@@ -1,14 +1,17 @@
 'use strict';
-// A mock npm registry that serves the runtime-bootstrap fixtures as in-memory
-// tarballs, so `audit`/`--diff` can run against them exactly as the acceptance
-// commands describe, with nothing ChainDrop-shaped written to disk. Used by
-// test/bootstrap.test.js and for manual e2e:
+// A mock npm registry that serves the runtime-bootstrap and runtime-payload
+// fixtures as in-memory tarballs, so `audit`/`diff` can run against them
+// exactly as the acceptance commands describe, with nothing ChainDrop- or
+// btree-shaped written to disk. Used by test/bootstrap.test.js,
+// test/runtime.test.js and for manual e2e:
 //   node scripts/serve-bootstrap-fixtures.js            # prints the base URL
 //   NPM_SCRIPT_LENS_REGISTRY=<url> node src/cli.js audit --json --path fixtures/bootstrap/chaindrop-shape
+//   NPM_SCRIPT_LENS_REGISTRY=<url> node src/cli.js diff btree-good@1.0.0 btree-good@1.0.1 --runtime
 const http = require('node:http');
 const zlib = require('node:zlib');
 const tar = require('tar-stream');
-const { SHAPES } = require('../fixtures/bootstrap/payloads');
+const BOOTSTRAP = require('../fixtures/bootstrap/payloads').SHAPES;
+const RUNTIME = require('../fixtures/runtime/payloads').SHAPES;
 
 function makeTgz(entries) {
   return new Promise((resolve, reject) => {
@@ -24,19 +27,20 @@ function makeTgz(entries) {
   });
 }
 
-// Build every version doc + tarball once, keyed by request path.
+// Build every version doc + tarball once, keyed by request path. v.manifest
+// carries main/exports/bin into both the version doc and package.json.
 async function buildRoutes(port) {
   const meta = new Map();
   const tarballs = new Map();
-  for (const s of SHAPES) {
+  for (const s of [...BOOTSTRAP, ...RUNTIME]) {
     for (const [version, v] of Object.entries(s.versions)) {
       const tgzPath = `/${s.name}/-/${s.name}-${version}.tgz`;
       tarballs.set(tgzPath, await makeTgz({
-        'package/package.json': JSON.stringify({ name: s.name, version, scripts: v.scripts }),
+        'package/package.json': JSON.stringify({ name: s.name, version, scripts: v.scripts, ...v.manifest }),
         ...Object.fromEntries(Object.entries(v.files).map(([f, c]) => [`package/${f}`, c])),
       }));
       meta.set(`/${s.name}/${version}`, {
-        version, scripts: v.scripts, hasInstallScript: true,
+        version, scripts: v.scripts, ...v.manifest, hasInstallScript: Object.keys(v.scripts).length > 0,
         dist: { tarball: `http://127.0.0.1:${port}${tgzPath}` },
       });
     }

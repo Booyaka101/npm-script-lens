@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.17.0
+
+**The code a dependency runs when you require it, not only at install.**
+CLI 1.17.0 added `audit --runtime` for the btree campaign (Checkmarx,
+2026-09-17), which had no install script at all: the loader sat in the
+library's own `BTree.prototype.set` and started node on a bundled payload.
+
+One palette command, **npm-script-lens: Audit runtime code for payloads
+(main/exports/bin)**, runs `audit --runtime` and streams the report to the
+output channel. It names C2 and exfil endpoints, node started on a file the
+package ships, and obfuscator.io string-array payloads, as `RUNTIME_PAYLOAD`.
+It downloads every locked tarball rather than only the scripted ones, so it is
+a command and not part of the audit on open.
+
+Needs CLI >= 1.17.0. An older CLI rejects the unknown option in the output
+channel.
+
 ## 1.16.0
 
 **The cooldown your package manager applies, next to the one your CI enforces.**

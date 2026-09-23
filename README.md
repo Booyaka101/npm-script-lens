@@ -51,6 +51,10 @@ npx npm-script-lens audit --path ./my-project --fail-on-high
 # --fail-on-runtime-bootstrap  exit 1 if any package installs another JS runtime
 #               (bun, deno) at install time; policy runtimeBootstrapPolicy:
 #               "fail" arms the same gate
+# --runtime     also read the code each package runs when required (main,
+#               exports, bin) for C2/exfil endpoints and payload loaders, see
+#               Payloads without install scripts
+# --fail-on-runtime-payload  exit 1 on a HIGH RUNTIME_PAYLOAD (implies --runtime)
 ```
 
 Reviewing a PR? Audit only what changed, and see what **upgrades gained**:
@@ -185,6 +189,90 @@ ordinary patch bump:
 `--json` (`results[].runtimeBootstrap`) and SARIF (rule `runtime-bootstrap`,
 level error) alongside every other finding.
 
+## Payloads without install scripts
+
+Everything above reads what runs at install time. In September 2026 the btree
+campaign ([Checkmarx](https://checkmarx.com/zero-post/npm-btree-malware-campaign-affects-millions-of-downloads-no-need-for-install-script/))
+skipped that entirely. `indexed-btree` and ten companion packages had no
+lifecycle scripts, so there was nothing to approve and nothing for an
+`allowScripts` review to show. The loader was in `BTree.prototype.set`: on the
+hundredth insert it spawned a detached `node` on a bundled, obfuscated
+`extended/sharedLoad.min.js`, which looked up its C2 on an Ethereum testnet and
+posted what it collected to chat bots. It ran the first time your own code used
+the library.
+
+`--runtime` reads that code. For each package it takes `main`, every `exports`
+target (all conditions, subpaths and nesting) and every `bin`, falling back to
+`index.js` like Node does. It then follows relative `require`/`import` and any
+file the code spawns node on, with the same acorn pass the install-script
+analysis uses. Type declarations, `.json`, `.node` and wildcard subpaths are
+skipped.
+
+```bash
+npx npm-script-lens diff some-lib@1.4.2 some-lib@1.4.3 --runtime
+npx npm-script-lens audit --runtime                       # every locked package
+npx npm-script-lens audit --fail-on-runtime-payload       # the same, and exit 1 on HIGH
+```
+
+On the repo's inert re-creation of the btree release (`fixtures/runtime`):
+
+```
+btree-good@1.0.0 → btree-good@1.0.1
+runtime code (main/exports/bin): index.js
+GAINED: c2 (extended/sharedLoad.min.js) contract 0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+GAINED: c2 (extended/sharedLoad.min.js) eth-sepolia.g.alchemy.com
+GAINED: c2 (extended/sharedLoad.min.js) eth_call
+GAINED: exec-local (index.js) process.execPath extended/sharedLoad.min.js (detached)
+GAINED: exec (index.js) child_process.spawn()
+GAINED: exec (index.js) require('child_process')
+GAINED: exfil (extended/sharedLoad.min.js) api.telegram.org/bot
+GAINED: net (extended/sharedLoad.min.js) fetch()
+```
+
+A plain `diff` of the same two versions exits 0, since no script changed.
+With `--runtime`, gaining `exec`, `exec-local`, `c2`, `exfil` or `obf` exits 1.
+Gaining only `net`, `fs` or `env` is printed but does not fail, because
+ordinary releases gain those all the time. A signal that moved to another file
+is not a gain. The five patch bumps checked before release (chalk, semver,
+commander, debug, ms) all print `no runtime capability changes`.
+
+What it looks for:
+
+- **exec-local**: node, `process.execPath`, bun or tsx started on a file in the
+  same tarball, with `(detached)` when it outlives the parent. That is the
+  loader shape. A worker pool does it too, so on its own it is MEDIUM.
+- **c2**: an Ethereum RPC host (testnets, infura, alchemy, publicnode, ankr),
+  `eth_call`, and a 40-hex contract address in a file that also names an RPC
+  host.
+- **exfil**: Telegram bot, Slack and Discord webhook endpoints, including ones
+  split across `'…' + '…'` concatenation. A docs link to the same service does
+  not count.
+- **obf: string-array rotation**: the prelude javascript-obfuscator emits when
+  it encodes a file's strings into a rotated array. No file in a 746-package
+  web3 tree (22,570 JS files) has it.
+
+`audit --runtime` reports only those four as `RUNTIME_PAYLOAD`, never plain
+exec or network, which most libraries have. A lone RPC host is normal in a
+web3 client and a lone local spawn in a worker pool, so one kind alone is
+MEDIUM. An exfil endpoint, or two kinds together, is HIGH, and only HIGH fails
+`--fail-on-runtime-payload`. On that 746-package web3 tree it took 37 seconds
+and reported 0 HIGH and 8 MEDIUM: wallet SDKs naming their infura
+endpoints and RPC clients that build `eth_call` requests. Runtime mode
+downloads every tarball, not just the ones with install scripts, so the first
+run is slower than a normal audit. Results are cached like everything else.
+
+What it cannot see. Strings built at runtime stay opaque: a URL decoded from
+an obfuscated string array, fetched from somewhere, or assembled from pieces
+that are not all literals. The real `sharedLoad.min.js` is that kind of file.
+Going by Checkmarx's description of it, expect `exec-local` on the loader and the string-array rotation on the
+payload, not the endpoints. That is still two kinds, so HIGH, and still a
+failing `diff`. Real Telegram client libraries name the bare API host and add
+the `/bot` path later, so they do not fire, and neither would a payload written
+the same way. The walk stops at 30 files and 3 levels of `require` from the
+entry points; past that the output says `partial` (semver reaches it), and
+anything beyond it is unread. A declared `main` that is not in the
+tarball is reported, not fatal.
+
 ## diff: what did an upgrade change in the install scripts?
 
 Before you bump a pin, see exactly which install-time behavior a new version adds or changes, the surface npm v12 will ask you to re-approve. `diff` compares the `preinstall`/`install`/`postinstall` scripts (and the implicit `node-gyp rebuild` that ships with a root `binding.gyp`) between two versions, straight from the registry:
@@ -192,6 +280,8 @@ Before you bump a pin, see exactly which install-time behavior a new version add
 ```bash
 npx npm-script-lens diff sharp@0.32.6 sharp@0.33.0
 # --json   emit { unchanged, added, removed, modified, gyp } instead of colored text
+# --runtime  also compare the code each version runs when required, see
+#            Payloads without install scripts
 ```
 
 ```
@@ -1185,17 +1275,17 @@ npx npm-script-lens doctor --json   # machine-readable, for scripts/CI
 | code | meaning |
 |---|---|
 | `0` | success (or findings that are warn-level only, e.g. `audit --check-v12-gaps`) |
-| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · [`trust --fail-on-downgrade`](#trust-the-downgrade-a-stolen-token-cannot-avoid) (or `audit --fail-on-downgrade`) found a version below its package's historical-max trust tier · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN or BROKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script or a [changed provenance identity](#provenance-an-identity-not-a-checkbox) |
+| `1` | an actionable failure: `audit --fail-on-high` found HIGH/malicious · [`trust --fail-on-downgrade`](#trust-the-downgrade-a-stolen-token-cannot-avoid) (or `audit --fail-on-downgrade`) found a version below its package's historical-max trust tier · `sync --check`/`manifest --check` drift · `allow --ci-check` would break on npm v12 · `sources --check` found insufficient/over-permissive/invalid allow-git/allow-remote config · [`publish --check`](#publish-will-your-release-workflow-survive-january-2027) found a TOKEN or BROKEN publish path (UNKNOWN never fails) · [`hooks --check`](#hooks-what-runs-when-the-folder-is-opened) found an open-time execution entry at or above the `--fail-on` floor · `doctor` detected npm drift · `diff` found an added/modified install script or a [changed provenance identity](#provenance-an-identity-not-a-checkbox), or with `--runtime` [gained exec, exec-local, c2, exfil or obf](#payloads-without-install-scripts) · `audit --fail-on-runtime-payload` found a HIGH runtime payload |
 | `2` | a usage/runtime error (bad ref, missing lockfile, unreadable input) |
 
 ## Commands at a glance
 
 | command | does |
 |---|---|
-| `audit` | scan a lockfile, report install-script risk (Markdown/JSON/SARIF); `--fail-on-high`, `--diff`/`--since`, `--check-v12-gaps` |
+| `audit` | scan a lockfile, report install-script risk (Markdown/JSON/SARIF); `--fail-on-high`, `--diff`/`--since`, `--check-v12-gaps`, [`--runtime`](#payloads-without-install-scripts) |
 | `allow` | split scripted packages into an auto-approved allowlist + `_review`, in your manager's native format; `--write`, `--ci-check`, `--manager`, `--policy` |
 | `review` | show pending approvals **with the actual script content** + verdict; `--output-allowscripts` writes decisions |
-| `diff` | compare a package's install scripts (+ implicit node-gyp) and [provenance identity](#provenance-an-identity-not-a-checkbox) across two versions; exit 1 on any add/modify or identity change; `--json` |
+| `diff` | compare a package's install scripts (+ implicit node-gyp) and [provenance identity](#provenance-an-identity-not-a-checkbox) across two versions; exit 1 on any add/modify or identity change; `--json`; [`--runtime`](#payloads-without-install-scripts) compares the code each version runs when required |
 | `sources` | git + remote-URL deps vs npm v12's `allow-git`/`allow-remote`: ROOT/TRANSITIVE per dep, minimal correct `.npmrc`; `--check`, `--write`, `--json` |
 | [`publish`](#publish-will-your-release-workflow-survive-january-2027) | classify every CI publish path (TRUSTED/STAGED/TOKEN/BROKEN/UNKNOWN) vs npm's January-2027 token cliff and the setup-node < v7 OIDC breakage, with the migration patch + npmjs.com checklist; `--check`, `--json`, `--sarif` |
 | [`hooks`](#hooks-what-runs-when-the-folder-is-opened) | the open-time surface: `.vscode/tasks.json` folderOpen tasks + `.claude/settings.json` hooks, same risk ladder as `audit`; `--check`, `--fail-on`, `--deps` (dependency tarballs, where shipped entries are HIGH regardless), `--json`, `--sarif` |
@@ -1226,6 +1316,7 @@ The combination, **behavioral evidence** for the decision, in **every manager's*
 - Scripts invoking **binaries from other packages** (`husky install`, `patch-package`) are resolved when a lockfile package with the same name owns the bin: that package's actual bin script is fetched, analyzed, and the row is **re-scored on real evidence** (`bin: husky install → husky@9.1.7` + what the script actually does). Bins with no same-name owner in the lockfile stay conservatively HIGH as `exec: … (unresolved binary)`.
 - **Helper dependencies**: capability hidden inside helpers is caught via a curated list (`axios`, `got`, `undici`, `@prisma/fetch-engine`, …) plus `--deep`, which follows bare `require()`s from install-script code into the matching lockfile package's entry file (one level). A helper outside the lockfile, or loaded indirectly, can still slip a tier.
 - **Obfuscation**: `eval`/`new Function`/`vm` and string-built `require()`s score HIGH, and base64/char-code **literal** payloads are **decoded and re-analyzed**, so the report shows what the hidden code actually does, not just that it hides. Payloads assembled only at runtime (downloaded, decrypted, env-derived) remain opaque: flagged, not decoded. Plain variable indirection (`require(someVar)`) is deliberately not flagged, it's ubiquitous in bundler output.
+- **Runtime code is only read with `--runtime`**, and only 30 files and 3 levels of `require` deep from `main`/`exports`/`bin`. Endpoints encoded by an obfuscator or built at runtime are not seen, only the loader and the obfuscator's prelude are. See [Payloads without install scripts](#payloads-without-install-scripts).
 
 ## Get it
 

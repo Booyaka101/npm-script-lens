@@ -3,6 +3,7 @@ const acorn = require('acorn');
 const loose = require('acorn-loose');
 const walk = require('acorn-walk');
 const { builtinModules } = require('node:module');
+const { posix } = require('node:path');
 const { collectGypFindings } = require('./gyp');
 const BUILTINS = new Set(builtinModules);
 
@@ -48,6 +49,37 @@ const RUNTIME_DIST = [
   { re: /\bbun\.(?:sh|com)\/install/i, runtime: 'bun', via: 'bun.sh/install' },
   { re: /\bdeno\.land\/(?:x\/)?install|\bdl\.deno\.land/i, runtime: 'deno', via: 'deno.land/install' },
 ];
+
+// Where a runtime payload phones home. The btree loader (Checkmarx,
+// 2026-09-17) read its C2 from a Sepolia contract over alchemy/infura RPC and
+// posted stolen data to Telegram and Slack bots. Hosts, not bare words: a
+// chain named 'sepolia' in a web3 library's config is not an endpoint, and
+// docs.alchemy.com is not RPC.
+const RPC_HOSTS = [
+  /(?:^|[.-])(?:sepolia|goerli|holesky)(?:[.-]|$)/,
+  /^(?!(?:docs|app|www|blog|status|support)\.)[a-z0-9-]+\.infura\.io$/,
+  /\.g\.alchemy\.com$|\.alchemyapi\.io$/,
+  /(?:^|[.-])rpc\.publicnode\.com$/,
+  /^rpc\.ankr\.com$/,
+];
+const EXFIL_ENDPOINTS = [
+  'api.telegram.org/bot', 'hooks.slack.com/services', 'slack.com/api/chat.postMessage',
+  'discord.com/api/webhooks', 'discordapp.com/api/webhooks',
+];
+const URL_HOSTS = /\b(?:https?|wss?):\/\/([a-z0-9.-]+)/gi;
+const CONTRACT = /\b0x[0-9a-fA-F]{40}\b/g;
+
+// The payload-ish parts of one string literal: RPC hosts, exfil endpoints,
+// eth_call and 40-hex contract addresses (the last only count next to RPC).
+function literalIocs(text, iocs) {
+  for (const m of text.matchAll(URL_HOSTS)) {
+    const host = m[1].toLowerCase();
+    if (RPC_HOSTS.some((re) => re.test(host))) iocs.rpc.add(host);
+  }
+  for (const e of EXFIL_ENDPOINTS) if (text.includes(e)) iocs.exfil.add(e);
+  if (/\beth_call\b/.test(text)) iocs.ethCall = true;
+  for (const m of text.matchAll(CONTRACT)) iocs.contracts.add(m[0]);
+}
 
 const binName = (t) => t.split(/[\\/]/).pop().replace(/\.(exe|cmd|bat)$/i, '');
 
@@ -138,13 +170,106 @@ function looksLikeJs(text) {
   }
 }
 
+// A file the package itself ships, named by an exec argument: a path built
+// off __dirname / import.meta or through path.join / path.resolve, or a
+// .js/.cjs/.mjs literal that resolves in the tarball. One variable hop is
+// followed, because the btree loader held the path in `loadPath`.
+// Returns { label, resolved } or null.
+function localFile(el, bindings, where, hops = 0) {
+  if (!el) return null;
+  if (el.type === 'Identifier' && bindings.has(el.name) && hops < 2) {
+    return localFile(bindings.get(el.name), bindings, where, hops + 1);
+  }
+  let anchored = false;
+  const parts = [];
+  // arguments only: the callee of require('path').join(...) is not a segment
+  for (const root of el.type === 'CallExpression' ? el.arguments : [el]) {
+    walk.full(root, (n) => {
+      if ((n.type === 'Identifier' && (n.name === '__dirname' || n.name === '__filename')) ||
+          (n.type === 'MetaProperty' && n.meta.name === 'import')) anchored = true;
+      else if (n.type === 'Literal' && typeof n.value === 'string') parts.push(n.value);
+      else if (n.type === 'TemplateElement' && n.value.cooked) parts.push(n.value.cooked);
+    });
+  }
+  const pathCall = el.type === 'CallExpression' && el.callee.type === 'MemberExpression' && !el.callee.computed &&
+    ['join', 'resolve'].includes(el.callee.property.name) && /path/i.test(el.callee.object.name || '');
+  const label = parts.join('/').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(?:\.?\/)+/, '');
+  const literal = el.type === 'Literal' && /\.[cm]?js$/.test(label);
+  if (!anchored && !pathCall && !literal) return null;
+  const resolved = where && label
+    ? resolveFile(where.files, where.from, `./${label}`) || resolveFile(where.files, 'x', `./${label}`) : null;
+  if (literal && !resolved) return null;
+  return { label: resolved || label || '<computed path>', resolved };
+}
+
+// exec-local: a JS runtime (process.execPath, or node/bun/tsx by name) handed
+// a file from the package's own tarball. A library that runs git is routine;
+// a sorted map that starts a detached node on a bundled .min.js is the btree
+// loader: spawn("node", [loadPath, String(key)]).
+function localExec(call, bindings, where) {
+  const [bin, args, options] = call.arguments;
+  const execPath = bin && bin.type === 'MemberExpression' && !bin.computed && bin.object.type === 'Identifier' &&
+    bin.object.name === 'process' && bin.property.name === 'execPath';
+  const named = binName(argText(bin));
+  const runtime = execPath ? 'process.execPath' : (DIRECT_RUNTIMES.has(named) ? named : null);
+  if (!runtime || !args || args.type !== 'ArrayExpression') return null;
+  const detached = Boolean(options && options.type === 'ObjectExpression' && options.properties.some((p) =>
+    p.key && (p.key.name === 'detached' || p.key.value === 'detached') && (
+      (p.value.type === 'Literal' && p.value.value === true) ||
+      // minifiers write true as !0
+      (p.value.type === 'UnaryExpression' && p.value.operator === '!' && p.value.argument.value === 0))));
+  for (const el of args.elements) {
+    const file = localFile(el, bindings, where);
+    if (file) return { runtime, file, detached };
+  }
+  return null;
+}
+
+// String concatenation of literals only ('https://api.tele' + 'gram.org/bot'),
+// folded so the IOC checks see the whole string. Anything computed at runtime
+// stays opaque.
+function foldConcat(node) {
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type !== 'BinaryExpression' || node.operator !== '+') return null;
+  const l = foldConcat(node.left);
+  const r = l === null ? null : foldConcat(node.right);
+  return r === null || l.length + r.length > 10000 ? null : l + r;
+}
+
+const propName = (m) => (m.type !== 'MemberExpression' ? null
+  : !m.computed ? m.property.name
+  : m.property.type === 'Literal' ? m.property.value : null);
+
+// obfuscator.io's string-array prelude: a loop that rotates the encoded array
+// (a.push(a.shift())) until a parseInt checksum over decoded entries matches.
+// It is what hides every literal in the file, so it is the one thing left to
+// see. A bare push(shift()) is a routine round-robin; the parseInt is the tell.
+const STRING_ARRAY_ROTATION = 'obf: string-array rotation (obfuscator.io)';
+function rotatesStringArray(loop) {
+  let rotate = false;
+  let parse = false;
+  walk.full(loop.body, (n) => {
+    if (n.type !== 'CallExpression') return;
+    if (n.callee.type === 'Identifier' && n.callee.name === 'parseInt') parse = true;
+    const arg = n.arguments[0];
+    if (propName(n.callee) === 'push' && n.arguments.length === 1 && arg.type === 'CallExpression' &&
+        propName(arg.callee) === 'shift' && n.callee.object.type === 'Identifier' &&
+        arg.callee.object.type === 'Identifier' && n.callee.object.name === arg.callee.object.name) rotate = true;
+  });
+  return rotate && parse;
+}
+
 // Statically walk one JS file from the tarball, collecting behavior signals
 // and the relative modules it pulls in (require/import/path.join(__dirname..)).
-// depth guards decoded-payload recursion (base64 inside base64).
-function analyzeJs(source, signals, follow, depth = 0) {
+// depth guards decoded-payload recursion (base64 inside base64). `where`
+// ({ files, from }) lets exec-local resolve a literal path in the tarball.
+function analyzeJs(source, signals, follow, depth = 0, where = null) {
   if (depth > 2) return;
   const boots = new Map();
   const spawnRuns = [];
+  const iocs = { rpc: new Set(), exfil: new Set(), contracts: new Set(), ethCall: false };
+  const bindings = new Map();
+  const execCalls = [];
   // A string literal handed to an exec call that names a JS/TS source is an
   // entry point like any other: ChainDrop's stage 2 was spawned under the
   // downloaded bun, never require()d, so the specifier walk alone missed it.
@@ -167,7 +292,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
     }
   };
   const decodeAndAnalyze = (text) => {
-    if (looksLikeJs(text)) analyzeJs(text, signals, follow, depth + 1);
+    if (looksLikeJs(text)) analyzeJs(text, signals, follow, depth + 1, where);
   };
   let ast;
   try { ast = loose.parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true }); } catch { return; }
@@ -187,14 +312,25 @@ function analyzeJs(source, signals, follow, depth = 0) {
     if (node.type === 'NewExpression' && node.callee.type === 'Identifier' && node.callee.name === 'Function') {
       signals.add('obf: new Function() constructor');
     }
+    if ((node.type === 'WhileStatement' || node.type === 'ForStatement' || node.type === 'DoWhileStatement') &&
+        rotatesStringArray(node)) {
+      signals.add(STRING_ARRAY_ROTATION);
+    }
     if (node.type === 'Literal' && typeof node.value === 'string') {
       for (const [rt, how] of bootstrapHits(node.value)) if (!boots.has(rt)) boots.set(rt, how);
+      literalIocs(node.value, iocs);
     }
     if (node.type === 'TemplateLiteral') {
-      for (const [rt, how] of bootstrapHits(node.quasis.map((q) => q.value.cooked || '').join(''))) {
-        if (!boots.has(rt)) boots.set(rt, how);
-      }
+      const text = node.quasis.map((q) => q.value.cooked || '').join('');
+      for (const [rt, how] of bootstrapHits(text)) if (!boots.has(rt)) boots.set(rt, how);
+      literalIocs(text, iocs);
     }
+    if (node.type === 'BinaryExpression' && node.operator === '+') {
+      const text = foldConcat(node);
+      if (text) literalIocs(text, iocs);
+    }
+    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) bindings.set(node.id.name, node.init);
+    if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') bindings.set(node.left.name, node.right);
     if (node.type !== 'CallExpression') return;
     const spec = requireTarget(node);
     if (spec === DYNAMIC) {
@@ -211,6 +347,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${c.name}()`}`);
         spawnArgFiles(node.arguments);
+        execCalls.push(node);
       } else if (c.name === 'fetch') signals.add('net: fetch()');
       else if (c.name === 'eval') {
         signals.add('obf: eval()');
@@ -246,6 +383,7 @@ function analyzeJs(source, signals, follow, depth = 0) {
         const cmd = argText(node.arguments[0]);
         signals.add(`exec: ${short(cmd.trim()) || `${recv || '?'}.${prop}()`}`);
         spawnArgFiles(node.arguments);
+        execCalls.push(node);
       } else if (NET_RECV.has(recv) && NET_FNS.has(prop)) {
         signals.add(`net: ${recv}.${prop}`);
       } else if (FS_FNS.has(prop) && (!AMBIGUOUS.has(prop) || /^fs/i.test(recv) || recv === 'promises')) {
@@ -254,6 +392,19 @@ function analyzeJs(source, signals, follow, depth = 0) {
     }
   });
   for (const [rt, how] of boots) signals.add(bootstrapSignal(rt, how, spawnRuns));
+  for (const call of execCalls) {
+    const hit = localExec(call, bindings, where);
+    if (!hit) continue;
+    signals.add(`exec-local: ${hit.runtime} ${short(hit.file.label)}${hit.detached ? ' (detached)' : ''}`);
+    if (hit.file.resolved) {
+      const rel = posix.relative(posix.dirname(where.from), hit.file.resolved);
+      follow.add(rel.startsWith('.') ? rel : `./${rel}`);
+    }
+  }
+  for (const host of iocs.rpc) signals.add(`c2: ${host}`);
+  if (iocs.ethCall) signals.add('c2: eth_call');
+  if (iocs.rpc.size > 0) for (const addr of iocs.contracts) signals.add(`c2: contract ${addr}`);
+  for (const e of iocs.exfil) signals.add(`exfil: ${e}`);
 }
 
 // Split a shell line on top-level && || ; |, but not inside quotes, so
@@ -417,28 +568,44 @@ function commandEntryFiles(cmd, files) {
 }
 
 // Walk entry files from the tarball index, following relative requires up to
-// MAX_DEPTH / MAX_FILES. Shared by script analysis and cross-package bin/deep
-// resolution.
-function walkFiles(files, entryPaths, signals) {
+// MAX_DEPTH / MAX_FILES. Shared by script analysis, cross-package bin/deep
+// resolution and runtime-code analysis. byFile (a Map) collects each file's
+// own signals; partial means a limit cut the walk short.
+function walkFiles(files, entryPaths, signals, byFile = null) {
   const queue = entryPaths.map((p) => ({ path: p, depth: 0 }));
   const seen = new Set(entryPaths);
+  let partial = false;
   while (queue.length > 0 && seen.size <= MAX_FILES) {
     const { path, depth } = queue.shift();
     const follow = new Set();
-    analyzeJs(files.get(path), signals, follow);
-    if (depth >= MAX_DEPTH) continue;
+    const own = byFile ? new Set() : signals;
+    analyzeJs(files.get(path), own, follow, 0, { files, from: path });
+    if (byFile) {
+      byFile.set(path, own);
+      for (const s of own) signals.add(s);
+    }
     for (const spec of follow) {
       const resolved = resolveFile(files, path, spec);
-      if (resolved && !seen.has(resolved)) {
-        seen.add(resolved);
-        queue.push({ path: resolved, depth: depth + 1 });
+      if (!resolved || seen.has(resolved)) continue;
+      if (depth >= MAX_DEPTH) {
+        partial = true;
+        continue;
       }
+      seen.add(resolved);
+      queue.push({ path: resolved, depth: depth + 1 });
     }
   }
+  return { partial: partial || queue.length > 0 };
 }
 
-function score(signals) {
+// runtime: the signals come from main/exports/bin rather than a lifecycle
+// script, where a library spawning node on its own worker file is routine
+// enough that only the runtime diff and audit weigh it.
+function score(signals, { runtime = false } = {}) {
   const kinds = new Set([...signals].map((s) => s.split(':')[0]));
+  // c2 and exfil are endpoints, not capabilities: a literal Telegram bot URL
+  // or Sepolia RPC host in shipped code is the payload's address book.
+  if (kinds.has('c2') || kinds.has('exfil') || (runtime && kinds.has('exec-local'))) return 'HIGH';
   // obf ranks with exec: code that decodes/constructs itself at install time
   // can do anything once it runs, and hiding is itself the signal. gyp joins
   // them: a binding.gyp command expansion is a shell command node-gyp runs
@@ -499,5 +666,6 @@ function runtimeBootstrapFindings(rows) {
 
 module.exports = {
   analyzePackage, analyzeCommand, analyzeJs, walkFiles, resolveFile, splitShell, score,
-  commandEntryFiles, runtimeInvocation, runtimeBootstrapFindings,
+  commandEntryFiles, runtimeInvocation, runtimeBootstrapFindings, MAX_FILES,
+  STRING_ARRAY_ROTATION,
 };

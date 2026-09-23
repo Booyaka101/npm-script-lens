@@ -48,7 +48,8 @@ const { mergeNpmrc } = require('./npmrc');
 const { SOURCES } = require('./npm-contract');
 const { managerFor, managerById, COOLDOWN } = require('./pm-contract');
 const { loadPolicy, evaluate: evaluatePolicy, trustPolicyConfig } = require('./policy');
-const { parseSpec, fetchScripts, computeScriptDiff, renderDiff } = require('./diff');
+const { runtimeSignals, runtimePayloadFinding } = require('./runtime');
+const { parseSpec, fetchScripts, computeScriptDiff, computeRuntimeDiff, renderDiff } = require('./diff');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
 
@@ -138,8 +139,27 @@ async function auditOne(dep, ctx) {
   }
 }
 
+// audit --runtime: the RUNTIME_PAYLOAD finding for one name@version's
+// main/exports/bin code. Returns { runtimePayload? } or { runtimeError }.
+async function runtimeOne(dep, ctx) {
+  const cKey = [`rt~${dep.name.replace('/', '+')}`, dep.version];
+  const hit = ctx.cache ? cacheGet(cKey[0], cKey[1]) : null;
+  if (hit) return hit.finding ? { runtimePayload: hit.finding } : {};
+  try {
+    const pkg = ctx.offline
+      ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, { forceFiles: true })
+      : await fetchPackage(dep.name, dep.version, { forceTarball: true });
+    const finding = runtimePayloadFinding(runtimeSignals(pkg));
+    if (ctx.cache) cacheSet(cKey[0], cKey[1], { finding });
+    return finding ? { runtimePayload: finding } : {};
+  } catch (err) {
+    return { runtimeError: String(err.message || err) };
+  }
+}
+
 async function runAudit(lockPath, {
   concurrency = 8, log = () => {}, cache = true, diffBase = null, offline = false, trust = true, via = true, deep = false, trustAll = false, trustEvery = false,
+  runtime = false,
 } = {}) {
   const { lockPath: p, deps: allDeps, edges } = loadDeps(lockPath);
   const projectDir = path.dirname(p);
@@ -160,6 +180,7 @@ async function runAudit(lockPath, {
     while (i < deps.length) {
       const dep = deps[i++];
       const r = { name: dep.name, version: dep.version, rows: [], ...await auditOne(dep, ctx) };
+      if (runtime && !r.error) Object.assign(r, await runtimeOne(dep, ctx));
       // upgrade: also audit the base version and report capabilities the new
       // version gained, the fingerprint of a hijacked release
       const baseVer = baseVersions.get(dep.name);
@@ -327,6 +348,14 @@ const bootstrapFail = (n) => {
   process.exitCode = 1;
 };
 
+// --fail-on-runtime-payload gates on HIGH only: a lone RPC host or local
+// spawn (MEDIUM) is what ordinary web3 clients and worker pools look like.
+const payloadCount = (results) => results.filter((r) => r.runtimePayload && r.runtimePayload.risk === 'HIGH').length;
+const payloadFail = (n) => {
+  process.stderr.write(`FAIL: ${n} package(s) carry a HIGH runtime payload in the code they run when required (RUNTIME_PAYLOAD, the btree pattern)\n`);
+  process.exitCode = 1;
+};
+
 async function trustAction(opts) {
   if (opts.offline) {
     process.stderr.write('trust: nothing to check under --offline, the tier history lives in the registry\n');
@@ -379,11 +408,13 @@ async function auditAction(opts) {
   const projects = [];
   let downgrades = 0;
   let bootstraps = 0;
+  let payloads = 0;
   for (const { path: lockPath } of found.lockfiles) {
     const results = await runAudit(lockPath, auditRunOpts(opts));
     const dg = await applyTrustDowngrade(results, lockPath, opts);
     if (dg) downgrades += dg.downgrades.length;
     if (runtimeBootstrapArmed(lockPath, opts)) bootstraps += results.filter((r) => r.runtimeBootstrap).length;
+    payloads += payloadCount(results);
     projects.push({ rel: rel(lockPath), results });
   }
   const output = opts.json
@@ -406,6 +437,7 @@ async function auditAction(opts) {
   }
   if (opts.failOnDowngrade && downgrades > 0) downgradeFail(downgrades);
   if (bootstraps > 0) bootstrapFail(bootstraps);
+  if (opts.failOnRuntimePayload && payloads > 0) payloadFail(payloads);
   if (opts.cooldown !== undefined) {
     const hours = opts.cooldown === true ? COOLDOWN_HOURS : Number(opts.cooldown);
     if (!Number.isFinite(hours) || hours < 0) throw new Error(`--cooldown expects hours, got: ${opts.cooldown}`);
@@ -426,6 +458,7 @@ const auditRunOpts = (opts, diffBase = null) => ({
   deep: opts.deep,
   diffBase,
   trustEvery: opts.cooldown !== undefined && opts.trust,
+  runtime: Boolean(opts.runtime || opts.failOnRuntimePayload),
 });
 
 async function auditProject(target, opts) {
@@ -474,6 +507,7 @@ async function auditProject(target, opts) {
       const boots = results.filter((r) => r.runtimeBootstrap).length;
       if (boots > 0) bootstrapFail(boots);
     }
+    if (opts.failOnRuntimePayload && payloadCount(results) > 0) payloadFail(payloadCount(results));
     // Cooldown is orthogonal to every other check here: it judges the version's
     // AGE, not its behaviour, so a package can be clean and still fail it.
     if (opts.cooldown !== undefined) {
@@ -1498,8 +1532,8 @@ async function diffAction(oldSpec, newSpec, opts) {
   const a = parseSpec(oldSpec);
   const b = parseSpec(newSpec);
   const [oldPkg, newPkg, oldProv, newProv] = await Promise.all([
-    fetchScripts(a.name, a.version),
-    fetchScripts(b.name, b.version),
+    fetchScripts(a.name, a.version, { runtime: opts.runtime }),
+    fetchScripts(b.name, b.version, { runtime: opts.runtime }),
     resolveProvenance(a.name, a.version),
     resolveProvenance(b.name, b.version),
   ]);
@@ -1507,12 +1541,16 @@ async function diffAction(oldSpec, newSpec, opts) {
   oldPkg.provenance = oldProv;
   newPkg.provenance = newProv;
   const result = computeScriptDiff(oldPkg, newPkg);
+  if (opts.runtime) {
+    result.runtime = computeRuntimeDiff(oldPkg.runtime, newPkg.runtime);
+    result.json.runtime = result.runtime.json;
+  }
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(result.json, null, 2)}\n`);
   } else {
     writeReport(renderDiff(oldPkg, newPkg, result));
   }
-  if (result.changed) process.exitCode = 1;
+  if (result.changed || (result.runtime && result.runtime.changed)) process.exitCode = 1;
 }
 
 if (require.main === module) {
@@ -1540,6 +1578,8 @@ if (require.main === module) {
     .option('--check-v12-gaps', 'run only the npm v12 approve-scripts bug detectors: optional deps missing from allowScripts (npm/cli#9562) and EGLOBAL-prone global installs in CI workflows (npm/cli#9463)')
     .option('--fail-on-downgrade', 'exit 1 if any package resolves below the highest trust tier it previously reached (trusted publisher > provenance > none, npm/cli#9242); policy trustPolicy: "no-downgrade" runs the same check without changing the exit code')
     .option('--fail-on-runtime-bootstrap', 'exit 1 if any package\'s install-time code fetches or installs another JavaScript runtime (bun, deno), the ChainDrop pattern; policy runtimeBootstrapPolicy: "fail" arms the same gate from the policy file')
+    .option('--runtime', 'also read the code each package runs when required (main, exports, bin) and report RUNTIME_PAYLOAD: C2 endpoints, exfil endpoints, node started on a bundled file, or an obfuscator.io string-array payload, the btree pattern. Downloads every tarball')
+    .option('--fail-on-runtime-payload', 'exit 1 on any HIGH RUNTIME_PAYLOAD (an exfil endpoint, or two payload kinds together); implies --runtime')
     .option('--policy <file>', 'governance policy file holding trustPolicy / trustPolicyExclude / trustPolicyIgnoreAfter / runtimeBootstrapPolicy (default: script-lens.policy.json if present)')
     .action(auditAction);
   common(program.command('sync'))
@@ -1641,6 +1681,7 @@ if (require.main === module) {
     .argument('<old>', 'baseline spec, e.g. sharp@0.32.6')
     .argument('<new>', 'candidate spec, e.g. sharp@0.33.0')
     .option('--json', 'emit JSON { unchanged, added, removed, modified } instead of colored text')
+    .option('--runtime', 'also diff the capabilities of the code the package runs when required (main, exports, bin). Exits 1 if it gained exec, exec-local, c2, exfil or obf')
     .action(diffAction);
   program.command('mcp')
     .description('run as an MCP server on stdio (tools: audit_package, audit_lockfile, classify_allowscripts)')

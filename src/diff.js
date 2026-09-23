@@ -7,6 +7,8 @@
 const { fetchPackage, LIFECYCLE } = require('./registry');
 const { collectGypFindings } = require('./gyp');
 const { identityChanges } = require('./trust');
+const { runtimeSignals, filesWith } = require('./runtime');
+const { score } = require('./analyzer');
 
 // Split "<pkg>@<version>" into { name, version }. Handles scoped names
 // (@scope/pkg@1.2.3) by splitting on the LAST '@'.
@@ -26,13 +28,18 @@ function parseSpec(spec) {
 // changes what runs at install time while `files.has('binding.gyp')` stays
 // true in both versions, the false negative that let the June 2026 Miasma
 // wave-2 releases diff as "UNCHANGED: implicit node-gyp rebuild".
-async function fetchScripts(name, version) {
+//
+// runtime also walks main/exports/bin, for payloads that need no install
+// script (the btree loader ran from BTree.prototype.set).
+async function fetchScripts(name, version, { runtime = false } = {}) {
   const { allScripts, files } = await fetchPackage(name, version, { forceTarball: true });
   const scripts = {};
   for (const k of LIFECYCLE) if (typeof allScripts[k] === 'string') scripts[k] = allScripts[k];
   const gypText = files.has('binding.gyp') ? files.get('binding.gyp') : null;
   const gypFindings = gypText === null ? [] : collectGypFindings(files).findings;
-  return { name, version, scripts, gypText, gypFindings };
+  const out = { name, version, scripts, gypText, gypFindings };
+  if (runtime) out.runtime = runtimeSignals({ files });
+  return out;
 }
 
 // Minimal LCS line diff → array of { t: ' '|'-'|'+', line }.
@@ -134,6 +141,26 @@ function computeScriptDiff(oldPkg, newPkg) {
   return { unchanged, added, removed, modified, changed, provChanges, json };
 }
 
+// Runtime signals gained and lost between two runtimeSignals() results,
+// compared by full signal string so a capability that only moved between
+// files is not reported. Gaining anything that scores HIGH in runtime code
+// (exec, exec-local, c2, exfil, obf) is the exit-1 condition.
+function computeRuntimeDiff(oldRt, newRt) {
+  const entry = (rt, signal) => ({
+    signal,
+    kind: signal.split(':')[0],
+    risk: score([signal], { runtime: true }),
+    files: filesWith(rt, signal),
+  });
+  const oldSet = new Set(oldRt.signals);
+  const newSet = new Set(newRt.signals);
+  const gained = newRt.signals.filter((s) => !oldSet.has(s)).map((s) => entry(newRt, s));
+  const lost = oldRt.signals.filter((s) => !newSet.has(s)).map((s) => entry(oldRt, s));
+  const side = (rt) => ({ entries: rt.entries, signals: rt.signals, missing: rt.missing, partial: rt.partial });
+  const changed = gained.some((g) => g.risk === 'HIGH');
+  return { gained, lost, changed, json: { changed, gained, lost, old: side(oldRt), new: side(newRt) } };
+}
+
 const CODES = { green: 32, red: 31, yellow: 33, dim: 90, bold: 1 };
 function makeColor(enabled) {
   return (s, name) => (enabled ? `\x1b[${CODES[name]}m${s}\x1b[0m` : s);
@@ -176,7 +203,21 @@ function renderDiff(oldPkg, newPkg, result, { color = process.stdout.isTTY && !p
   if (result.unchanged.length && !result.changed && !result.removed.length) {
     out.push(c('no install-time script changes', 'green'));
   }
+  if (result.runtime) out.push(...renderRuntime(oldPkg.runtime, newPkg.runtime, result.runtime, c));
   return out.join('\n');
 }
 
-module.exports = { parseSpec, fetchScripts, computeScriptDiff, renderDiff, lineDiff };
+function renderRuntime(oldRt, newRt, rt, c) {
+  const out = [c(`runtime code (main/exports/bin): ${newRt.entries.join(', ') || 'no entry points'}`, 'bold')];
+  for (const [label, r] of [['old', oldRt], ['new', newRt]]) {
+    for (const m of r.missing) out.push(c(`    ${label}: ${m} is not in the tarball`, 'yellow'));
+    if (r.partial) out.push(c(`    ${label}: partial, the walk stopped at the file or depth limit`, 'yellow'));
+  }
+  const line = (tag, g) => `${tag}: ${g.kind} (${g.files.join(', ') || '?'}) ${g.signal.slice(g.kind.length + 2)}`;
+  for (const g of rt.gained) out.push(c(line('GAINED', g), g.risk === 'HIGH' ? 'red' : 'yellow'));
+  for (const g of rt.lost) out.push(c(line('LOST', g), 'dim'));
+  if (rt.gained.length === 0 && rt.lost.length === 0) out.push(c('no runtime capability changes', 'green'));
+  return out;
+}
+
+module.exports = { parseSpec, fetchScripts, computeScriptDiff, computeRuntimeDiff, renderDiff, lineDiff };

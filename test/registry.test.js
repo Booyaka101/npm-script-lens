@@ -37,6 +37,11 @@ before(async () => {
     requests.push(req.url);
     const port = server.address().port;
     if (tarballs[req.url]) return res.writeHead(200).end(tarballs[req.url]);
+    if (req.url.startsWith('/limited')) {
+      const hits = requests.filter((u) => u === req.url).length;
+      if (req.url === '/limited-always/1.0.0' || hits === 1) return res.writeHead(429, { 'retry-after': '0' }).end('{}');
+      return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version: '1.0.0', scripts: {} }));
+    }
     const doc = {
       '/mock-gyp/1.0.0': { version: '1.0.0', scripts: {}, hasInstallScript: true,
         dist: { tarball: `http://127.0.0.1:${port}/mock-gyp.tgz` } },
@@ -79,6 +84,15 @@ test('tarball package.json overrides the registry script copy', async () => {
   const pkg = await fetchPackage('override', '1.0.0');
   assert.strictEqual(pkg.scripts.postinstall, 'node real.js');
   assert.strictEqual(analyzePackage(pkg)[0].risk, 'MEDIUM');
+});
+
+test('a 429 is retried once, then named as a rate limit', async () => {
+  const { fetchPackage } = require('../src/registry');
+  const pkg = await fetchPackage('limited', '1.0.0');
+  assert.deepStrictEqual(pkg.scripts, {});
+  assert.strictEqual(requests.filter((u) => u === '/limited/1.0.0').length, 2);
+  await assert.rejects(() => fetchPackage('limited-always', '1.0.0'), /HTTP 429 \(rate limited by the registry\)/);
+  assert.strictEqual(requests.filter((u) => u === '/limited-always/1.0.0').length, 2);
 });
 
 test('missing package rejects without retry storm', async () => {
