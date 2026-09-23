@@ -205,8 +205,9 @@ the library.
 target (all conditions, subpaths and nesting) and every `bin`, falling back to
 `index.js` like Node does. It then follows relative `require`/`import` and any
 file the code spawns node on, with the same acorn pass the install-script
-analysis uses. Type declarations, `.json`, `.node` and wildcard subpaths are
-skipped.
+analysis uses. A bin is read whatever its name if it opens with `#!`. Type
+declarations, `.json`, `.node`, source maps, wildcard subpaths and folder
+mappings (`"./": "./"`) are skipped.
 
 ```bash
 npx npm-script-lens diff some-lib@1.4.2 some-lib@1.4.3 --runtime
@@ -233,8 +234,11 @@ A plain `diff` of the same two versions exits 0, since no script changed.
 With `--runtime`, gaining `exec`, `exec-local`, `c2`, `exfil` or `obf` exits 1.
 Gaining only `net`, `fs` or `env` is printed but does not fail, because
 ordinary releases gain those all the time. A signal that moved to another file
-is not a gain. The five patch bumps checked before release (chalk, semver,
-commander, debug, ms) all print `no runtime capability changes`.
+is not a gain, and neither is a bundler renaming `worker.3f9a1c2b.js` to
+`worker.8e41d0aa.js`. The upgrades checked before release (chalk 5.4.0 →
+5.4.1, commander 14.0.2 → 14.0.3, semver 7.6.2 → 7.6.3, debug 4.3.6 → 4.3.7,
+ms 2.1.2 → 2.1.3, axios 1.7.7 → 1.7.8, date-fns 3.6.0 → 4.1.0) all print
+`no runtime capability changes`.
 
 What it looks for:
 
@@ -255,11 +259,23 @@ What it looks for:
 exec or network, which most libraries have. A lone RPC host is normal in a
 web3 client and a lone local spawn in a worker pool, so one kind alone is
 MEDIUM. An exfil endpoint, or two kinds together, is HIGH, and only HIGH fails
-`--fail-on-runtime-payload`. On that 746-package web3 tree it took 37 seconds
-and reported 0 HIGH and 8 MEDIUM: wallet SDKs naming their infura
-endpoints and RPC clients that build `eth_call` requests. Runtime mode
-downloads every tarball, not just the ones with install scripts, so the first
-run is slower than a normal audit. Results are cached like everything else.
+`--fail-on-runtime-payload`. On that 746-package web3 tree it took 20 seconds
+and reported 0 HIGH and 12 MEDIUM: wallet SDKs naming their infura
+endpoints, RPC clients that build `eth_call` requests, ethers' block explorer
+hosts, and pm2 starting its own daemon detached. Runtime mode downloads every
+tarball, not just the ones with install scripts, so the first run is slower
+than a normal audit. Results are cached like everything else.
+
+With `--diff` or `--since`, a finding on an upgraded package marks each hit
+the old version did not have as **new since** that version, and says so when
+every hit was already there. That is the line to read first: a wallet SDK
+that always named infura is not news, the same SDK gaining a Telegram
+endpoint is.
+
+A package with no finding is not always a clean read. When an entry point
+could not be read (over 2 MB, declared but not in the package) or the walk
+ran out of budget, the report lists it under _Runtime code only partly read_
+so the silence is not mistaken for a pass.
 
 What it cannot see. Strings built at runtime stay opaque: a URL decoded from
 an obfuscated string array, fetched from somewhere, or assembled from pieces
@@ -268,10 +284,12 @@ Going by Checkmarx's description of it, expect `exec-local` on the loader and th
 payload, not the endpoints. That is still two kinds, so HIGH, and still a
 failing `diff`. Real Telegram client libraries name the bare API host and add
 the `/bot` path later, so they do not fire, and neither would a payload written
-the same way. The walk stops at 30 files and 3 levels of `require` from the
-entry points; past that the output says `partial` (semver reaches it), and
-anything beyond it is unread. A declared `main` that is not in the
-tarball is reported, not fatal.
+the same way. The walk reads up to 200 files per package, with no limit
+on how deep the `require` chain goes. `main` and everything it pulls in
+come first, then each `exports` target and `bin` in turn. Past 200 the
+output says `partial` (date-fns, with 1,480 exports targets, reaches it), and
+anything beyond it is unread. A declared entry point that is not in the
+tarball is reported with the reason, not fatal.
 
 ## diff: what did an upgrade change in the install scripts?
 
@@ -1316,7 +1334,7 @@ The combination, **behavioral evidence** for the decision, in **every manager's*
 - Scripts invoking **binaries from other packages** (`husky install`, `patch-package`) are resolved when a lockfile package with the same name owns the bin: that package's actual bin script is fetched, analyzed, and the row is **re-scored on real evidence** (`bin: husky install → husky@9.1.7` + what the script actually does). Bins with no same-name owner in the lockfile stay conservatively HIGH as `exec: … (unresolved binary)`.
 - **Helper dependencies**: capability hidden inside helpers is caught via a curated list (`axios`, `got`, `undici`, `@prisma/fetch-engine`, …) plus `--deep`, which follows bare `require()`s from install-script code into the matching lockfile package's entry file (one level). A helper outside the lockfile, or loaded indirectly, can still slip a tier.
 - **Obfuscation**: `eval`/`new Function`/`vm` and string-built `require()`s score HIGH, and base64/char-code **literal** payloads are **decoded and re-analyzed**, so the report shows what the hidden code actually does, not just that it hides. Payloads assembled only at runtime (downloaded, decrypted, env-derived) remain opaque: flagged, not decoded. Plain variable indirection (`require(someVar)`) is deliberately not flagged, it's ubiquitous in bundler output.
-- **Runtime code is only read with `--runtime`**, and only 30 files and 3 levels of `require` deep from `main`/`exports`/`bin`. Endpoints encoded by an obfuscator or built at runtime are not seen, only the loader and the obfuscator's prelude are. See [Payloads without install scripts](#payloads-without-install-scripts).
+- **Runtime code is only read with `--runtime`**, and only the first 200 files reached from `main`/`exports`/`bin`, `main` first. Files over 2 MB are not read and are named when they are an entry point. A local variable that is assigned twice, or shadowed by a parameter, is not followed into a spawn, so minified code that reuses short names can hide an `exec-local`. Endpoints encoded by an obfuscator or built at runtime are not seen, only the loader and the obfuscator's prelude are. See [Payloads without install scripts](#payloads-without-install-scripts).
 
 ## Get it
 

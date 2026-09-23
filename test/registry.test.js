@@ -32,6 +32,14 @@ before(async () => {
       'package/package.json': JSON.stringify({ scripts: { postinstall: 'node real.js' } }),
       'package/real.js': 'require("https").get("https://x.io");',
     }),
+    '/shebang.tgz': await makeTgz({
+      'package/package.json': JSON.stringify({ name: 'shebang', bin: { tool: 'bin/tool' } }),
+      'package/bin/tool': '#!/usr/bin/env node\nrequire("../lib/run.js");\n',
+      'package/bin/crc.njs': '#!/usr/bin/env node\n',
+      'package/logo.png': '\x89PNG',
+      'package/LICENSE': 'MIT',
+      'package/dist/huge.js': 'x'.repeat(2 * 1024 * 1024 + 1),
+    }),
   };
   server = http.createServer((req, res) => {
     requests.push(req.url);
@@ -49,6 +57,7 @@ before(async () => {
         dist: { tarball: `http://127.0.0.1:${port}/never-fetched.tgz` } },
       '/override/1.0.0': { version: '1.0.0', scripts: { postinstall: 'node registry-copy.js' },
         dist: { tarball: `http://127.0.0.1:${port}/override.tgz` } },
+      '/shebang/1.0.0': { version: '1.0.0', scripts: {}, dist: { tarball: `http://127.0.0.1:${port}/shebang.tgz` } },
     }[req.url];
     if (!doc) return res.writeHead(404).end('{}');
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(doc));
@@ -100,4 +109,33 @@ test('missing package rejects without retry storm', async () => {
   const countBefore = requests.length;
   await assert.rejects(() => fetchPackage('ghost', '9.9.9'), /HTTP 404/);
   assert.strictEqual(requests.length, countBefore + 1, 'a 404 is final, exactly one request');
+});
+
+test('the tarball index keeps #! scripts whatever their name, and names the files too large to read', async () => {
+  const { fetchPackage } = require('../src/registry');
+  const pkg = await fetchPackage('shebang', '1.0.0', { forceTarball: true });
+  assert.deepStrictEqual([...pkg.files.keys()].sort(), ['bin/crc.njs', 'bin/tool', 'package.json']);
+  assert.deepStrictEqual(pkg.skipped, ['dist/huge.js']);
+});
+
+test('the offline index keeps the same files as the tarball index', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { loadLocalPackage } = require('../src/registry');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-local-'));
+  const pkg = path.join(dir, 'node_modules', 'shebang');
+  fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(pkg, 'dist'));
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'shebang', version: '1.0.0', bin: 'bin/crc.njs' }));
+  fs.writeFileSync(path.join(pkg, 'bin', 'crc.njs'), '#!/usr/bin/env node\n');
+  fs.writeFileSync(path.join(pkg, 'logo.png'), '\x89PNG');
+  fs.writeFileSync(path.join(pkg, 'dist', 'huge.js'), 'x'.repeat(2 * 1024 * 1024 + 1));
+  try {
+    const local = loadLocalPackage('shebang', '1.0.0', dir, null, { forceFiles: true });
+    assert.deepStrictEqual([...local.files.keys()].sort(), ['bin/crc.njs', 'package.json']);
+    assert.deepStrictEqual(local.skipped, ['dist/huge.js']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

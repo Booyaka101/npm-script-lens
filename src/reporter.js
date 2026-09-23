@@ -2,6 +2,7 @@
 const { trustLabel, driftNote } = require('./trust');
 const { INERT_SKIP_FROM, skipsInertOptional, PUBLISH } = require('./npm-contract');
 const { runtimeBootstrapFindings } = require('./analyzer');
+const { RUNTIME_MAX_FILES } = require('./runtime');
 
 const RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, SAFE: 3, ERROR: 4 };
 const BADGE = { HIGH: '🔴 HIGH', MEDIUM: '🟠 MEDIUM', LOW: '🟡 LOW', SAFE: '🟢 SAFE', ERROR: '⚪ ERROR' };
@@ -135,23 +136,37 @@ function runtimeBootstrapSection(results) {
 function runtimePayloadSection(results) {
   const hit = results.filter((r) => r.runtimePayload);
   const failed = results.filter((r) => r.runtimeError);
-  if (hit.length === 0 && failed.length === 0) return [];
+  // a finding already says partial; these are the ones whose silence is not a clean bill
+  const unread = results.filter((r) => r.runtimeUnread && !r.runtimePayload);
+  if (hit.length === 0 && failed.length === 0 && unread.length === 0) return [];
   const high = hit.some((r) => r.runtimePayload.risk === 'HIGH');
-  const lines = [`## ${high ? '🔴' : '🟠'} Runtime payload (${hit.length})`, '',
+  const icon = high ? '🔴 ' : hit.length > 0 ? '🟠 ' : '';
+  const lines = [`## ${icon}Runtime payload (${hit.length})`, '',
     'Code the package runs when it is required or its bin is invoked (main, exports, bin) names a C2 or exfiltration '
     + 'endpoint, starts node on a file it ships, or is an obfuscator.io string-array payload. No install script is involved: the btree loader (2026-09-17) '
     + 'fired from inside `BTree.prototype.set`. A lone RPC host is normal in a web3 client and a lone local spawn in a '
     + 'worker pool, so those rank MEDIUM; an exfil endpoint or two kinds together rank HIGH.', ''];
   for (const r of hit) {
     const f = r.runtimePayload;
-    const hits = f.hits.slice(0, 5).map((h) => `\`${esc(h.signal)}\`${h.files.length ? ` (${esc(h.files.join(', '))})` : ''}`);
+    const isNew = (h) => f.base && f.base.gained && f.base.gained.includes(h.signal);
+    const hits = f.hits.slice(0, 5).map((h) => `\`${esc(h.signal)}\`${h.files.length ? ` (${esc(h.files.join(', '))})` : ''}`
+      + (isNew(h) ? ` **new since ${f.base.version}**` : ''));
     if (f.hits.length > 5) hits.push(`and ${f.hits.length - 5} more in --json`);
-    lines.push(`- \`${r.name}@${r.version}\` ${BADGE[f.risk]} **RUNTIME_PAYLOAD** ${hits.join('; ')}`
-      + (f.partial ? ' _(partial: the walk hit its file or depth limit)_' : ''));
+    const vsBase = !f.base ? ''
+      : f.base.gained === null ? ` _(${f.base.version} could not be read to compare)_`
+      : f.base.gained.length === 0 ? ` _(all present in ${f.base.version} too)_` : '';
+    lines.push(`- \`${r.name}@${r.version}\` ${BADGE[f.risk]} **RUNTIME_PAYLOAD** ${hits.join('; ')}${vsBase}`
+      + (f.partial ? ` _(partial: past the ${RUNTIME_MAX_FILES}-file budget)_` : ''));
   }
   if (failed.length > 0) {
     lines.push('', `_Runtime code not checked for ${failed.length} package(s): `
       + `${failed.map((r) => `\`${r.name}@${r.version}\` (${esc(r.runtimeError)})`).join(', ')}._`);
+  }
+  if (unread.length > 0) {
+    const why = (u) => [...u.missing, ...(u.partial ? [`past the ${RUNTIME_MAX_FILES}-file budget`] : [])].join('; ');
+    const named = unread.slice(0, 10).map((r) => `\`${r.name}@${r.version}\` (${esc(why(r.runtimeUnread))})`);
+    if (unread.length > 10) named.push(`and ${unread.length - 10} more in --json`);
+    lines.push('', `_Runtime code only partly read for ${unread.length} package(s), no finding there is not a clean bill: ${named.join(', ')}._`);
   }
   lines.push('');
   return lines;
@@ -159,6 +174,7 @@ function runtimePayloadSection(results) {
 
 function buildReport(results, { note } = {}) {
   const scripted = results.filter((r) => r.rows.length > 0 || r.error || r.malicious);
+  const payloads = results.filter((r) => r.runtimePayload).length;
   const clean = results.length - scripted.length;
   const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, SAFE: 0, ERROR: 0 };
   let malicious = 0;
@@ -171,7 +187,8 @@ function buildReport(results, { note } = {}) {
     (malicious ? `**${malicious}** ⛔ KNOWN MALICIOUS, ` : '') +
     `**${counts.HIGH}** HIGH, **${counts.MEDIUM}** MEDIUM, **${counts.LOW}** LOW risk install scripts; ` +
     `**${counts.SAFE + clean}** with no risky install-time behavior` +
-    (counts.ERROR ? `; **${counts.ERROR}** could not be fetched` : '') + '.', '');
+    (counts.ERROR ? `; **${counts.ERROR}** could not be fetched` : '') +
+    (payloads ? `; **${payloads}** with a runtime payload` : '') + '.', '');
   if (note) lines.push(note, '');
   if (scripted.length > 0) {
     lines.push('| package | script | risk | signals |', '|---|---|---|---|');
@@ -543,7 +560,9 @@ function buildHtml(results, { note, title = 'npm-script-lens report' } = {}) {
   const counts = { HIGH: 0, MEDIUM: 0, LOW: 0, SAFE: 0, ERROR: 0 };
   let malicious = 0;
   for (const r of scripted) { counts[packageRisk(r)]++; if (r.malicious) malicious++; }
-  const clean = results.length - scripted.length;
+  const payloads = results.filter((r) => r.runtimePayload);
+  // a package whose runtime code carries a payload is not clean
+  const clean = results.length - scripted.length - payloads.filter((r) => packageRisk(r) === 'SAFE').length;
   const rows = [...scripted].sort((a, b) => sortRank(a) - sortRank(b)).map((r) => {
     const risk = r.malicious ? 'MALICIOUS' : packageRisk(r);
     const [color, label] = HTML_BADGE[risk] || HTML_BADGE.ERROR;
@@ -568,7 +587,6 @@ function buildHtml(results, { note, title = 'npm-script-lens report' } = {}) {
       + '<code>allowScripts</code> you already have; <code>npm-script-lens allow --write</code> or <code>sync --write</code> merge instead, '
       + 'keeping decisions you have already made.</p>\n'
       + `<pre>${htmlEsc(JSON.stringify({ allowScripts: allow }, null, 2))}</pre>`;
-  const payloads = results.filter((r) => r.runtimePayload);
   const payloadRows = payloads.map((r) => {
     const [color, label] = HTML_BADGE[r.runtimePayload.risk];
     const hits = r.runtimePayload.hits.map((h) => `<code>${htmlEsc(h.signal)}</code> ${htmlEsc(h.files.join(', '))}`).join('<br>');
@@ -603,7 +621,7 @@ footer{color:#78716c;font-size:12px;margin-top:24px}
 <p class="sub">Audited <strong>${results.length}</strong> locked packages${note ? ` · ${htmlEsc(note.replace(/[_`*]/g, ''))}` : ''}</p>
 <div class="stats">
 ${malicious ? stat(malicious, 'malicious', '#7f1d1d') : ''}
-${stat(counts.HIGH, 'high', '#b91c1c')}${stat(counts.MEDIUM, 'medium', '#c2410c')}${stat(counts.LOW, 'low', '#a16207')}${stat(counts.SAFE + clean, 'clean', '#15803d')}${counts.ERROR ? stat(counts.ERROR, 'errors', '#57534e') : ''}
+${stat(counts.HIGH, 'high', '#b91c1c')}${stat(counts.MEDIUM, 'medium', '#c2410c')}${stat(counts.LOW, 'low', '#a16207')}${stat(counts.SAFE + clean, 'clean', '#15803d')}${payloads.length ? stat(payloads.length, 'runtime payload', '#b91c1c') : ''}${counts.ERROR ? stat(counts.ERROR, 'errors', '#57534e') : ''}
 </div>
 ${scripted.length ? `<table><thead><tr><th>package</th><th>risk</th><th>install-script signals</th></tr></thead><tbody>\n${rows}\n</tbody></table>` : '<p>🟢 No package has risky install-time behavior.</p>'}
 ${payloadHtml}

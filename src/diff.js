@@ -7,7 +7,7 @@
 const { fetchPackage, LIFECYCLE } = require('./registry');
 const { collectGypFindings } = require('./gyp');
 const { identityChanges } = require('./trust');
-const { runtimeSignals, filesWith } = require('./runtime');
+const { runtimeSignals, filesWith, signalKey, RUNTIME_MAX_FILES } = require('./runtime');
 const { score } = require('./analyzer');
 
 // Split "<pkg>@<version>" into { name, version }. Handles scoped names
@@ -32,13 +32,14 @@ function parseSpec(spec) {
 // runtime also walks main/exports/bin, for payloads that need no install
 // script (the btree loader ran from BTree.prototype.set).
 async function fetchScripts(name, version, { runtime = false } = {}) {
-  const { allScripts, files } = await fetchPackage(name, version, { forceTarball: true });
+  const pkg = await fetchPackage(name, version, { forceTarball: true });
+  const { allScripts, files } = pkg;
   const scripts = {};
   for (const k of LIFECYCLE) if (typeof allScripts[k] === 'string') scripts[k] = allScripts[k];
   const gypText = files.has('binding.gyp') ? files.get('binding.gyp') : null;
   const gypFindings = gypText === null ? [] : collectGypFindings(files).findings;
   const out = { name, version, scripts, gypText, gypFindings };
-  if (runtime) out.runtime = runtimeSignals({ files });
+  if (runtime) out.runtime = runtimeSignals(pkg);
   return out;
 }
 
@@ -142,9 +143,9 @@ function computeScriptDiff(oldPkg, newPkg) {
 }
 
 // Runtime signals gained and lost between two runtimeSignals() results,
-// compared by full signal string so a capability that only moved between
-// files is not reported. Gaining anything that scores HIGH in runtime code
-// (exec, exec-local, c2, exfil, obf) is the exit-1 condition.
+// compared by full signal string (content hashes aside) so a capability that
+// only moved between files is not reported. Gaining anything that scores HIGH
+// in runtime code (exec, exec-local, c2, exfil, obf) is the exit-1 condition.
 function computeRuntimeDiff(oldRt, newRt) {
   const entry = (rt, signal) => ({
     signal,
@@ -152,10 +153,10 @@ function computeRuntimeDiff(oldRt, newRt) {
     risk: score([signal], { runtime: true }),
     files: filesWith(rt, signal),
   });
-  const oldSet = new Set(oldRt.signals);
-  const newSet = new Set(newRt.signals);
-  const gained = newRt.signals.filter((s) => !oldSet.has(s)).map((s) => entry(newRt, s));
-  const lost = oldRt.signals.filter((s) => !newSet.has(s)).map((s) => entry(oldRt, s));
+  const oldSet = new Set(oldRt.signals.map(signalKey));
+  const newSet = new Set(newRt.signals.map(signalKey));
+  const gained = newRt.signals.filter((s) => !oldSet.has(signalKey(s))).map((s) => entry(newRt, s));
+  const lost = oldRt.signals.filter((s) => !newSet.has(signalKey(s))).map((s) => entry(oldRt, s));
   const side = (rt) => ({ entries: rt.entries, signals: rt.signals, missing: rt.missing, partial: rt.partial });
   const changed = gained.some((g) => g.risk === 'HIGH');
   return { gained, lost, changed, json: { changed, gained, lost, old: side(oldRt), new: side(newRt) } };
@@ -208,10 +209,11 @@ function renderDiff(oldPkg, newPkg, result, { color = process.stdout.isTTY && !p
 }
 
 function renderRuntime(oldRt, newRt, rt, c) {
-  const out = [c(`runtime code (main/exports/bin): ${newRt.entries.join(', ') || 'no entry points'}`, 'bold')];
+  const shown = newRt.entries.slice(0, 8).join(', ') + (newRt.entries.length > 8 ? ` and ${newRt.entries.length - 8} more` : '');
+  const out = [c(`runtime code (main/exports/bin): ${shown || 'no entry points'}`, 'bold')];
   for (const [label, r] of [['old', oldRt], ['new', newRt]]) {
-    for (const m of r.missing) out.push(c(`    ${label}: ${m} is not in the tarball`, 'yellow'));
-    if (r.partial) out.push(c(`    ${label}: partial, the walk stopped at the file or depth limit`, 'yellow'));
+    for (const m of r.missing) out.push(c(`    ${label}: ${m}`, 'yellow'));
+    if (r.partial) out.push(c(`    ${label}: partial, past the ${RUNTIME_MAX_FILES}-file budget`, 'yellow'));
   }
   const line = (tag, g) => `${tag}: ${g.kind} (${g.files.join(', ') || '?'}) ${g.signal.slice(g.kind.length + 2)}`;
   for (const g of rt.gained) out.push(c(line('GAINED', g), g.risk === 'HIGH' ? 'red' : 'yellow'));

@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { analyzeJs, score, MAX_FILES } = require('../src/analyzer');
-const { runtimeEntries, runtimeSignals, runtimePayloadFinding } = require('../src/runtime');
+const { analyzeJs, score } = require('../src/analyzer');
+const { runtimeEntries, runtimeSignals, runtimePayloadFinding, gainedIocs, RUNTIME_MAX_FILES } = require('../src/runtime');
 const { computeRuntimeDiff } = require('../src/diff');
 const { buildReport, buildSarif, buildHtml } = require('../src/reporter');
 const { start } = require('../scripts/serve-bootstrap-fixtures');
@@ -59,6 +59,7 @@ test('runtimeEntries: main, exports shapes and bin resolve to tarball paths', ()
     [{ exports: { '.': ['./dist/index.js'] } }, ['dist/index.js']],
     [{ main: 'dist/index.js', exports: './dist/index.js' }, ['dist/index.js']],
     [{ main: 'data.json' }, []],
+    [{ exports: { './': './', './sub.js.map': './sub.js.map' } }, []],
     [{ types: 'index.d.ts', exports: { types: './index.d.ts' } }, []],
     [{ bin: 'cli.js' }, ['index.js', 'cli.js']],
     [{ main: 'lib/main.js', bin: { one: './cli.js', two: 'bin/other.js' } }, ['lib/main.js', 'cli.js', 'bin/other.js']],
@@ -77,28 +78,59 @@ test('runtimeEntries: a bin-only package with no index.js walks just its bin', (
 test('runtimeEntries: a declared main missing from the tarball is noted, not thrown', () => {
   const { entries, missing } = runtimeEntries({ main: 'lib/gone.js', bin: 'cli.js' }, index(['cli.js']));
   assert.deepStrictEqual(entries, ['cli.js']);
-  assert.deepStrictEqual(missing, ['main: lib/gone.js']);
+  assert.deepStrictEqual(missing, ['main: lib/gone.js (not in the package)']);
 });
 
-test('runtimeSignals: more entry points than MAX_FILES is partial, not empty', () => {
+test('runtimeEntries: a missing main falls back to index.js, as Node does, unless exports is set', () => {
+  const files = index(['index.js', 'dist/esm.mjs']);
+  assert.deepStrictEqual(runtimeEntries({ main: 'lib/gone.js' }, files).entries, ['index.js']);
+  assert.deepStrictEqual(runtimeEntries({ main: '' }, files).entries, ['index.js']);
+  assert.deepStrictEqual(runtimeEntries({ main: 'lib/gone.js', exports: './dist/esm.mjs' }, files).entries, ['dist/esm.mjs']);
+});
+
+test('runtimeEntries: an entry the index left out says why', () => {
+  const { missing } = runtimeEntries({ main: 'dist/huge.js', bin: 'cli.js' }, new Map(), { skipped: ['dist/huge.js'] });
+  assert.deepStrictEqual(missing, ['main: dist/huge.js (over 2 MB, not read)', 'bin: cli.js (not in the package)']);
+  assert.deepStrictEqual(runtimeEntries({ exports: { import: './gone.js', require: './gone.js' } }, new Map()).missing,
+    ['exports: ./gone.js (not in the package)']);
+  assert.deepStrictEqual(runtimeEntries({ main: 'a.js' }, new Map(), { capped: true }).missing,
+    ['main: a.js (past the offline file limit, not read)']);
+});
+
+test('runtimeEntries: an extensionless bin resolves once the index keeps it', () => {
+  assert.deepStrictEqual(runtimeEntries({ bin: { tool: 'bin/tool' } }, index(['bin/tool'])).entries, ['bin/tool']);
+});
+
+test('runtimeSignals: more entry points than the budget is partial, not empty', () => {
+  const n = RUNTIME_MAX_FILES + 5;
   const files = new Map([['package.json', JSON.stringify({
-    exports: Object.fromEntries(Array.from({ length: MAX_FILES + 5 }, (_, i) => [`./m${i}`, `./m${i}.js`])),
+    exports: Object.fromEntries(Array.from({ length: n }, (_, i) => [`./m${i}`, `./m${i}.js`])),
   })]]);
-  for (let i = 0; i < MAX_FILES + 5; i++) files.set(`m${i}.js`, i === 0 ? "require('https').get('https://x.dev');" : '');
+  for (let i = 0; i < n; i++) files.set(`m${i}.js`, i === 0 ? "require('https').get('https://x.dev');" : '');
   const rt = runtimeSignals({ files });
   assert.strictEqual(rt.partial, true);
-  assert.strictEqual(rt.entries.length, MAX_FILES);
   assert.ok(rt.signals.some((s) => s.startsWith('net: ')), 'the entries that fit are still analyzed');
 });
 
-test('runtimeSignals: a require chain deeper than MAX_DEPTH is partial', () => {
-  const files = new Map([
-    ['package.json', '{"main":"a.js"}'],
-    ['a.js', "require('./b')"], ['b.js', "require('./c')"], ['c.js', "require('./d')"], ['d.js', "require('./e')"], ['e.js', ''],
-  ]);
-  assert.strictEqual(runtimeSignals({ files }).partial, true);
-  files.set('d.js', '');
-  assert.strictEqual(runtimeSignals({ files }).partial, false);
+test('runtimeSignals: the requires of main are read before forty exports subpaths spend the budget', () => {
+  const files = new Map([['package.json', JSON.stringify({
+    main: 'index.js',
+    exports: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`./m${i}`, `./m${i}.js`])),
+  })], ['index.js', "require('./lib/core');"],
+  ['lib/core.js', "module.exports = 'https://api.telegram.org/bot0:x/sendMessage';"]]);
+  for (let i = 0; i < 40; i++) files.set(`m${i}.js`, '');
+  const rt = runtimeSignals({ files });
+  assert.deepStrictEqual(rt.signals, ['exfil: api.telegram.org/bot']);
+  assert.strictEqual(rt.partial, false);
+});
+
+test('runtimeSignals: a payload eight requires below main is read, only the file budget cuts a walk', () => {
+  const files = new Map([['package.json', '{"main":"l0.js"}']]);
+  for (let i = 0; i < 8; i++) files.set(`l${i}.js`, `require('./l${i + 1}')`);
+  files.set('l8.js', "module.exports = 'https://api.telegram.org/bot0:x/sendMessage';");
+  const rt = runtimeSignals({ files });
+  assert.deepStrictEqual(rt.signals, ['exfil: api.telegram.org/bot']);
+  assert.strictEqual(rt.partial, false);
 });
 
 test('runtimeSignals: an ESM-only package is followed through import, per-file signals kept', () => {
@@ -144,7 +176,24 @@ test('exec-local: other binaries, eval flags, unshipped literals and fork do not
     "require('child_process').spawn(process.execPath, ['nothere.js']);",
     "require('child_process').fork(require('path').join(__dirname, 'worker.js'));",
     "const re = /a/; re.exec('x'); const m = new Map(); m.get('k');",
+    // the user's file, not one the package ships
+    "const path = require('path'); require('child_process').spawn(process.execPath, [path.resolve(process.cwd(), file)]);",
+    "const path = require('path'); require('child_process').spawn('node', [path.join(process.cwd(), 'scripts', 'build.js')]);",
   ]) assert.ok(!kinds(signalsOf(src)).includes('exec-local'), src);
+});
+
+test('exec-local: a name bound twice or as a parameter is not followed', () => {
+  for (const src of [
+    "const path = require('path'); const worker = path.join(__dirname, 'worker.js'); function run(worker) { require('child_process').spawn('node', [worker]); }",
+    "const path = require('path'); let f = path.join(__dirname, 'worker.js'); f = process.argv[2]; require('child_process').spawn('node', [f]);",
+    "const path = require('path'); function a() { const f = path.join(__dirname, 'worker.js'); return f; } function b(x) { const f = x; require('child_process').spawn('node', [f]); }",
+  ]) assert.ok(!kinds(signalsOf(src)).includes('exec-local'), src);
+});
+
+test('concatenation: a long literal chain folds, a partly literal chain still yields its literal run', () => {
+  const long = `const u = ${Array.from({ length: 500 }, () => "'a'").join(' + ')} + 'https://hooks.slack.com/services/x';`;
+  assert.ok(signalsOf(long).includes('exfil: hooks.slack.com/services'));
+  assert.ok(signalsOf("const u = ('https://hooks.sla' + 'ck.com/services/') + id;").includes('exfil: hooks.slack.com/services'));
 });
 
 test('c2: RPC hosts, eth_call, and a contract only next to an RPC host', () => {
@@ -233,6 +282,20 @@ test('computeRuntimeDiff: moved signals are not gained; gaining only net does no
   assert.deepStrictEqual([net.gained.length, net.changed], [1, false]);
   const lost = computeRuntimeDiff(side({ 'a.js': ['exec: git'] }), side({}));
   assert.deepStrictEqual([lost.lost.map((l) => l.signal), lost.changed], [['exec: git'], false]);
+  // a bundler's content hash changing on every release is not a new spawn
+  const hashed = computeRuntimeDiff(side({ 'a.js': ['exec-local: process.execPath dist/worker.3f9a1c2b.js'] }),
+    side({ 'a.js': ['exec-local: process.execPath dist/worker.8e41d0aa.js'] }));
+  assert.deepStrictEqual([hashed.gained, hashed.lost, hashed.changed], [[], [], false]);
+  const renamed = computeRuntimeDiff(side({ 'a.js': ['exec-local: node dist/worker.js'] }),
+    side({ 'a.js': ['exec-local: node dist/loader.js'] }));
+  assert.strictEqual(renamed.changed, true, 'a different file name is still a change');
+});
+
+test('gainedIocs: payload-shaped signals the base did not have, content hashes aside', () => {
+  const rt = (signals) => ({ signals });
+  assert.deepStrictEqual(gainedIocs(rt(['c2: eth_call', 'net: fetch()']), rt(['c2: eth_call', 'exfil: api.telegram.org/bot', 'exec: git'])),
+    ['exfil: api.telegram.org/bot']);
+  assert.deepStrictEqual(gainedIocs(rt(['exec-local: node w.1a2b3c4d.js']), rt(['exec-local: node w.9f8e7d6c.js'])), []);
 });
 
 // --- the btree worked example, end to end through the mock registry ------------
@@ -315,4 +378,39 @@ test('audit --runtime: a package whose tarball cannot be fetched is named, not d
   const r = await run(['audit', '--path', dir, '--runtime', '--no-trust']);
   fs.rmSync(dir, { recursive: true, force: true });
   assert.match(r.stdout, /not-on-registry@9\.9\.9/);
+});
+
+test('audit --runtime --diff: an upgrade names the hits its base version did not have', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-rt-diff-'));
+  const lock = (btree, wallet) => JSON.stringify({
+    name: 'x', version: '1.0.0', lockfileVersion: 3,
+    packages: { '': { name: 'x', version: '1.0.0' }, 'node_modules/btree-good': { version: btree }, 'node_modules/rpc-wallet': { version: wallet } },
+  });
+  fs.writeFileSync(path.join(dir, 'package-lock.json'), lock('1.0.1', '3.0.0'));
+  fs.writeFileSync(path.join(dir, 'base.json'), lock('1.0.0', '2.0.0'));
+  const r = await run(['audit', '--path', dir, '--diff', path.join(dir, 'base.json'), '--runtime', '--no-trust', '--json']);
+  const md = await run(['audit', '--path', dir, '--diff', path.join(dir, 'base.json'), '--runtime', '--no-trust']);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const byName = Object.fromEntries(parse(r.stdout).results.map((x) => [x.name, x.runtimePayload]));
+  assert.strictEqual(byName['btree-good'].base.version, '1.0.0');
+  assert.deepStrictEqual(kinds(byName['btree-good'].base.gained), ['c2', 'exec-local', 'exfil']);
+  assert.deepStrictEqual(byName['rpc-wallet'].base, { version: '2.0.0', gained: null }, 'a base the registry lacks is not compared');
+  assert.match(md.stdout, /api\.telegram\.org\/bot` \(extended\/sharedLoad\.min\.js\) \*\*new since 1\.0\.0\*\*/);
+  assert.match(md.stdout, /rpc-wallet@3\.0\.0` .* _\(2\.0\.0 could not be read to compare\)_/);
+});
+
+test('reporter: runtime payloads count in the summary, and unread runtime code is named', () => {
+  const results = [
+    { name: 'a', version: '1.0.0', rows: [], runtimePayload: { risk: 'HIGH', hits: [{ signal: 'exfil: api.telegram.org/bot', files: ['i.js'] }], partial: false } },
+    { name: 'b', version: '1.0.0', rows: [], runtimeUnread: { partial: false, missing: ['main: dist/huge.js (over 2 MB, not read)'] } },
+    { name: 'c', version: '1.0.0', rows: [] },
+    { name: 'd', version: '1.0.0', rows: [], runtimeUnread: { partial: true, missing: [] } },
+  ];
+  const md = buildReport(results);
+  assert.match(md, /\*\*4\*\* with no risky install-time behavior; \*\*1\*\* with a runtime payload\./);
+  assert.match(md, /Runtime code only partly read for 2 package\(s\).*`b@1\.0\.0` \(main: dist\/huge\.js \(over 2 MB, not read\)\), `d@1\.0\.0` \(past the 200-file budget\)/);
+  const html = buildHtml(results);
+  assert.match(html, />3<\/div><div class="l">clean</);
+  assert.match(html, />1<\/div><div class="l">runtime payload</);
+  assert.deepStrictEqual(buildReport(results.slice(2, 3)).match(/Runtime payload/), null);
 });

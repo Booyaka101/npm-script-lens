@@ -171,10 +171,10 @@ function looksLikeJs(text) {
 }
 
 // A file the package itself ships, named by an exec argument: a path built
-// off __dirname / import.meta or through path.join / path.resolve, or a
-// .js/.cjs/.mjs literal that resolves in the tarball. One variable hop is
-// followed, because the btree loader held the path in `loadPath`.
-// Returns { label, resolved } or null.
+// off __dirname / import.meta, or a path.join / path.resolve or .js/.cjs/.mjs
+// literal that resolves in the tarball. One variable hop is followed, because
+// the btree loader held the path in `loadPath`. Returns { label, resolved }
+// or null.
 function localFile(el, bindings, where, hops = 0) {
   if (!el) return null;
   if (el.type === 'Identifier' && bindings.has(el.name) && hops < 2) {
@@ -198,7 +198,8 @@ function localFile(el, bindings, where, hops = 0) {
   if (!anchored && !pathCall && !literal) return null;
   const resolved = where && label
     ? resolveFile(where.files, where.from, `./${label}`) || resolveFile(where.files, 'x', `./${label}`) : null;
-  if (literal && !resolved) return null;
+  // path.resolve(process.cwd(), file) runs the user's file, not the package's
+  if (!anchored && !resolved) return null;
   return { label: resolved || label || '<computed path>', resolved };
 }
 
@@ -228,11 +229,13 @@ function localExec(call, bindings, where) {
 // String concatenation of literals only ('https://api.tele' + 'gram.org/bot'),
 // folded so the IOC checks see the whole string. Anything computed at runtime
 // stays opaque.
-function foldConcat(node) {
+// memo holds the folds of '+' nodes already visited (the walk is post-order).
+function foldConcat(node, memo) {
   if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
   if (node.type !== 'BinaryExpression' || node.operator !== '+') return null;
-  const l = foldConcat(node.left);
-  const r = l === null ? null : foldConcat(node.right);
+  if (memo.has(node)) return memo.get(node);
+  const l = foldConcat(node.left, memo);
+  const r = l === null ? null : foldConcat(node.right, memo);
   return r === null || l.length + r.length > 10000 ? null : l + r;
 }
 
@@ -268,7 +271,15 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
   const boots = new Map();
   const spawnRuns = [];
   const iocs = { rpc: new Set(), exfil: new Set(), contracts: new Set(), ethCall: false };
+  // Flat, scope-blind: a name bound twice (or as a parameter) could be either
+  // value where it is used, so it resolves to nothing.
   const bindings = new Map();
+  const bind = (id, init) => {
+    if (id.type !== 'Identifier') return;
+    bindings.set(id.name, bindings.has(id.name) && bindings.get(id.name) !== init ? null : init);
+  };
+  const folds = new Map();
+  const foldParent = new Map();
   const execCalls = [];
   // A string literal handed to an exec call that names a JS/TS source is an
   // entry point like any other: ChainDrop's stage 2 was spawned under the
@@ -326,11 +337,12 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
       literalIocs(text, iocs);
     }
     if (node.type === 'BinaryExpression' && node.operator === '+') {
-      const text = foldConcat(node);
-      if (text) literalIocs(text, iocs);
+      folds.set(node, foldConcat(node, folds));
+      foldParent.set(node.left, node).set(node.right, node);
     }
-    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) bindings.set(node.id.name, node.init);
-    if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') bindings.set(node.left.name, node.right);
+    if (node.type === 'VariableDeclarator' && node.init) bind(node.id, node.init);
+    if (node.type === 'AssignmentExpression') bind(node.left, node.right);
+    if (node.params) for (const param of node.params) bind(param, null);
     if (node.type !== 'CallExpression') return;
     const spec = requireTarget(node);
     if (spec === DYNAMIC) {
@@ -391,6 +403,8 @@ function analyzeJs(source, signals, follow, depth = 0, where = null) {
       }
     }
   });
+  // Only the widest literal chain: its inner links are substrings of it.
+  for (const [node, text] of folds) if (text && !folds.get(foldParent.get(node))) literalIocs(text, iocs);
   for (const [rt, how] of boots) signals.add(bootstrapSignal(rt, how, spawnRuns));
   for (const call of execCalls) {
     const hit = localExec(call, bindings, where);
@@ -568,14 +582,16 @@ function commandEntryFiles(cmd, files) {
 }
 
 // Walk entry files from the tarball index, following relative requires up to
-// MAX_DEPTH / MAX_FILES. Shared by script analysis, cross-package bin/deep
+// maxDepth / maxFiles. Shared by script analysis, cross-package bin/deep
 // resolution and runtime-code analysis. byFile (a Map) collects each file's
-// own signals; partial means a limit cut the walk short.
-function walkFiles(files, entryPaths, signals, byFile = null) {
-  const queue = entryPaths.map((p) => ({ path: p, depth: 0 }));
-  const seen = new Set(entryPaths);
+// own signals; a shared `seen` lets several walks spend one file budget.
+// partial means a limit cut the walk short.
+function walkFiles(files, entryPaths, signals, byFile = null, { seen = new Set(), maxFiles = MAX_FILES, maxDepth = MAX_DEPTH } = {}) {
+  const fresh = entryPaths.filter((p) => !seen.has(p));
+  for (const p of fresh) seen.add(p);
+  const queue = fresh.map((p) => ({ path: p, depth: 0 }));
   let partial = false;
-  while (queue.length > 0 && seen.size <= MAX_FILES) {
+  while (queue.length > 0 && seen.size <= maxFiles) {
     const { path, depth } = queue.shift();
     const follow = new Set();
     const own = byFile ? new Set() : signals;
@@ -587,7 +603,7 @@ function walkFiles(files, entryPaths, signals, byFile = null) {
     for (const spec of follow) {
       const resolved = resolveFile(files, path, spec);
       if (!resolved || seen.has(resolved)) continue;
-      if (depth >= MAX_DEPTH) {
+      if (depth >= maxDepth) {
         partial = true;
         continue;
       }

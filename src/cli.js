@@ -48,7 +48,7 @@ const { mergeNpmrc } = require('./npmrc');
 const { SOURCES } = require('./npm-contract');
 const { managerFor, managerById, COOLDOWN } = require('./pm-contract');
 const { loadPolicy, evaluate: evaluatePolicy, trustPolicyConfig } = require('./policy');
-const { runtimeSignals, runtimePayloadFinding } = require('./runtime');
+const { runtimeSignals, runtimePayloadFinding, gainedIocs } = require('./runtime');
 const { parseSpec, fetchScripts, computeScriptDiff, computeRuntimeDiff, renderDiff } = require('./diff');
 
 const flatSignals = (rows) => rows.flatMap((r) => r.signals);
@@ -63,9 +63,7 @@ async function crossPackageSignals(dep, entryKind, ctx) {
   if (hit) return hit;
   let out = null;
   try {
-    const pkg = ctx.offline
-      ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, { forceFiles: true })
-      : await fetchPackage(dep.name, dep.version, { forceTarball: true });
+    const pkg = await loadPackage(dep, ctx, { allFiles: true });
     let target = null;
     if (entryKind.startsWith('bin:')) {
       target = pkg.bin[entryKind.slice(4)];
@@ -119,42 +117,66 @@ async function enrichRows(rows, ctx) {
   }
 }
 
+// The package files for one name@version, from node_modules (offline) or the
+// registry. allFiles indexes every file, not only what install scripts reach.
+function loadPackage(dep, ctx, { allFiles = false } = {}) {
+  return ctx.offline
+    ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, allFiles ? { forceFiles: true, maxFiles: 2000 } : {})
+    : fetchPackage(dep.name, dep.version, { forceTarball: allFiles });
+}
+
 // Analysis rows for one name@version: cache, then node_modules (offline) or
-// the registry. Returns { rows } or { error }.
+// the registry. Returns { rows } or { error }. Under audit --runtime a cache
+// miss also returns the package, so its runtime code needs no second fetch.
 async function auditOne(dep, ctx) {
-  const { cache, offline, projectDir, deep } = ctx;
+  const { cache, deep } = ctx;
   const cacheVer = deep ? `${dep.version}+deep` : dep.version;
   const hit = cache ? cacheGet(dep.name, cacheVer) : null;
   if (hit) return { rows: hit, cached: true };
   try {
-    const pkg = offline
-      ? loadLocalPackage(dep.name, dep.version, projectDir, dep.lockKey)
-      : await fetchPackage(dep.name, dep.version);
+    const pkg = await loadPackage(dep, ctx, { allFiles: ctx.runtime });
     const rows = analyzePackage(pkg);
     await enrichRows(rows, ctx);
     if (cache) cacheSet(dep.name, cacheVer, rows);
-    return { rows };
+    return ctx.runtime ? { rows, pkg } : { rows };
   } catch (err) {
     return { error: String(err.message || err).replace(/\|/g, '\\|') };
   }
 }
 
-// audit --runtime: the RUNTIME_PAYLOAD finding for one name@version's
-// main/exports/bin code. Returns { runtimePayload? } or { runtimeError }.
-async function runtimeOne(dep, ctx) {
+// runtimeSignals() for one name@version, cached (byFile as entries).
+async function runtimeSummary(dep, ctx, pkg) {
   const cKey = [`rt~${dep.name.replace('/', '+')}`, dep.version];
   const hit = ctx.cache ? cacheGet(cKey[0], cKey[1]) : null;
-  if (hit) return hit.finding ? { runtimePayload: hit.finding } : {};
+  if (hit && hit.signals) return { ...hit, byFile: new Map(hit.byFile) };
+  const rt = runtimeSignals(pkg || await loadPackage(dep, ctx, { allFiles: true }));
+  if (ctx.cache) cacheSet(cKey[0], cKey[1], { ...rt, byFile: [...rt.byFile] });
+  return rt;
+}
+
+// audit --runtime for one name@version's main/exports/bin code. Returns
+// { runtimePayload?, runtimeUnread? } or { runtimeError }. Given the base
+// version of an upgrade (--diff/--since), the finding also names the hits
+// that version did not have.
+async function runtimeOne(dep, ctx, pkg, baseVersion) {
+  let rt;
   try {
-    const pkg = ctx.offline
-      ? loadLocalPackage(dep.name, dep.version, ctx.projectDir, dep.lockKey, { forceFiles: true })
-      : await fetchPackage(dep.name, dep.version, { forceTarball: true });
-    const finding = runtimePayloadFinding(runtimeSignals(pkg));
-    if (ctx.cache) cacheSet(cKey[0], cKey[1], { finding });
-    return finding ? { runtimePayload: finding } : {};
+    rt = await runtimeSummary(dep, ctx, pkg);
   } catch (err) {
     return { runtimeError: String(err.message || err) };
   }
+  const out = {};
+  const finding = runtimePayloadFinding(rt);
+  if (finding && baseVersion) {
+    let gained = null;
+    try {
+      gained = gainedIocs(await runtimeSummary({ name: dep.name, version: baseVersion }, ctx), rt);
+    } catch { /* base unreadable: gained stays null */ }
+    finding.base = { version: baseVersion, gained };
+  }
+  if (finding) out.runtimePayload = finding;
+  if (rt.partial || rt.missing.length > 0) out.runtimeUnread = { partial: rt.partial, missing: rt.missing };
+  return out;
 }
 
 async function runAudit(lockPath, {
@@ -164,7 +186,7 @@ async function runAudit(lockPath, {
   const { lockPath: p, deps: allDeps, edges } = loadDeps(lockPath);
   const projectDir = path.dirname(p);
   const depsByName = new Map(allDeps.map((d) => [d.name, d]));
-  const ctx = { cache, offline, projectDir, deep, depsByName };
+  const ctx = { cache, offline, projectDir, deep, depsByName, runtime };
   let deps = allDeps;
   const baseVersions = new Map();
   if (diffBase) {
@@ -179,17 +201,19 @@ async function runAudit(lockPath, {
   await Promise.all(Array.from({ length: Math.min(concurrency, deps.length) }, async () => {
     while (i < deps.length) {
       const dep = deps[i++];
-      const r = { name: dep.name, version: dep.version, rows: [], ...await auditOne(dep, ctx) };
-      if (runtime && !r.error) Object.assign(r, await runtimeOne(dep, ctx));
+      const { pkg, ...one } = await auditOne(dep, ctx);
+      const r = { name: dep.name, version: dep.version, rows: [], ...one };
       // upgrade: also audit the base version and report capabilities the new
       // version gained, the fingerprint of a hijacked release
       const baseVer = baseVersions.get(dep.name);
       if (baseVer && baseVer !== dep.version && !r.error) {
-        const base = await auditOne({ name: dep.name, version: baseVer }, ctx);
+        // runtimeOne reads the base's runtime code, and only when it has to
+        const base = await auditOne({ name: dep.name, version: baseVer }, { ...ctx, runtime: false });
         r.base = base.error
           ? { version: baseVer, gained: null }
           : { version: baseVer, gained: flatSignals(r.rows).filter((s) => !flatSignals(base.rows).includes(s)) };
       }
+      if (runtime && !r.error) Object.assign(r, await runtimeOne(dep, ctx, pkg, baseVer));
       if (via && edges.size > 0) {
         const chain = viaChain(edges, dep.name);
         if (chain.length > 0) r.via = chain;
@@ -209,7 +233,7 @@ async function runAudit(lockPath, {
     // trustEvery (cooldown) widens it further still: cooldown judges the
     // version's AGE, so a package with no install script at all still needs a
     // publish date, the poisoned code may not be in a lifecycle hook.
-    const wanted = results.filter((r) => trustEvery || r.malicious
+    const wanted = results.filter((r) => trustEvery || r.malicious || r.runtimePayload
       || (trustAll ? r.rows.length > 0 : ['HIGH', 'MEDIUM'].includes(packageRisk(r))));
     let t = 0;
     await Promise.all(Array.from({ length: Math.min(6, wanted.length) }, async () => {
@@ -759,9 +783,7 @@ async function auditSubset(list, { lockDeps, edges, depsByName }, ctx, trust) {
 const CONTENT_LINES = 40;
 async function scriptContent(r, ctx, lockDep) {
   try {
-    const pkg = ctx.offline
-      ? loadLocalPackage(r.name, r.version, ctx.projectDir, lockDep && lockDep.lockKey, { forceFiles: true })
-      : await fetchPackage(r.name, r.version, { forceTarball: true });
+    const pkg = await loadPackage({ name: r.name, version: r.version, lockKey: lockDep && lockDep.lockKey }, ctx, { allFiles: true });
     const out = [];
     for (const [script, command] of Object.entries(pkg.scripts)) {
       const entries = commandEntryFiles(command, pkg.files);

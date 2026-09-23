@@ -42,7 +42,14 @@ your own code used the library.
   endpoint, starts node on a file it ships, or carries the obfuscator.io
   string-array prelude. Plain exec, network and fs are left out, most
   libraries have them. In Markdown, JSON, SARIF (rule `runtime-payload`) and
-  HTML.
+  HTML, and counted in the summary line. With `--diff` or `--since`, each hit
+  the old version did not have is marked **new since** it. Packages whose
+  runtime code was only partly read (an entry over 2 MB or missing from the
+  tarball, or the file budget spent) are listed, so no finding is not taken
+  for a clean read.
+- The runtime walk reads up to 200 files per package with no `require` depth
+  limit, `main` and its requires first. A web3 lockfile of 746 packages takes
+  20 seconds.
 - Four new analyzer signals, in lifecycle scripts too:
   - `exec-local`: node (or `process.execPath`, bun, tsx) spawned on a file in
     the same tarball, with `detached` noted. HIGH in runtime mode only, since a
@@ -66,6 +73,10 @@ your own code used the library.
 - A lifecycle script that spawns node on a bundled file now also shows an
   `exec-local:` line next to the `exec:` one. The score does not change, it was
   already HIGH for the exec.
+- The tarball and offline indexes keep any file that opens with `#!`, so an
+  extensionless bin (`bin/cli`) or an odd one (`bin/crc32.njs`) is read.
+  Cross-package bin resolution in offline mode indexes up to 2,000 files of
+  the owning package instead of 400.
 
 ## 1.16.0 (2026-09-08)
 
