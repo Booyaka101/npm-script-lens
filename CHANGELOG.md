@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.18.1 (2026-10-18)
+
+### Fixed
+
+- pnpm `sync` now counts an existing `allowBuilds` approval becoming `false`
+  as drift when OSV marks a locked version malicious. `--check` exits 1 and
+  `--write` persists the denial, even when no names were added or removed.
+  Reports include a changed count and the old/new decision with its reason.
+- Any malicious locked version overrides a clean version of the same name,
+  regardless of resolution order. Clean manual approvals, including HIGH-risk
+  builds, and existing denials keep their historical decisions.
+- pnpm `sync` refuses column-zero `permissions` declarations, including plain
+  and single/double-quoted keys with inline values, with exit 2 and no writes.
+  `permissions.build` outranks `allowBuilds`; reconciliation is unsupported.
+
+`--check --write` repairs drift but still exits 1 for that invocation. A
+subsequent check passes. npm, Yarn and Bun behavior is unchanged. The README
+documents the legacy pnpm YAML/matcher limits and offline trust limitations.
+
 ## 1.18.0 (2026-09-24)
 
 **capsurface's evasion corpus found real gaps.** Run against the 27 fixtures
