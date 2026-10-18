@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.18.1
+
+Tracks CLI 1.18.1, which repairs pnpm `sync` when a previously approved
+package is now listed as malicious. No extension UI changes.
+
 ## 1.18.0
 
 **A credential read gets named.** CLI 1.18.0 added `cred:` signals: a script

@@ -11,7 +11,7 @@ const tar = require('tar-stream');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'src', 'cli.js');
-let server, tmp, projDir, basePath, requests = [];
+let server, tmp, projDir, basePath, requests = [], osvBatches = [];
 
 function makeTgz(entries) {
   return new Promise((resolve, reject) => {
@@ -32,23 +32,37 @@ const writeLock = (file, packages) => fs.writeFileSync(file, JSON.stringify({
   packages: { '': { name: 'proj', version: '1.0.0' }, ...packages },
 }, null, 2));
 
-const writeProj = (name, packages, pkgJson = { name: 'proj', version: '1.0.0' }) => {
+function makeProj(name, pkgJson = { name: 'proj', version: '1.0.0' }) {
   const dir = path.join(tmp, name);
   fs.mkdirSync(dir, { recursive: true });
-  writeLock(path.join(dir, 'package-lock.json'), packages);
   fs.writeFileSync(path.join(dir, 'package.json'), `${JSON.stringify(pkgJson, null, 2)}\n`);
+  return dir;
+}
+
+const writeProj = (name, packages, pkgJson) => {
+  const dir = makeProj(name, pkgJson);
+  writeLock(path.join(dir, 'package-lock.json'), packages);
   return dir;
 };
 
-function runCli(args, { input } = {}) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, ...args], { cwd: ROOT, timeout: 60000, env: { ...process.env } });
+function writePnpmProj(name, packages = ['pkga@1.0.0'], workspace = 'allowBuilds:\n  pkga: true\n') {
+  const dir = makeProj(name);
+  fs.writeFileSync(path.join(dir, 'pnpm-lock.yaml'),
+    `lockfileVersion: '9.0'\npackages:\n${packages.map((p) => `  ${JSON.stringify(p)}: {}`).join('\n')}\n`);
+  fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), workspace);
+  return dir;
+}
+
+function runCli(args, { input, env } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd: ROOT, timeout: 60000, env: { ...process.env, ...env } });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
     if (input !== undefined) child.stdin.write(input);
     child.stdin.end();
-    child.on('exit', (status) => resolve({ status, stdout, stderr }));
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
   });
 }
 
@@ -87,11 +101,14 @@ before(async () => {
       if (tarballs[req.url]) return res.writeHead(200).end(tarballs[req.url]);
       if (req.url === '/v1/querybatch') {
         const queries = JSON.parse(body).queries;
+        osvBatches.push(queries);
         return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
-          results: queries.map((q) => (q.package.name === 'pkga' && q.version === '1.0.0'
+          results: queries.map((q) => (q.package.name === 'pkga' && ['1.0.0', '0.8.0'].includes(q.version)
             ? { vulns: [{ id: 'MAL-2026-0001' }, { id: 'GHSA-not-mal' }] } : {})),
         }));
       }
+      if (req.url === '/rate-limited/v1/querybatch') return res.writeHead(429).end('{}');
+      if (req.url === '/invalid-json/v1/querybatch') return res.writeHead(200).end('not json');
       if (req.url === '/downloads/point/last-week/pkga') {
         return res.writeHead(200, { 'content-type': 'application/json' }).end('{"downloads":42}');
       }
@@ -100,9 +117,11 @@ before(async () => {
       const doc = {
         '/pkga/1.0.0': scriptedDoc('1.0.0', '/pkga.tgz'),
         '/pkga/0.9.0': scriptedDoc('0.9.0', '/pkga.tgz'),
+        '/pkga/0.8.0': { version: '0.8.0', scripts: {} },
         '/pkgb/2.0.0': { version: '2.0.0', scripts: {}, dist: { tarball: `http://127.0.0.1:${port}/none.tgz` } },
         '/pkgc/1.0.0': scriptedDoc('1.0.0', '/pkgc1.tgz'),
         '/pkgc/2.0.0': scriptedDoc('2.0.0', '/pkgc2.tgz'),
+        '/@scope%2fpkga/1.0.0': scriptedDoc('1.0.0', '/pkga.tgz'),
         '/toolpkg/1.0.0': { version: '1.0.0', scripts: {}, bin: { toolpkg: './cli.js' },
           dist: { tarball: `http://127.0.0.1:${port}/toolpkg.tgz` } },
         '/userpkg/1.0.0': { version: '1.0.0', scripts: { postinstall: 'toolpkg install' },
@@ -249,6 +268,224 @@ test('sync --check exits 1 on drift', async () => {
   const out = await runCli(['sync', '--path', dir, '--no-trust', '--no-cache', '--check']);
   assert.strictEqual(out.status, 1, out.stdout);
   assert.ok(out.stderr.includes('out of sync'), out.stderr);
+});
+
+test('pnpm sync: revokes an existing malicious approval, then checks clean', async (t) => {
+  const dir = writePnpmProj('pnpm-revoke');
+  const file = path.join(dir, 'pnpm-workspace.yaml');
+  const before = fs.readFileSync(file);
+  const args = ['sync', '--manager', 'pnpm', '--path', dir, '--no-cache'];
+  const check = await runCli([...args, '--check']);
+  t.diagnostic(`--check exit ${check.status}\n${check.stdout}${check.stderr}`);
+  assert.deepStrictEqual(fs.readFileSync(file), before);
+  assert.strictEqual(check.status, 1, check.stdout + check.stderr);
+  assert.ok(check.stdout.includes('0 current, 0 new, 0 removed, 1 changed.'), check.stdout);
+  assert.ok(check.stdout.includes('- changed: `pkga` true -> false (known malicious)'), check.stdout);
+  const write = await runCli([...args, '--write']);
+  assert.strictEqual(write.status, 0, write.stderr);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'allowBuilds:\n  pkga: false\n');
+  const clean = await runCli([...args, '--check']);
+  assert.strictEqual(clean.status, 0, clean.stderr);
+  assert.ok(clean.stdout.includes('1 current, 0 new, 0 removed, 0 changed.'), clean.stdout);
+  const stored = fs.readFileSync(file);
+  const repeat = await runCli([...args, '--write']);
+  assert.strictEqual(repeat.status, 0, repeat.stderr);
+  assert.deepStrictEqual(fs.readFileSync(file), stored);
+  assert.ok(!repeat.stderr.includes('updated'), repeat.stderr);
+});
+
+test('pnpm sync: report-only and combined check/write retain their exit semantics', async () => {
+  const dir = writePnpmProj('pnpm-flags');
+  const file = path.join(dir, 'pnpm-workspace.yaml');
+  const before = fs.readFileSync(file);
+  const args = ['sync', '--path', dir, '--no-cache'];
+  const report = await runCli(args);
+  assert.strictEqual(report.status, 0, report.stderr);
+  assert.ok(report.stdout.includes('1 changed.'), report.stdout);
+  assert.deepStrictEqual(fs.readFileSync(file), before);
+  const combined = await runCli([...args, '--check', '--write']);
+  assert.strictEqual(combined.status, 1, combined.stdout + combined.stderr);
+  assert.match(fs.readFileSync(file, 'utf8'), /pkga: false/);
+  const clean = await runCli([...args, '--check']);
+  assert.strictEqual(clean.status, 0, clean.stderr);
+});
+
+test('pnpm sync: preserves clean HIGH manual approvals and existing denials without reapplying policy', async () => {
+  const dir = writePnpmProj('pnpm-decisions', ['userpkg@1.0.0', 'pkga@1.0.0', 'pkgc@1.0.0'],
+    'allowBuilds:\n  userpkg: true\n  pkga: false\n  pkgc: false\n');
+  const audit = await runCli(['audit', '--path', dir, '--no-cache', '--json']);
+  assert.strictEqual(audit.status, 0, audit.stderr);
+  const report = JSON.parse(audit.stdout);
+  assert.strictEqual(report.results.find((r) => r.name === 'userpkg').risk, 'HIGH');
+  assert.strictEqual(report.allowScripts['userpkg@1.0.0'], false);
+  const file = path.join(dir, 'pnpm-workspace.yaml');
+  const before = fs.readFileSync(file);
+  for (const maxRisk of ['SAFE', 'HIGH']) {
+    fs.writeFileSync(path.join(dir, 'script-lens.policy.json'), JSON.stringify({ autoApprove: { maxRisk } }));
+    const control = await runCli(['allow', '--manager', 'npm', '--path', dir, '--no-cache']);
+    assert.strictEqual(control.status, 0, control.stderr);
+    const proposal = JSON.parse(control.stdout);
+    assert.strictEqual(proposal._review.includes('userpkg@1.0.0'), maxRisk === 'SAFE');
+    assert.strictEqual(proposal._review.includes('pkgc@1.0.0'), maxRisk === 'SAFE');
+    const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write']);
+    assert.strictEqual(out.status, 0, out.stdout + out.stderr);
+    assert.ok(out.stdout.includes('3 current, 0 new, 0 removed, 0 changed.'), out.stdout);
+    assert.deepStrictEqual(fs.readFileSync(file), before);
+  }
+});
+
+test('pnpm sync: counts mixed additions, removals and changes once per name', async () => {
+  const dir = writePnpmProj('pnpm-mixed', ['pkga@1.0.0', 'pkga@0.9.0', 'pkgc@1.0.0', 'userpkg@1.0.0'],
+    'allowBuilds:\n  gone: true\n  pkga: true\n  userpkg: true\n');
+  const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write']);
+  assert.strictEqual(out.status, 1, out.stderr);
+  assert.ok(out.stdout.includes('1 current, 1 new, 1 removed, 1 changed.'), out.stdout);
+  assert.ok(out.stderr.includes('(3 change(s) needed)'), out.stderr);
+  const { MANAGERS } = require('../src/pm-contract');
+  assert.deepStrictEqual(MANAGERS.pnpm.readExisting(dir), { pkga: false, pkgc: true, userpkg: true });
+});
+
+test('pnpm sync: any malicious version overrides a clean representative in either order', async () => {
+  const { runAudit } = require('../src/cli');
+  for (const versions of [['0.9.0', '1.0.0'], ['1.0.0', '0.9.0']]) {
+    const dir = writePnpmProj(`pnpm-versions-${versions[0]}`, versions.map((v) => `pkga@${v}`));
+    // Cache hits remove fetch scheduling from the representative-order check.
+    await runAudit(dir, { trust: false, concurrency: 1 });
+    osvBatches = [];
+    const out = await runCli(['sync', '--path', dir, '--check', '--write']);
+    assert.deepStrictEqual(osvBatches.map((batch) => batch.map((q) => q.version)), [versions]);
+    assert.strictEqual(out.status, 1, out.stderr);
+    assert.ok(out.stdout.includes('0 current, 0 new, 0 removed, 1 changed.'), out.stdout);
+    assert.match(fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8'), /pkga: false/);
+  }
+});
+
+test('pnpm sync: new names and malicious versions without scripts are denied in either order', async () => {
+  for (const malicious of ['1.0.0', '0.8.0']) {
+    for (const versions of [['0.9.0', malicious], [malicious, '0.9.0']]) {
+      const dir = writePnpmProj(`pnpm-new-${versions.join('-')}`, versions.map((v) => `pkga@${v}`), 'allowBuilds:\n');
+      const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write']);
+      assert.strictEqual(out.status, 1, out.stderr);
+      assert.ok(out.stdout.includes('0 current, 1 new, 0 removed, 0 changed.'), out.stdout);
+      assert.ok(out.stdout.includes('MALICIOUS'), out.stdout);
+      assert.strictEqual(fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8'), 'allowBuilds:\n  pkga: false\n');
+    }
+  }
+});
+
+test('pnpm sync: no-trust and offline preserve approvals without querying OSV', async () => {
+  const dir = writePnpmProj('pnpm-trust-skipped');
+  const local = path.join(dir, 'node_modules', 'pkga');
+  fs.mkdirSync(local, { recursive: true });
+  fs.writeFileSync(path.join(local, 'package.json'), '{"name":"pkga","version":"1.0.0","scripts":{"postinstall":"node p.js"}}');
+  fs.writeFileSync(path.join(local, 'p.js'), 'require("https").get("https://x.io");');
+  const file = path.join(dir, 'pnpm-workspace.yaml');
+  const before = fs.readFileSync(file);
+  for (const flag of ['--no-trust', '--offline']) {
+    requests = [];
+    const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write', flag]);
+    assert.strictEqual(out.status, 0, out.stdout + out.stderr);
+    assert.ok(out.stdout.includes('1 current, 0 new, 0 removed, 0 changed.'), out.stdout);
+    assert.deepStrictEqual(fs.readFileSync(file), before);
+    assert.ok(!requests.includes('/v1/querybatch'), requests.join('\n'));
+    if (flag === '--offline') assert.strictEqual(requests.length, 0);
+  }
+});
+
+test('pnpm sync: OSV HTTP, rate-limit and malformed-response failures remain best-effort', async () => {
+  for (const endpoint of ['unavailable', 'rate-limited', 'invalid-json']) {
+    const dir = writePnpmProj(`pnpm-osv-${endpoint}`, ['pkga@1.0.0', 'pkgc@1.0.0']);
+    const file = path.join(dir, 'pnpm-workspace.yaml');
+    const env = { NPM_SCRIPT_LENS_OSV_API: `${process.env.NPM_SCRIPT_LENS_OSV_API}/${endpoint}` };
+    requests = [];
+    const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write'], { env });
+    assert.strictEqual(out.status, 1, out.stdout + out.stderr);
+    assert.ok(requests.includes(`/${endpoint}/v1/querybatch`), requests.join('\n'));
+    assert.ok(out.stdout.includes('1 current, 1 new, 0 removed, 0 changed.'), out.stdout);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), 'allowBuilds:\n  pkga: true\n  pkgc: true\n');
+  }
+});
+
+test('pnpm sync: registry read failures preserve existing decisions and deny new names', async () => {
+  const dir = writePnpmProj('pnpm-registry-failure', ['missing-known@1.0.0', 'missing-new@1.0.0'],
+    'allowBuilds:\n  missing-known: true\n');
+  const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write']);
+  assert.strictEqual(out.status, 1, out.stdout + out.stderr);
+  assert.ok(out.stdout.includes('1 current, 1 new, 0 removed, 0 changed.'), out.stdout);
+  assert.ok(out.stdout.includes('`missing-new` ERROR'), out.stdout);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8'),
+    'allowBuilds:\n  missing-known: true\n  missing-new: false\n');
+});
+
+test('pnpm sync: removal-only drift is checked, written and idempotent', async () => {
+  const dir = writePnpmProj('pnpm-removal', ['pkgb@2.0.0']);
+  const file = path.join(dir, 'pnpm-workspace.yaml');
+  const before = fs.readFileSync(file);
+  const args = ['sync', '--path', path.join(dir, 'pnpm-lock.yaml'), '--no-cache'];
+  const check = await runCli([...args, '--check']);
+  assert.strictEqual(check.status, 1, check.stderr);
+  assert.ok(check.stdout.includes('0 current, 0 new, 1 removed, 0 changed.'), check.stdout);
+  assert.deepStrictEqual(fs.readFileSync(file), before);
+  const write = await runCli([...args, '--write']);
+  assert.strictEqual(write.status, 0, write.stderr);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'allowBuilds:\n');
+  const clean = await runCli([...args, '--check', '--write']);
+  assert.strictEqual(clean.status, 0, clean.stderr);
+  assert.ok(clean.stdout.includes('0 current, 0 new, 0 removed, 0 changed.'), clean.stdout);
+  assert.ok(!clean.stderr.includes('updated'), clean.stderr);
+});
+
+test('pnpm sync: double-quoted scoped names and CRLF preserve writer surroundings', async () => {
+  const workspace = '# workspace\r\npackages:\r\n  - "apps/*"\r\nallowBuilds:\r\n  "@scope/pkga": true\r\n  pkga: true\r\n# keep\r\nminimumReleaseAge: 4320';
+  const dir = writePnpmProj('pnpm-crlf', ['@scope/pkga@1.0.0', 'pkga@1.0.0'], workspace);
+  const out = await runCli(['sync', '--path', dir, '--no-cache', '--write']);
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8'),
+    workspace.replace('pkga: true', 'pkga: false'));
+});
+
+test('pnpm sync: refuses plain or quoted top-level permissions before writing', async () => {
+  for (const [index, declaration] of ['permissions:\n  pkga:\n    build: true\n',
+    "'permissions':\n  pkga:\n    build: true\n", '"permissions":\r\n  pkga:\r\n    build: true\r\n',
+    'permissions: {pkga: {build: true}}\n', "'permissions': {pkga: {build: true}}\n",
+    '"permissions" \t: {pkga: {build: true}}\r\n'].entries()) {
+    const dir = writePnpmProj(`pnpm-permissions-${index}`,
+      ['pkga@1.0.0'], `allowBuilds:\n  pkga: true\n${declaration}`);
+    const files = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'];
+    const before = files.map((f) => fs.readFileSync(path.join(dir, f)));
+    for (const flags of [[], ['--check'], ['--write'], ['--check', '--write']]) {
+      requests = [];
+      const out = await runCli(['sync', '--manager', 'pnpm', '--path', dir, '--no-cache', ...flags]);
+      assert.strictEqual(out.status, 2, out.stdout + out.stderr);
+      assert.match(out.stderr, /permissions\.build.*outranks allowBuilds.*unsupported/);
+      assert.deepStrictEqual(files.map((f) => fs.readFileSync(path.join(dir, f))), before);
+      assert.deepStrictEqual(requests, [], 'unsupported permissions must fail before network access');
+    }
+  }
+});
+
+test('pnpm sync: workspace read errors exit 2 before auditing or changing project files', async () => {
+  const dir = writePnpmProj('pnpm-workspace-read-error');
+  const workspace = path.join(dir, 'pnpm-workspace.yaml');
+  fs.renameSync(workspace, `${workspace}.saved`);
+  fs.mkdirSync(workspace);
+  const files = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml.saved'];
+  const before = files.map((f) => fs.readFileSync(path.join(dir, f)));
+  requests = [];
+  const out = await runCli(['sync', '--path', dir, '--no-cache', '--check', '--write']);
+  assert.strictEqual(out.status, 2, out.stdout + out.stderr);
+  assert.match(out.stderr, /EISDIR/);
+  assert.deepStrictEqual(requests, []);
+  assert.deepStrictEqual(files.map((f) => fs.readFileSync(path.join(dir, f))), before);
+  assert.ok(fs.statSync(workspace).isDirectory());
+});
+
+test('pnpm sync: permissions comments, nested keys and longer keys do not trigger the guard', async () => {
+  const workspace = '# permissions: documentation\nmetadata:\n  permissions: {}\npermissionsExtra: {}\nallowBuilds:\n  pkga: true\n';
+  const dir = writePnpmProj('pnpm-permissions-unrelated', ['pkga@1.0.0'], workspace);
+  const out = await runCli(['sync', '--path', dir, '--no-cache', '--write']);
+  assert.strictEqual(out.status, 0, out.stdout + out.stderr);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'utf8'), workspace.replace('pkga: true', 'pkga: false'));
 });
 
 test('approve: interactive decisions are written to package.json', async () => {

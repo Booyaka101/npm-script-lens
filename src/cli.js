@@ -655,6 +655,13 @@ async function syncNpm(opts, policy) {
 // replaces the whole allowlist so removals actually take effect.
 async function syncNameKeyed(opts, mgr, policy) {
   const projectDir = dirOf(opts.path);
+  if (mgr.id === 'pnpm') {
+    const file = path.join(projectDir, mgr.allowlistFile);
+    // A higher-priority build decision cannot be repaired through allowBuilds.
+    if (fs.existsSync(file) && /^(?:permissions|'permissions'|"permissions")[ \t]*:/m.test(fs.readFileSync(file, 'utf8'))) {
+      throw new Error(`${file}: permissions.build outranks allowBuilds and is unsupported by sync. Review permissions manually; nothing was written`);
+    }
+  }
   const existing = mgr.readExisting(projectDir); // {name:bool} (pnpm/yarn) or [names] (bun)
   const existingNames = Array.isArray(existing) ? new Set(existing) : new Set(Object.keys(existing));
   const decisionOf = (name) => (Array.isArray(existing) ? true : existing[name]);
@@ -663,25 +670,36 @@ async function syncNameKeyed(opts, mgr, policy) {
     trustAll: policyNeedsTrust(policy) && opts.trust,
   });
   const scripted = new Map();
-  for (const r of results) if ((r.rows.length > 0 || r.error || r.malicious) && !scripted.has(r.name)) scripted.set(r.name, r);
+  // Audit completion order must not let a clean pnpm version hide a malicious one.
+  for (const r of results) {
+    if ((r.rows.length > 0 || r.error || r.malicious)
+      && (!scripted.has(r.name) || (mgr.id === 'pnpm' && r.malicious))) scripted.set(r.name, r);
+  }
 
   const next = {};
-  const kept = [], added = [], removed = [];
+  const kept = [], added = [], removed = [], changed = [];
   for (const [name, r] of scripted) {
-    if (existingNames.has(name)) { next[name] = r.malicious ? false : decisionOf(name); kept.push(name); }
+    if (existingNames.has(name)) {
+      next[name] = r.malicious ? false : decisionOf(name);
+      if (mgr.id === 'pnpm' && Boolean(existing[name]) !== Boolean(next[name])) {
+        changed.push({ name, from: Boolean(existing[name]), to: Boolean(next[name]), reason: 'known malicious' });
+      } else kept.push(name);
+    }
     else { next[name] = isAutoApproved(r, policy); added.push({ name, value: next[name], risk: packageRisk(r), malicious: r.malicious }); }
   }
   for (const name of existingNames) if (!scripted.has(name)) removed.push(name);
 
   const lines = [`# ${mgr.nativeKey} sync (${mgr.label})`, ''];
-  lines.push(`${kept.length} current, ${added.length} new, ${removed.length} removed.`, '');
+  lines.push(`${kept.length} current, ${added.length} new, ${removed.length} removed${mgr.id === 'pnpm' ? `, ${changed.length} changed` : ''}.`, '');
   if (removed.length > 0) lines.push('Removed (no longer in the lockfile or no longer scripted):', ...removed.map((e) => `- \`${e}\``), '');
   for (const a of added) lines.push(`- new: \`${a.name}\` ${a.malicious ? '⛔ MALICIOUS' : a.risk} → ${a.value}`);
   if (added.length > 0) lines.push('');
+  for (const c of changed) lines.push(`- changed: \`${c.name}\` ${c.from} -> ${c.to} (${c.reason})`);
+  if (changed.length > 0) lines.push('');
   lines.push('```json', JSON.stringify({ [mgr.nativeKey]: mgr.renderDecisions(Object.entries(next).map(([name, allow]) => ({ name, allow }))) }, null, 2), '```');
   writeReport(lines.join('\n'));
 
-  const drift = added.length + removed.length;
+  const drift = added.length + removed.length + changed.length;
   if (opts.write && drift > 0) {
     const { file } = mgr.writeFull(projectDir, next);
     process.stderr.write(`updated ${file}\n`);

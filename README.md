@@ -1149,6 +1149,83 @@ npx npm-script-lens review --output-allowscripts  # review pending WITH script c
 npx npm-script-lens approve          # step through risky packages interactively (npm)
 ```
 
+### pnpm: recheck approvals before installation
+
+For a legacy `allowBuilds` workspace, run the check **before installing
+dependencies**, inspect the proposal, then explicitly write and commit it:
+
+```bash
+npx npm-script-lens@1.18.1 sync --manager pnpm --check
+npx npm-script-lens@1.18.1 sync --manager pnpm --write
+git diff -- pnpm-workspace.yaml
+git add pnpm-workspace.yaml
+git commit -m "Reconcile pnpm build approvals"
+```
+
+pnpm sync preserves nonmalicious manual decisions, including approved HIGH-risk
+builds, without reapplying policy to them. If OSV now marks **any locked version**
+of an approved package malicious, its name-wide decision becomes `false`.
+Already-false denials stay current. New names still use the existing policy.
+
+Captured output from the local test registry's inert `pkga@1.0.0` fixture with
+the test-only advisory `MAL-2026-0001`, starting with `pkga: true`:
+
+````text
+$ npm-script-lens sync --manager pnpm --check
+# allowBuilds sync (pnpm)
+
+0 current, 0 new, 0 removed, 1 changed.
+
+- changed: `pkga` true -> false (known malicious)
+
+```json
+{
+  "allowBuilds": {
+    "pkga": false
+  }
+}
+```
+````
+
+That check exits 1 without changing workspace bytes. `--write` alone stores
+`pkga: false` and exits 0. The next `--check` exits 0 and reports
+`1 current, 0 new, 0 removed, 0 changed.` Plain `sync` reports without writing
+and exits 0. Combined `--check --write` writes repairs but exits 1 when the
+invocation found drift, so rerun the check after reviewing the change.
+
+This does not add malware detection. It reconciles the audit's existing OSV
+`MAL-*` flags. `--offline` and `--no-trust` cannot detect fresh OSV revocations.
+OSV enrichment remains best-effort: failures, timeouts and rate limits do not
+fail closed, so a passing check is not proof that no package is malicious.
+Registry/package read failures retain the existing conservative audit behavior.
+They deny new names but do not revoke historical manual approvals on their own.
+Dependency lifecycle scripts are read, never executed.
+
+**Supported legacy format only.** The pnpm adapter is a line-based reader and
+writer, not a general YAML parser or pnpm matcher engine:
+
+- Use an unquoted, column-zero `allowBuilds:` block with indented, bare or
+  JSON-style double-quoted package names and literal `true`/`false` values.
+  Double-quoted scoped names and CRLF input are supported.
+- Flow mappings, anchors, aliases, merge keys, duplicate keys, single-quoted
+  entry names, inline entry comments and quoted `allowBuilds` keys are not
+  reliably round-tripped. A blank line ends the managed block. Do not use
+  `--write` on these layouts; normalize them or reconcile manually. A write
+  replaces the managed block, not its internal formatting or comments. Other
+  keys, surrounding comments and line endings retain their existing bytes.
+- Version selectors, `||` alternatives, wildcard and git/tarball matchers are
+  not evaluated. Sync compares exact package names and may treat those matcher
+  entries as stale. Review them manually rather than using this writer.
+- Since pnpm 12.11.0, [`permissions.build` outranks `allowBuilds`](https://pnpm.io/settings/build#permissions).
+  Sync rejects column-zero `permissions:`, `'permissions':` and `"permissions":`
+  declarations, including inline values, with exit 2 before writing. This is
+  a conservative legacy-format guard, not general YAML validation. Permissions
+  reconciliation and older `onlyBuiltDependencies` layouts are unsupported.
+
+The best first rollout is one dependency-update PR: add the pre-install
+`sync --manager pnpm --check` step, review its proposal, and commit the explicit
+configuration repair alongside the lockfile update.
+
 ## One-command adoption
 
 ```bash
